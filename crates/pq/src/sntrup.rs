@@ -5,6 +5,7 @@ use std::fmt;
 use pqcrypto_ntruprime::sntrup1277::{self, Ciphertext, PublicKey, SecretKey, SharedSecret};
 use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SecretKey as _, SharedSecret as _};
 use secret::Secret;
+use zeroize::Zeroize;
 
 /// Byte length of an sntrup1277 public key.
 #[must_use]
@@ -118,4 +119,35 @@ fn copy_shared_secret(shared: &SharedSecret) -> Result<Secret<[u8; 32]>, PqError
     let bytes = shared.as_bytes();
     let array: [u8; 32] = bytes.try_into().map_err(|_| PqError::SharedSecretLength)?;
     Ok(Secret::new(array))
+}
+
+const _: () = assert!(public_key_bytes() == 2067);
+const _: () = assert!(secret_key_bytes() == 3059);
+
+/// Generates an sntrup1277 keypair.
+///
+/// The public key is [`public_key_bytes`] long (2067). The secret key is wiped
+/// on drop.
+///
+/// # Errors
+///
+/// [`PqError::PublicKeyLength`] or [`PqError::SecretKeyLength`] when the
+/// library output is not the sntrup1277 size.
+#[allow(
+    clippy::large_stack_arrays,
+    reason = "sntrup1277 secret keys are 3059 bytes"
+)]
+#[must_use = "dropping the secret key discards the device key"]
+pub fn keypair() -> Result<(Vec<u8>, Secret<[u8; 3059]>), PqError> {
+    let (public, secret) = sntrup1277::keypair();
+    let public_bytes = public.as_bytes();
+    if public_bytes.len() != public_key_bytes() {
+        return Err(PqError::PublicKeyLength);
+    }
+    let mut secret_key =
+        <[u8; 3059]>::try_from(secret.as_bytes()).map_err(|_| PqError::SecretKeyLength)?;
+    // `Secret::new` copies. Wipe this stack copy; the returned secret wipes on drop.
+    let wrapped = Secret::new(secret_key);
+    secret_key.zeroize();
+    Ok((public_bytes.to_vec(), wrapped))
 }

@@ -6,5 +6,6 @@ mod sntrup;
 mod kat;
 
 pub use sntrup::{
-    ciphertext_bytes, decapsulate, encapsulate, public_key_bytes, secret_key_bytes, PqError,
+    ciphertext_bytes, decapsulate, encapsulate, keypair, public_key_bytes, secret_key_bytes,
+    PqError,
 };
