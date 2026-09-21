@@ -1,7 +1,7 @@
 //! v1 password migration. Compiled only with feature `legacy-v1`.
 //!
 //! `bearby-cipher` does not build in this workspace (`ntrulp` fails to compile),
-//! so AES-256-GCM is reimplemented and Kuznechik / CYBER are refused.
+//! so AES-256-GCM is reimplemented and Kuznechik, NTRU, and CYBER are refused.
 //! Keys come from the Argon2 seed (`from_seed`), never from `KeyChain::from_bytes`.
 
 use aead::BodyAlg;
@@ -33,24 +33,15 @@ const WALLET_SALT: &[u8] = b"ZILPAY:54040c2f-1ec1-4eb1-9595-6e4294d14fd6";
 /// v1 `config::argon::APP_ID`. Argon2 associated data, not a secret.
 const APP_ID: &[u8] = b"ZilPay-wallet-app";
 
-/// One v1 cipher layer. Slice order is outer layer first.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct V1Layer {
-    /// Cipher that produced [`Self::bytes`], or the next inner cipher when
-    /// `bytes` is empty (the previous plaintext is that layer's ciphertext).
-    pub kind: V1LayerKind,
-    /// Ciphertext for this layer (`ct ‖ tag ‖ nonce` for AES-256-GCM).
-    /// Empty means "use the plaintext of the previous layer".
-    pub bytes: Vec<u8>,
-}
-
-/// v1 layer ciphers this migrator knows by name.
+/// v1 layer ciphers. Slice order for [`migrate`] is outer layer first.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum V1LayerKind {
     /// AES-256-GCM, nonce 12 bytes, layout `ct ‖ tag ‖ nonce`.
     AesGcm,
     /// v1 Kuznechik-OFB. Not linked in this build.
     Kuznechik,
+    /// v1 `NTRUP1277` (ntrup761). Not linked in this build.
+    Ntrup,
     /// v1 Kyber768 + AES-256-GCM. Not linked in this build.
     Cyber,
 }
@@ -76,7 +67,7 @@ pub enum MigrateError {
     EmptyPassword,
     /// v1 key derivation or AES-GCM authentication failed.
     V1Auth,
-    /// A Kuznechik or CYBER layer was requested and this build cannot open it.
+    /// Kuznechik, NTRU, or CYBER was requested and this build cannot open it.
     UnsupportedLayer,
     /// The v2 vault could not be sealed. The v1 plaintext was not kept.
     Vault(VaultV2Error),
@@ -103,8 +94,8 @@ impl From<VaultV2Error> for MigrateError {
 
 /// Open v1 layers and seal the plaintext in a new v2 vault.
 ///
-/// The first slice element is the outside layer. AES-256-GCM is decrypted
-/// with `SHA-256(argon2(password) ‖ [0])`. Kuznechik and CYBER return
+/// `orders_outer_first` peels `ciphertext` from the outside in. AES-256-GCM
+/// uses `SHA-256(argon2(password) ‖ [0])`. Kuznechik, NTRU, and CYBER return
 /// [`MigrateError::UnsupportedLayer`] and are not skipped.
 ///
 /// The v2 vault is [`create`] then [`write_records`] of the recovered bytes:
@@ -114,14 +105,15 @@ impl From<VaultV2Error> for MigrateError {
 /// # Errors
 ///
 /// [`MigrateError::EmptyPassword`] when `password` is empty, before Argon2.
-/// [`MigrateError::UnsupportedLayer`] when any layer is Kuznechik or CYBER.
-/// [`MigrateError::V1Auth`] when a ciphertext is shorter than 28 bytes, the
-/// tag does not match, or Argon2 rejects the input.
+/// [`MigrateError::UnsupportedLayer`] when any order is Kuznechik, NTRU, or CYBER.
+/// [`MigrateError::V1Auth`] when the outer AES buffer is shorter than 28 bytes,
+/// a tag does not match, or Argon2 rejects the input.
 /// [`MigrateError::Vault`] when the password is not UTF-8 or v2 sealing fails.
 pub fn migrate(
     password: &[u8],
     caller_salt: &[u8],
-    layers_outer_first: &[V1Layer],
+    ciphertext: &[u8],
+    orders_outer_first: &[V1LayerKind],
     profile: KdfProfile,
     body_alg: BodyAlg,
 ) -> Result<Migrated, MigrateError> {
@@ -131,25 +123,26 @@ pub fn migrate(
     // `create` seals with `&str`. Reject non-UTF-8 before either Argon2.
     let pw = core::str::from_utf8(password)
         .map_err(|_| MigrateError::Vault(VaultV2Error::CorruptedLength))?;
-    reject_unsupported(layers_outer_first)?;
-    reject_short_aes(layers_outer_first)?;
+    reject_unsupported(orders_outer_first)?;
+    // One outer buffer. Inner lengths are only known after that layer opens.
+    reject_short_outer(ciphertext, orders_outer_first)?;
     let shared_salt = caller_salt.is_empty();
-    let mut records = if layers_outer_first.is_empty() {
-        Vec::new()
+    let mut records = if orders_outer_first.is_empty() {
+        ciphertext.to_vec()
     } else {
-        decrypt_layers(password, caller_salt, layers_outer_first)?
+        decrypt_layers(password, caller_salt, ciphertext, orders_outer_first)?
     };
     let sealed = seal_recovered(pw, profile, body_alg, &records, shared_salt);
     records.zeroize();
     sealed
 }
 
-fn reject_unsupported(layers: &[V1Layer]) -> Result<(), MigrateError> {
-    for layer in layers {
-        match layer.kind {
+fn reject_unsupported(orders: &[V1LayerKind]) -> Result<(), MigrateError> {
+    for order in orders {
+        match order {
             V1LayerKind::AesGcm => {}
-            // Do not peel an outer AES layer and pretend the inner one opened.
-            V1LayerKind::Kuznechik | V1LayerKind::Cyber => {
+            // Do not peel an outer AES layer and pretend an inner one opened.
+            V1LayerKind::Kuznechik | V1LayerKind::Ntrup | V1LayerKind::Cyber => {
                 return Err(MigrateError::UnsupportedLayer);
             }
         }
@@ -157,19 +150,13 @@ fn reject_unsupported(layers: &[V1Layer]) -> Result<(), MigrateError> {
     Ok(())
 }
 
-/// AES-GCM needs a 16-byte tag and a 12-byte nonce before any slice.
-///
-/// An empty inner `bytes` is not a ciphertext: peel uses the previous plaintext.
-fn reject_short_aes(layers: &[V1Layer]) -> Result<(), MigrateError> {
-    let min_len = GCM_NONCE_LEN + GCM_TAG_LEN;
-    for (index, layer) in layers.iter().enumerate() {
-        let uses_previous = index > 0 && layer.bytes.is_empty();
-        if uses_previous {
-            continue;
-        }
-        if layer.bytes.len() < min_len {
-            return Err(MigrateError::V1Auth);
-        }
+/// The outside AES layer needs a 16-byte tag and a 12-byte nonce before Argon2.
+const fn reject_short_outer(ciphertext: &[u8], orders: &[V1LayerKind]) -> Result<(), MigrateError> {
+    let Some(V1LayerKind::AesGcm) = orders.first().copied() else {
+        return Ok(());
+    };
+    if ciphertext.len() < GCM_NONCE_LEN + GCM_TAG_LEN {
+        return Err(MigrateError::V1Auth);
     }
     Ok(())
 }
@@ -177,12 +164,13 @@ fn reject_short_aes(layers: &[V1Layer]) -> Result<(), MigrateError> {
 fn decrypt_layers(
     password: &[u8],
     caller_salt: &[u8],
-    layers: &[V1Layer],
+    ciphertext: &[u8],
+    orders: &[V1LayerKind],
 ) -> Result<Vec<u8>, MigrateError> {
     let seed = derive_seed(password, caller_salt)?;
-    // Index byte 0 is AES. Kuznechik is 1 and CYBER is 2; those layers already failed.
+    // Index byte 0 is AES. Other orders already failed before Argon2.
     let aes_key = Secret::new(indexed_key(seed.expose(), 0)?);
-    peel(aes_key.expose(), layers)
+    peel(aes_key.expose(), ciphertext, orders)
 }
 
 fn seal_recovered(
@@ -249,23 +237,22 @@ fn indexed_key(seed: &[u8], idx: u8) -> Result<[u8; 32], MigrateError> {
     <[u8; 32]>::try_from(digest.as_slice()).map_err(|_| MigrateError::V1Auth)
 }
 
-fn peel(aes_key: &[u8; 32], layers: &[V1Layer]) -> Result<Vec<u8>, MigrateError> {
-    let mut plaintext = Vec::new();
-    for (index, layer) in layers.iter().enumerate() {
-        let nested = index > 0 && layer.bytes.is_empty();
-        let ciphertext = if nested {
-            plaintext.as_slice()
-        } else {
-            layer.bytes.as_slice()
-        };
-        plaintext = match layer.kind {
-            V1LayerKind::AesGcm => open_aes_gcm(aes_key, ciphertext)?,
-            V1LayerKind::Kuznechik | V1LayerKind::Cyber => {
+fn peel(
+    aes_key: &[u8; 32],
+    ciphertext: &[u8],
+    orders: &[V1LayerKind],
+) -> Result<Vec<u8>, MigrateError> {
+    let mut current = ciphertext.to_vec();
+    for order in orders {
+        let next = match order {
+            V1LayerKind::AesGcm => open_aes_gcm(aes_key, &current)?,
+            V1LayerKind::Kuznechik | V1LayerKind::Ntrup | V1LayerKind::Cyber => {
                 return Err(MigrateError::UnsupportedLayer);
             }
         };
+        current = next;
     }
-    Ok(plaintext)
+    Ok(current)
 }
 
 fn open_aes_gcm(key: &[u8; 32], packed: &[u8]) -> Result<Vec<u8>, MigrateError> {
@@ -296,7 +283,7 @@ mod tests {
         WALLET_SALT,
     };
     use crate::create::body_ad;
-    use crate::migrate::{migrate, MigrateError, V1Layer, V1LayerKind};
+    use crate::migrate::{migrate, MigrateError, V1LayerKind};
     use crate::VaultV2Error;
     use aead::{decrypt_body, BodyAlg};
     use aes_gcm::aead::Aead;
@@ -307,27 +294,33 @@ mod tests {
     #[test]
     fn layout_salt_and_rejections_do_not_hash() {
         assert_eq!(
-            migrate(b"", b"", &[], KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err(),
+            migrate(b"", b"", b"", &[], KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err(),
             MigrateError::EmptyPassword
         );
-        let short = V1Layer {
-            kind: V1LayerKind::AesGcm,
-            bytes: vec![0; GCM_NONCE_LEN + GCM_TAG_LEN - 1],
-        };
+        let short = [0u8; GCM_NONCE_LEN + GCM_TAG_LEN - 1];
         assert_eq!(
-            migrate(b"pw", b"", &[short], KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err(),
+            migrate(
+                b"pw",
+                b"",
+                &short,
+                &[V1LayerKind::AesGcm],
+                KdfProfile::Mobile,
+                BodyAlg::Aegis256
+            )
+            .unwrap_err(),
             MigrateError::V1Auth
         );
-        for kind in [V1LayerKind::Kuznechik, V1LayerKind::Cyber] {
-            let layer = V1Layer {
-                kind,
-                bytes: vec![0; 64],
-            };
+        for kind in [
+            V1LayerKind::Kuznechik,
+            V1LayerKind::Ntrup,
+            V1LayerKind::Cyber,
+        ] {
             assert_eq!(
                 migrate(
                     b"pw",
                     b"fp",
-                    &[layer],
+                    &[0; 64],
+                    &[kind],
                     KdfProfile::Mobile,
                     BodyAlg::Aegis256
                 )
@@ -335,8 +328,29 @@ mod tests {
                 MigrateError::UnsupportedLayer
             );
         }
+        // An inner NTRU order must fail closed, not be sealed as the v2 body.
         assert_eq!(
-            migrate(b"\xff", b"", &[], KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err(),
+            migrate(
+                b"pw",
+                b"",
+                &[0; 64],
+                &[V1LayerKind::AesGcm, V1LayerKind::Ntrup],
+                KdfProfile::Mobile,
+                BodyAlg::Aegis256
+            )
+            .unwrap_err(),
+            MigrateError::UnsupportedLayer
+        );
+        assert_eq!(
+            migrate(
+                b"\xff",
+                b"",
+                b"",
+                &[],
+                KdfProfile::Mobile,
+                BodyAlg::Aegis256
+            )
+            .unwrap_err(),
             MigrateError::Vault(VaultV2Error::CorruptedLength)
         );
 
@@ -380,17 +394,10 @@ mod tests {
 
         let inner = seal_aes(&key, outer_pt, nonce);
         let outer = seal_aes(&key, &inner, [8u8; GCM_NONCE_LEN]);
-        let nested = [
-            V1Layer {
-                kind: V1LayerKind::AesGcm,
-                bytes: outer,
-            },
-            V1Layer {
-                kind: V1LayerKind::AesGcm,
-                bytes: Vec::new(),
-            },
-        ];
-        assert_eq!(peel(&key, &nested).unwrap(), outer_pt);
+        assert_eq!(
+            peel(&key, &outer, &[V1LayerKind::AesGcm, V1LayerKind::AesGcm]).unwrap(),
+            outer_pt
+        );
         assert_eq!(MEM_KIB, 65_536);
     }
 
@@ -405,14 +412,11 @@ mod tests {
         let key = super::derive_seed(password, b"").unwrap();
         let aes = indexed_key(key.expose(), 0).unwrap();
         let blob = seal_aes(&aes, records, [3u8; GCM_NONCE_LEN]);
-        let layers = [V1Layer {
-            kind: V1LayerKind::AesGcm,
-            bytes: blob,
-        }];
         let migrated = migrate(
             password,
             b"",
-            &layers,
+            &blob,
+            &[V1LayerKind::AesGcm],
             KdfProfile::Mobile,
             BodyAlg::Aegis256,
         )
