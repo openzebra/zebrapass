@@ -73,9 +73,6 @@ pub const DEVICE_RECORD_LEN: usize = ENTRY_HEADER_LEN + DEVICE_PAYLOAD_LEN;
 /// sntrup1277 ciphertext size. Borrowed from the file, never copied into a `Vec`.
 pub const SNTRUP_CT_LEN: usize = 1847;
 
-const PASSWORD_PAYLOAD_WIRE: u32 = 104;
-const DEVICE_PAYLOAD_WIRE: u32 = 2025;
-
 const BODY_MIN_AEGIS: usize = 64;
 const BODY_MIN_KUZ_MGM: usize = 32;
 const BODY_MIN_KUZ_CTR: usize = 40;
@@ -102,10 +99,6 @@ const _: () = {
     assert!(MIN_FILE_LEN == 104);
     assert!(PASSWORD_RECORD_LEN == 110);
     assert!(DEVICE_RECORD_LEN == 2031);
-    assert!(PASSWORD_PAYLOAD_LEN == 104);
-    assert!(PASSWORD_PAYLOAD_WIRE == 104);
-    assert!(DEVICE_PAYLOAD_LEN == 2025);
-    assert!(DEVICE_PAYLOAD_WIRE == 2025);
     assert!(8 + 32 + 32 + 32 == PASSWORD_PAYLOAD_LEN);
     assert!(16 + 2 + 32 + 32 + SNTRUP_CT_LEN + 32 + 32 + 32 == DEVICE_PAYLOAD_LEN);
     assert!(BODY_MIN_AEGIS == 32 + 32);
@@ -135,14 +128,6 @@ pub const fn min_body_len(alg: u16) -> Option<usize> {
         BODY_KUZ_CTR_HMAC => Some(BODY_MIN_KUZ_CTR),
         _ => None,
     }
-}
-
-pub const fn password_payload_wire() -> u32 {
-    PASSWORD_PAYLOAD_WIRE
-}
-
-pub const fn device_payload_wire() -> u32 {
-    DEVICE_PAYLOAD_WIRE
 }
 
 pub fn read_array<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N], FormatError> {

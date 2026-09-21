@@ -7,9 +7,9 @@ use std::marker::PhantomData;
 
 use crate::error::FormatError;
 use crate::limits::{
-    self, device_payload_wire, password_payload_wire, read_array, read_ref, read_u16, read_u32,
-    shift, DEVICE_PAYLOAD_LEN, DEVICE_RECORD_LEN, ENTRY_HEADER_LEN, KEM_SNTRUP1277, KIND_DEVICE,
-    KIND_PASSWORD, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, SNTRUP_CT_LEN,
+    self, read_array, read_ref, read_u16, read_u32, shift, DEVICE_PAYLOAD_LEN, DEVICE_RECORD_LEN,
+    ENTRY_HEADER_LEN, KEM_SNTRUP1277, KIND_DEVICE, KIND_PASSWORD, PASSWORD_PAYLOAD_LEN,
+    PASSWORD_RECORD_LEN, SNTRUP_CT_LEN,
 };
 
 const PW_NONCE: usize = 8;
@@ -143,7 +143,7 @@ fn parse_password(
     payload: usize,
     entry_len: u32,
 ) -> Result<(WrapEntry<'_>, usize), FormatError> {
-    if entry_len != password_payload_wire() {
+    if u32::try_from(PASSWORD_PAYLOAD_LEN) != Ok(entry_len) {
         return Err(FormatError::CorruptedLength);
     }
     let end = shift(payload, PASSWORD_PAYLOAD_LEN)?;
@@ -167,7 +167,7 @@ fn parse_device(
     payload: usize,
     entry_len: u32,
 ) -> Result<(WrapEntry<'_>, usize), FormatError> {
-    if entry_len != device_payload_wire() {
+    if u32::try_from(DEVICE_PAYLOAD_LEN) != Ok(entry_len) {
         return Err(FormatError::CorruptedLength);
     }
     let end = shift(payload, DEVICE_PAYLOAD_LEN)?;
