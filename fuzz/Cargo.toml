@@ -1,0 +1,25 @@
+[package]
+name = "container-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.container]
+path = "../crates/container"
+
+# Own workspace so the root virtual manifest does not list this package.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "parse_container"
+path = "fuzz_targets/parse_container.rs"
+test = false
+doc = false
+bench = false
