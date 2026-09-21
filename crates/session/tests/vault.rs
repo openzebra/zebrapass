@@ -80,6 +80,17 @@ fn reject_before_argon() {
         unlock(&VaultFile::new(bytes), "password", None, None).unwrap_err(),
         VaultV2Error::KdfParamsRejected
     );
+    // v1 bytes have no BRBY magic. Reject them before Argon2, feature or not.
+    assert_eq!(
+        unlock(
+            &VaultFile::new(b"v1-vault-no-magic".to_vec()),
+            "password",
+            None,
+            None
+        )
+        .unwrap_err(),
+        VaultV2Error::BadMagic
+    );
 }
 
 fn round_trip(password: &str, alg: BodyAlg) -> (VaultFile, Session) {
