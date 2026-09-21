@@ -7,5 +7,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+argon2.workspace = true
+hkdf.workspace = true
+secret = { path = "../secret" }
+sha2.workspace = true
+
 [lints]
 workspace = true
