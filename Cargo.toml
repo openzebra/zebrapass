@@ -24,6 +24,8 @@ sha2 = "=0.11.0"
 hmac = "=0.13.0"
 x25519-dalek = "=3.0.0"
 pqcrypto-ntruprime = "=0.1.6"
+# Exact pin of the version pqcrypto-ntruprime 0.1.6 declares. Do not float.
+pqcrypto-traits = "=0.3.4"
 rand = "=0.10.3"
 getrandom = "=0.4.3"
 zeroize = "=1.9.0"
