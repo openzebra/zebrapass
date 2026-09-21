@@ -8,7 +8,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-argon2.workspace = true
+argon2 = { workspace = true, features = ["alloc"] }
 hkdf.workspace = true
 secret = { path = "../secret" }
 sha2.workspace = true
