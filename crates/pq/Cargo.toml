@@ -7,5 +7,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+pqcrypto-ntruprime.workspace = true
+pqcrypto-traits.workspace = true
+secret = { path = "../secret" }
+
 [lints]
 workspace = true
