@@ -152,8 +152,20 @@ pub fn encrypt_records(
     records: &[u8],
 ) -> Result<Vec<u8>, VaultV2Error> {
     let ad = body_ad(header);
-    let nonce = fresh_nonce(alg)?;
-    encrypt_body(alg, k_body, k_bmac, nonce.as_slice(), &ad, records).map_err(Into::into)
+    let mut nonce = [0u8; 32];
+    let nonce_len = match alg {
+        BodyAlg::Aegis256 => 32,
+        BodyAlg::KuzCtrHmac => 8,
+        BodyAlg::KuzMgm => return Err(VaultV2Error::UnsupportedBodyAlg(BODY_KUZ_MGM)),
+    };
+    let slot = nonce
+        .get_mut(..nonce_len)
+        .ok_or(VaultV2Error::CorruptedLength)?;
+    fill_random(slot)?;
+    let used = nonce
+        .get(..nonce_len)
+        .ok_or(VaultV2Error::CorruptedLength)?;
+    encrypt_body(alg, k_body, k_bmac, used, &ad, records).map_err(Into::into)
 }
 
 pub fn assemble_committed(
@@ -239,22 +251,6 @@ fn new_header(profile: KdfProfile, body_alg: u16) -> Result<StaticHeader, VaultV
     })
 }
 
-fn fresh_nonce(alg: BodyAlg) -> Result<Nonce, VaultV2Error> {
-    match alg {
-        BodyAlg::Aegis256 => {
-            let mut nonce = [0u8; 32];
-            fill_random(&mut nonce)?;
-            Ok(Nonce::Aegis(nonce))
-        }
-        BodyAlg::KuzCtrHmac => {
-            let mut nonce = [0u8; 8];
-            fill_random(&mut nonce)?;
-            Ok(Nonce::Kuz(nonce))
-        }
-        BodyAlg::KuzMgm => Err(VaultV2Error::UnsupportedBodyAlg(BODY_KUZ_MGM)),
-    }
-}
-
 fn fill_random(dest: &mut [u8]) -> Result<(), VaultV2Error> {
     // The session error set has no RNG variant. Wipe whatever was written and
     // report a structural failure; the caller cannot repair an OS entropy error.
@@ -263,18 +259,4 @@ fn fill_random(dest: &mut [u8]) -> Result<(), VaultV2Error> {
         return Err(VaultV2Error::CorruptedLength);
     }
     Ok(())
-}
-
-enum Nonce {
-    Aegis([u8; 32]),
-    Kuz([u8; 8]),
-}
-
-impl Nonce {
-    const fn as_slice(&self) -> &[u8] {
-        match self {
-            Self::Aegis(nonce) => nonce,
-            Self::Kuz(nonce) => nonce,
-        }
-    }
 }

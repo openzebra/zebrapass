@@ -165,6 +165,16 @@ fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics,
     assert_eq!(session.generation(), generation + 1);
     assert_eq!(file.parse().unwrap().generation, generation + 1);
     assert!(grant.as_bytes().starts_with(&header_bytes(file)));
+    let after_add = file.as_bytes().to_vec();
+    let generation_after = session.generation();
+    let tag_after = *session.commit_tag();
+    assert_eq!(
+        add_device(session, file, &device.0).unwrap_err(),
+        VaultV2Error::CorruptedLength
+    );
+    assert_eq!(file.as_bytes(), after_add.as_slice());
+    assert_eq!(session.generation(), generation_after);
+    assert_eq!(session.commit_tag(), &tag_after);
     let opened = unlock(file, PW_AEGIS, None, None).unwrap();
     assert_eq!(opened.generation(), session.generation());
     assert_eq!(opened.commit_tag(), session.commit_tag());

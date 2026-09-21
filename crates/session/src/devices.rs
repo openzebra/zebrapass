@@ -13,6 +13,8 @@ use crate::error::VaultV2Error;
 ///
 /// # Errors
 ///
+/// [`VaultV2Error::CorruptedLength`] when `dev_pks.id` is already in the directory.
+/// That check runs before the device is sealed, so the file is unchanged.
 /// [`VaultV2Error::ZeroSharedSecret`] when `dev_pks.x_pk` yields a zero X25519 secret.
 /// Parse and RNG failures use the same variants as [`crate::create`].
 pub fn add_device(
@@ -22,6 +24,14 @@ pub fn add_device(
 ) -> Result<DeviceGrant, VaultV2Error> {
     let (header, generation, body, records, grant) = {
         let parsed = file.parse()?;
+        // A repeated device id does not parse. Reject it before sealing.
+        if parsed
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, WrapEntry::Device(dev) if dev.device_id == dev_pks.id))
+        {
+            return Err(VaultV2Error::CorruptedLength);
+        }
         let (record, grant) = seal_device(&parsed.header, dev_pks, session.vk.expose())?;
         let mut records = Vec::with_capacity(parsed.entries.len().saturating_add(1));
         for entry in &parsed.entries {
