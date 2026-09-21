@@ -1,0 +1,11 @@
+[package]
+name = "pq"
+version = "0.1.0"
+description = "sntrup1277 key encapsulation."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

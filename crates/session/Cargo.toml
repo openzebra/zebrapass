@@ -1,0 +1,11 @@
+[package]
+name = "session"
+version = "0.1.0"
+description = "Vault create, unlock, and mutation session."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

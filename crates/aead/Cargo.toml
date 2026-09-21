@@ -1,0 +1,11 @@
+[package]
+name = "aead"
+version = "0.1.0"
+description = "Body encryption algorithms."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

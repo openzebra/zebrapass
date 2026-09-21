@@ -1,0 +1,11 @@
+[package]
+name = "wraps"
+version = "0.1.0"
+description = "Password and device wraps of the vault key."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

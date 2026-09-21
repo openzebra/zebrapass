@@ -1,0 +1,44 @@
+[workspace]
+members = [
+    "crates/secret",
+    "crates/container",
+    "crates/kdf",
+    "crates/aead",
+    "crates/pq",
+    "crates/wraps",
+    "crates/session",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.81"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+aegis = "=0.9.19"
+kuznechik-rs = "=0.1.0"
+argon2 = "=0.6.0"
+hkdf = "=0.13.0"
+sha2 = "=0.11.0"
+hmac = "=0.13.0"
+x25519-dalek = "=3.0.0"
+pqcrypto-ntruprime = "=0.1.6"
+rand = "=0.10.3"
+getrandom = "=0.4.3"
+zeroize = { version = "=1.9.0", features = ["derive"] }
+subtle = "=2.6.1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+cargo_common_metadata = "allow"
