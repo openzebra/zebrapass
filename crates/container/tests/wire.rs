@@ -7,12 +7,12 @@
 )]
 
 use container::{
-    assemble, encode_device_entry, encode_password_entry, encode_wrap_dir, FormatError,
-    StaticHeader, VaultFile, WrapDir, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM,
-    COMMIT_LEN, DEVICE_RECORD_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD,
-    HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX,
-    KDF_T_MIN, KEM_SNTRUP1277, KIND_PASSWORD, MAGIC, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
-    SNTRUP_CT_LEN, VERSION, WRAP_AEGIS256,
+    assemble, encode_device_entry, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile,
+    WrapDir, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM,
+    COMMIT_LEN, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN, DEVICE_SUFFIX_LEN, DOMAIN_BODY,
+    DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX,
+    KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN, KEM_NTRULP, KIND_PASSWORD, MAGIC,
+    PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
 };
 
 const fn header_with(body_alg: u16, m_kib: u32, t: u32, p: u32) -> StaticHeader {
@@ -39,17 +39,20 @@ fn password_record() -> [u8; PASSWORD_RECORD_LEN] {
     encode_password_entry([9; 8], [1; 32], [2; 32], [3; 32])
 }
 
+const DUMMY_NTRU_CT: usize = 16;
+
 fn device_record(id_byte: u8, kem_alg: u16, ct_byte: u8) -> Vec<u8> {
     encode_device_entry(
         [id_byte; 16],
         kem_alg,
         [0x21; 32],
         [0x43; 32],
-        &[ct_byte; SNTRUP_CT_LEN],
+        &[ct_byte; DUMMY_NTRU_CT],
         [0x55; 32],
         [0x66; 32],
         [0x77; 32],
     )
+    .expect("dummy ciphertext fits")
 }
 
 fn file_from(header: &StaticHeader, entries: &[&[u8]], body: &[u8], generation: u64) -> VaultFile {
@@ -58,19 +61,13 @@ fn file_from(header: &StaticHeader, entries: &[&[u8]], body: &[u8], generation: 
     assemble(header, &dir, body, &commit)
 }
 
-fn assert_allowed(err: FormatError) {
-    match err {
-        FormatError::BadMagic
-        | FormatError::UnsupportedVersion(_)
-        | FormatError::UnsupportedBodyAlg(_)
-        | FormatError::UnsupportedWrapAlg(_)
-        | FormatError::UnsupportedKdf(_)
-        | FormatError::UnsupportedKem(_)
-        | FormatError::KdfParamsRejected
-        | FormatError::CorruptedLength => {}
-    }
-    let as_error: &dyn std::error::Error = &err;
-    assert!(!as_error.to_string().is_empty());
+fn assert_allowed(err: &anyhow::Error) {
+    let msg = err.to_string();
+    let allowed = ["bad magic", "corrupted length", "kdf parameters rejected"];
+    assert!(
+        allowed.contains(&msg.as_str()) || msg.starts_with("unsupported "),
+        "unexpected parse error: {msg}"
+    );
 }
 
 #[test]
@@ -83,7 +80,7 @@ fn constants_match_the_spec() {
     assert_eq!(BODY_KUZ_CTR_HMAC, 0xA003);
     assert_eq!(WRAP_AEGIS256, 0xB001);
     assert_eq!(KIND_PASSWORD, 0x0001);
-    assert_eq!(KEM_SNTRUP1277, 0xC001);
+    assert_eq!(KEM_NTRULP, 0xC001);
     assert_eq!(DOMAIN_BODY, b"brby/v2/body");
     assert_eq!(DOMAIN_WRAP_PASSWORD, b"brby/v2/wrap-password");
     assert_eq!(DOMAIN_WRAP_DEVICE, b"brby/v2/wrap-device");
@@ -91,8 +88,9 @@ fn constants_match_the_spec() {
     assert_eq!(COMMIT_LEN, 32);
     assert_eq!(PASSWORD_PAYLOAD_LEN, 104);
     assert_eq!(PASSWORD_RECORD_LEN, 110);
-    assert_eq!(DEVICE_RECORD_LEN, 2031);
-    assert_eq!(SNTRUP_CT_LEN, 1847);
+    assert_eq!(DEVICE_PREFIX_LEN, 82);
+    assert_eq!(DEVICE_SUFFIX_LEN, 96);
+    assert_eq!(DEVICE_PAYLOAD_MIN, 82 + 1 + 96);
 }
 
 #[test]
@@ -130,26 +128,26 @@ fn roundtrip_password_header_body_and_commit() {
 #[test]
 fn bad_magic_is_reported_before_length() {
     assert_eq!(
-        VaultFile::new(vec![]).parse().unwrap_err(),
-        FormatError::BadMagic
+        VaultFile::new(vec![]).parse().unwrap_err().to_string(),
+        "bad magic"
     );
     assert_eq!(
-        VaultFile::new(vec![0x01]).parse().unwrap_err(),
-        FormatError::BadMagic
+        VaultFile::new(vec![0x01]).parse().unwrap_err().to_string(),
+        "bad magic"
     );
     assert_eq!(
-        VaultFile::new(b"BRB".to_vec()).parse().unwrap_err(),
-        FormatError::BadMagic
+        VaultFile::new(b"BRB".to_vec()).parse().unwrap_err().to_string(),
+        "bad magic"
     );
     assert_eq!(
-        VaultFile::new(b"BRBX".to_vec()).parse().unwrap_err(),
-        FormatError::BadMagic
+        VaultFile::new(b"BRBX".to_vec()).parse().unwrap_err().to_string(),
+        "bad magic"
     );
     let mut long = vec![0xAB; 200];
     long[..4].copy_from_slice(b"nope");
     assert_eq!(
-        VaultFile::new(long).parse().unwrap_err(),
-        FormatError::BadMagic
+        VaultFile::new(long).parse().unwrap_err().to_string(),
+        "bad magic"
     );
 }
 
@@ -159,8 +157,8 @@ fn short_file_with_magic_is_corrupted_length() {
         let mut bytes = vec![0u8; len];
         bytes[..4].copy_from_slice(b"BRBY");
         assert_eq!(
-            VaultFile::new(bytes).parse().unwrap_err(),
-            FormatError::CorruptedLength,
+            VaultFile::new(bytes).parse().unwrap_err().to_string(),
+            "corrupted length",
             "len {len}"
         );
     }
@@ -174,7 +172,7 @@ fn truncated_prefixes_of_a_valid_file_fail() {
     assert!(bytes.len() > HEADER_LEN);
     for len in 0..bytes.len() {
         let err = VaultFile::new(bytes[..len].to_vec()).parse().unwrap_err();
-        assert_allowed(err);
+        assert_allowed(&err);
     }
 }
 
@@ -188,14 +186,14 @@ fn two_password_entries_are_rejected() {
         &[0x22; 64],
         1,
     );
-    assert_eq!(file.parse().unwrap_err(), FormatError::CorruptedLength);
+    assert_eq!(file.parse().unwrap_err().to_string(), "corrupted length");
 }
 
 #[test]
 fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
     let password = password_record();
-    let first = device_record(0xAB, KEM_SNTRUP1277, 0x5A);
-    let duplicate = device_record(0xAB, KEM_SNTRUP1277, 0x5B);
+    let first = device_record(0xAB, KEM_NTRULP, 0x5A);
+    let duplicate = device_record(0xAB, KEM_NTRULP, 0x5B);
     let duplicated = file_from(
         &sample_header(BODY_AEGIS256),
         &[&password, first.as_slice(), duplicate.as_slice()],
@@ -203,13 +201,13 @@ fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
         3,
     );
     assert_eq!(
-        duplicated.parse().unwrap_err(),
-        FormatError::CorruptedLength
+        duplicated.parse().unwrap_err().to_string(),
+        "corrupted length"
     );
 
-    let second = device_record(0xCD, KEM_SNTRUP1277, 0x5C);
-    assert!(second.capacity() >= DEVICE_RECORD_LEN);
-    assert_eq!(second.len(), DEVICE_RECORD_LEN);
+    let second = device_record(0xCD, KEM_NTRULP, 0x5C);
+    let expected_len = 2 + 4 + DEVICE_PREFIX_LEN + DUMMY_NTRU_CT + DEVICE_SUFFIX_LEN;
+    assert_eq!(second.len(), expected_len);
     let file = file_from(
         &sample_header(BODY_AEGIS256),
         &[&password, first.as_slice(), second.as_slice()],
@@ -223,13 +221,13 @@ fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
         panic!("expected device");
     };
     assert_eq!(device.device_id, [0xCD; 16]);
-    assert_eq!(device.kem_alg, KEM_SNTRUP1277);
-    assert_eq!(device.sntrup_ct.as_slice(), &[0x5C; SNTRUP_CT_LEN]);
+    assert_eq!(device.kem_alg, KEM_NTRULP);
+    assert_eq!(device.ntru_ct, &[0x5C; DUMMY_NTRU_CT]);
     let bytes = file.as_bytes();
-    assert!(bytes.as_ptr_range().contains(&device.sntrup_ct.as_ptr()));
+    assert!(bytes.as_ptr_range().contains(&device.ntru_ct.as_ptr()));
     assert!(bytes
-        .windows(SNTRUP_CT_LEN)
-        .any(|window| window == device.sntrup_ct.as_slice()));
+        .windows(DUMMY_NTRU_CT)
+        .any(|window| window == device.ntru_ct));
 }
 
 #[test]
@@ -241,8 +239,8 @@ fn entry_len_mismatch_does_not_allocate_the_claimed_size() {
     let entry_len_at = HEADER_LEN + 2 + 8 + 2;
     bytes[entry_len_at..entry_len_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert_eq!(
-        VaultFile::new(bytes).parse().unwrap_err(),
-        FormatError::CorruptedLength
+        VaultFile::new(bytes).parse().unwrap_err().to_string(),
+        "corrupted length"
     );
 
     let mut minimal = sample_header(BODY_AEGIS256).to_bytes().to_vec();
@@ -252,8 +250,8 @@ fn entry_len_mismatch_does_not_allocate_the_claimed_size() {
     minimal.extend_from_slice(&103u32.to_le_bytes());
     minimal.extend_from_slice(&[0u8; COMMIT_LEN]);
     assert_eq!(
-        VaultFile::new(minimal).parse().unwrap_err(),
-        FormatError::CorruptedLength
+        VaultFile::new(minimal).parse().unwrap_err().to_string(),
+        "corrupted length"
     );
 }
 
@@ -272,7 +270,7 @@ fn unknown_kind_is_not_skipped() {
         &[0x22; 64],
         1,
     );
-    assert_eq!(file.parse().unwrap_err(), FormatError::CorruptedLength);
+    assert_eq!(file.parse().unwrap_err().to_string(), "corrupted length");
 }
 
 #[test]
@@ -294,9 +292,9 @@ fn kdf_floor_and_ceiling_are_inclusive() {
         bytes.extend_from_slice(&[0u8; COMMIT_LEN]);
         let err = VaultFile::new(bytes).parse().unwrap_err();
         if rejected {
-            assert_eq!(err, FormatError::KdfParamsRejected, "m={m_kib} t={t} p={p}");
+            assert_eq!(err.to_string(), "kdf parameters rejected", "m={m_kib} t={t} p={p}");
         } else {
-            assert_eq!(err, FormatError::CorruptedLength, "m={m_kib} t={t} p={p}");
+            assert_eq!(err.to_string(), "corrupted length", "m={m_kib} t={t} p={p}");
         }
     }
 }
@@ -310,8 +308,8 @@ fn algorithm_ids_are_checked_before_kdf_params() {
     version_and_m[4..6].copy_from_slice(&9u16.to_le_bytes());
     version_and_m[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(version_and_m).parse().unwrap_err(),
-        FormatError::UnsupportedVersion(9)
+        VaultFile::new(version_and_m).parse().unwrap_err().to_string(),
+        "unsupported version 0x0009"
     );
 
     let mut kdf_and_wrap = bytes.clone();
@@ -319,8 +317,8 @@ fn algorithm_ids_are_checked_before_kdf_params() {
     kdf_and_wrap[70..72].copy_from_slice(&1u16.to_le_bytes());
     kdf_and_wrap[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(kdf_and_wrap).parse().unwrap_err(),
-        FormatError::UnsupportedKdf(2)
+        VaultFile::new(kdf_and_wrap).parse().unwrap_err().to_string(),
+        "unsupported kdf 0x0002"
     );
 
     let mut wrap_and_body = bytes.clone();
@@ -328,16 +326,16 @@ fn algorithm_ids_are_checked_before_kdf_params() {
     wrap_and_body[68..70].copy_from_slice(&1u16.to_le_bytes());
     wrap_and_body[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(wrap_and_body).parse().unwrap_err(),
-        FormatError::UnsupportedWrapAlg(1)
+        VaultFile::new(wrap_and_body).parse().unwrap_err().to_string(),
+        "unsupported wrap algorithm 0x0001"
     );
 
     let mut body_and_m = bytes;
     body_and_m[68..70].copy_from_slice(&9u16.to_le_bytes());
     body_and_m[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(body_and_m).parse().unwrap_err(),
-        FormatError::UnsupportedBodyAlg(9)
+        VaultFile::new(body_and_m).parse().unwrap_err().to_string(),
+        "unsupported body algorithm 0x0009"
     );
 }
 
@@ -352,8 +350,8 @@ fn unsupported_kem_and_recognized_body_minimums() {
         1,
     );
     assert_eq!(
-        file.parse().unwrap_err(),
-        FormatError::UnsupportedKem(0x0002)
+        file.parse().unwrap_err().to_string(),
+        "unsupported kem 0x0002"
     );
 
     let minimums = [
@@ -370,7 +368,7 @@ fn unsupported_kem_and_recognized_body_minimums() {
             &vec![0x22; min_len - 1],
             1,
         );
-        assert_eq!(short.parse().unwrap_err(), FormatError::CorruptedLength);
+        assert_eq!(short.parse().unwrap_err().to_string(), "corrupted length");
     }
 }
 
@@ -384,8 +382,8 @@ fn exact_wrap_directory_rejects_a_trailing_body() {
     let mut with_tail = dir;
     with_tail.push(0);
     assert_eq!(
-        WrapDir::try_from(with_tail.as_slice()).unwrap_err(),
-        FormatError::CorruptedLength
+        WrapDir::try_from(with_tail.as_slice()).unwrap_err().to_string(),
+        "corrupted length"
     );
 }
 
@@ -394,16 +392,16 @@ fn wrap_count_must_fit_in_u16() {
     let empty: &[u8] = &[];
     let entries = vec![empty; 65_536];
     assert_eq!(
-        encode_wrap_dir(1, &entries).unwrap_err(),
-        FormatError::CorruptedLength
+        encode_wrap_dir(1, &entries).unwrap_err().to_string(),
+        "corrupted length"
     );
 }
 
 #[test]
 fn one_byte_and_random_inputs_only_return_format_errors() {
     assert_eq!(
-        VaultFile::new(vec![0x7F]).parse().unwrap_err(),
-        FormatError::BadMagic
+        VaultFile::new(vec![0x7F]).parse().unwrap_err().to_string(),
+        "bad magic"
     );
 
     let mut rng = Lcg(0x1234_5678_9ABC_DEF0);
@@ -415,7 +413,7 @@ fn one_byte_and_random_inputs_only_return_format_errors() {
             bytes[..4].copy_from_slice(b"BRBY");
         }
         let err = VaultFile::from(bytes).parse().unwrap_err();
-        assert_allowed(err);
+        assert_allowed(&err);
     }
 }
 

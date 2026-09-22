@@ -4,7 +4,6 @@ extern crate argon2 as argon2_impl;
 use argon2_impl::{Algorithm, Argon2, Params, Version};
 use secret::Secret;
 
-use crate::error::KdfError;
 
 /// OWASP Argon2id minimum: 19 MiB, two iterations, one lane.
 const M_KIB_FLOOR: u32 = 19_456;
@@ -25,46 +24,46 @@ const OUTPUT_LEN: usize = 32;
 ///
 /// # Errors
 ///
-/// [`KdfError::KdfParamsRejected`] when `m_kib`, `t`, or `p` is outside the
+/// `kdf parameters rejected` when `m_kib`, `t`, or `p` is outside the
 /// floor (`m_kib >= 19456`, `t >= 2`, `p >= 1`) or the ceiling
 /// (`m_kib <= 1048576`, `t <= 16`, `p <= 16`). Those inputs are rejected
 /// before Argon2 runs. The same error is returned when Argon2 itself rejects
 /// the inputs.
-/// [`KdfError::EmptyPassword`] when `password` is empty. Argon2 is not called.
+/// `empty password` when `password` is empty. Argon2 is not called.
 pub fn argon2id(
     password: &[u8],
     salt: &[u8; 32],
     m_kib: u32,
     t: u32,
     p: u32,
-) -> Result<Secret<[u8; OUTPUT_LEN]>, KdfError> {
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
     // `Params::new` accepts `m_kib` up to `u32::MAX` and the hash then
     // allocates that many kibibytes. Reject before either step.
     let in_range = (M_KIB_FLOOR..=M_KIB_CEILING).contains(&m_kib)
         && (T_FLOOR..=T_CEILING).contains(&t)
         && (P_FLOOR..=P_CEILING).contains(&p);
     if !in_range {
-        return Err(KdfError::KdfParamsRejected);
+        return Err(anyhow::anyhow!("kdf parameters rejected"));
     }
     // Argon2 treats an empty password as valid. This format does not.
     if password.is_empty() {
-        return Err(KdfError::EmptyPassword);
+        return Err(anyhow::anyhow!("empty password"));
     }
 
     let params =
-        Params::new(m_kib, t, p, Some(OUTPUT_LEN)).map_err(|_| KdfError::KdfParamsRejected)?;
+        Params::new(m_kib, t, p, Some(OUTPUT_LEN)).map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
     let hasher = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; OUTPUT_LEN];
     hasher
         .hash_password_into(password, salt, &mut out)
-        .map_err(|_| KdfError::KdfParamsRejected)?;
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
     Ok(Secret::new(out))
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use crate::{argon2id, derive_vault_keys, hkdf_sha512, KdfError, KdfProfile, INFO_DEVICE_WRAP};
+    use crate::{argon2id, derive_vault_keys, hkdf_sha512, KdfProfile, INFO_DEVICE_WRAP};
 
     #[test]
     fn bounds_empty_password_floor_and_domains() {
@@ -84,16 +83,12 @@ mod tests {
             (19_456, 2, 17),
         ];
         for (m_kib, t, p) in rejected {
-            assert!(matches!(
-                argon2id(password, &salt, m_kib, t, p),
-                Err(KdfError::KdfParamsRejected)
-            ));
+            let err = argon2id(password, &salt, m_kib, t, p).unwrap_err();
+            assert_eq!(err.to_string(), "kdf parameters rejected");
         }
 
-        assert!(matches!(
-            argon2id(b"", &salt, 19_456, 2, 1),
-            Err(KdfError::EmptyPassword)
-        ));
+        let err = argon2id(b"", &salt, 19_456, 2, 1).unwrap_err();
+        assert_eq!(err.to_string(), "empty password");
 
         assert_eq!(KdfProfile::Desktop.m_kib(), 262_144);
         assert_eq!(KdfProfile::Desktop.t(), 3);

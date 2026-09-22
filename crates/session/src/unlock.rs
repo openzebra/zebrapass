@@ -8,7 +8,7 @@ use wraps::{open_device, open_password, DeviceKeys};
 use zeroize::Zeroize;
 
 use crate::create::{body_ad, verify_commit, Session};
-use crate::error::{Seen, VaultV2Error};
+use crate::error::Seen;
 
 /// Open `file` with a password or with device keys.
 ///
@@ -18,21 +18,21 @@ use crate::error::{Seen, VaultV2Error};
 ///
 /// # Errors
 ///
-/// Parse errors use the same names as [`container::FormatError`].
-/// [`VaultV2Error::WrapNotFound`] when the device id or the password wrap is missing.
-/// [`VaultV2Error::WrapAuthFailed`] when the wrap tag does not match.
-/// [`VaultV2Error::CommitMismatch`] when the HMAC over every byte except the
+/// Parse failures surface as `anyhow` errors with stable messages.
+/// `wrap not found` when the device id or the password wrap is missing.
+/// `wrap authentication failed` when the wrap tag does not match.
+/// `commit mismatch` when the HMAC over every byte except the
 /// last 32 does not match. This is returned before the body is decrypted.
-/// [`VaultV2Error::BodyAuthFailed`] when the body tag does not match.
-/// [`VaultV2Error::Rollback`] when `seen` is newer than the file.
-/// [`VaultV2Error::Conflict`] when the generation matches `seen` but the commit tag does not.
-/// [`VaultV2Error::EmptyPassword`] when no device is given and `pw` is empty.
+/// `body authentication failed` when the body tag does not match.
+/// `rollback` when `seen` is newer than the file.
+/// `conflict` when the generation matches `seen` but the commit tag does not.
+/// `empty password` when no device is given and `pw` is empty.
 pub fn unlock(
     file: &VaultFile,
     pw: &str,
     dev: Option<&DeviceKeys>,
     seen: Option<Seen>,
-) -> Result<Session, VaultV2Error> {
+) -> anyhow::Result<Session> {
     let parsed = file.parse()?;
     let vk = unwrap_vk(&parsed.header, &parsed.entries, pw, dev)?;
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
@@ -64,30 +64,30 @@ fn unwrap_vk(
     entries: &[WrapEntry<'_>],
     pw: &str,
     dev: Option<&DeviceKeys>,
-) -> Result<Secret<[u8; 32]>, VaultV2Error> {
+) -> anyhow::Result<Secret<[u8; 32]>> {
     if let Some(keys) = dev {
         let wrap = find_device(entries, &keys.id)?;
-        return open_device(header, wrap, keys).map_err(Into::into);
+        return open_device(header, wrap, keys);
     }
     let wrap = find_password(entries)?;
-    open_password(header, &wrap, pw).map_err(Into::into)
+    open_password(header, &wrap, pw)
 }
 
 fn find_password<'a>(
     entries: &'a [WrapEntry<'a>],
-) -> Result<container::PasswordWrap<'a>, VaultV2Error> {
+) -> anyhow::Result<container::PasswordWrap<'a>> {
     for entry in entries {
         if let WrapEntry::Password(wrap) = entry {
             return Ok(*wrap);
         }
     }
-    Err(VaultV2Error::WrapNotFound)
+    Err(anyhow::anyhow!("wrap not found"))
 }
 
 fn find_device<'a>(
     entries: &'a [WrapEntry<'a>],
     device_id: &[u8; 16],
-) -> Result<&'a container::DeviceWrap<'a>, VaultV2Error> {
+) -> anyhow::Result<&'a container::DeviceWrap<'a>> {
     for entry in entries {
         if let WrapEntry::Device(wrap) = entry {
             if wrap.device_id == *device_id {
@@ -95,7 +95,7 @@ fn find_device<'a>(
             }
         }
     }
-    Err(VaultV2Error::WrapNotFound)
+    Err(anyhow::anyhow!("wrap not found"))
 }
 
 fn decrypt_and_wipe(
@@ -104,7 +104,7 @@ fn decrypt_and_wipe(
     k_bmac: &[u8; 32],
     header: &container::StaticHeader,
     body: &[u8],
-) -> Result<(), VaultV2Error> {
+) -> anyhow::Result<()> {
     let ad = body_ad(header);
     // Authenticate the body, then wipe it. The session does not store records.
     #[allow(
@@ -120,15 +120,15 @@ fn accept_seen(
     seen: Option<Seen>,
     generation: u64,
     commit_tag: &[u8; 32],
-) -> Result<(), VaultV2Error> {
+) -> anyhow::Result<()> {
     let Some(seen) = seen else {
         return Ok(());
     };
     if generation < seen.generation {
-        return Err(VaultV2Error::Rollback);
+        return Err(anyhow::anyhow!("rollback"));
     }
     if generation == seen.generation && !secret::ct_eq_32(commit_tag, &seen.commit_tag) {
-        return Err(VaultV2Error::Conflict);
+        return Err(anyhow::anyhow!("conflict"));
     }
     Ok(())
 }

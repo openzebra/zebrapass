@@ -1,11 +1,8 @@
-//! sntrup1277 key encapsulation.
+//! ntrulp encryption for a device wrap.
 
-mod sntrup;
+mod ntrup;
 
-#[cfg(test)]
-mod kat;
-
-pub use sntrup::{
-    ciphertext_bytes, decapsulate, encapsulate, keypair, public_key_bytes, secret_key_bytes,
-    PqError,
+pub use ntrup::{
+    decrypt_shared, encrypt_shared, keypair, public_key_bytes, secret_key_bytes, PQ_PK_LEN,
+    PQ_SK_LEN,
 };

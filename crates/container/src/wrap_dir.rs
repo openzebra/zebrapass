@@ -3,7 +3,6 @@
 //! `wrap_count` and `generation` are outside the static header, so editing the
 //! directory does not change wrap or body associated data.
 
-use crate::error::FormatError;
 use crate::limits::{read_u16, read_u64, WRAP_DIR_HEADER_LEN};
 use crate::wrap_entry::{parse_entry, WrapEntry};
 
@@ -21,14 +20,14 @@ impl<'a> WrapDir<'a> {
     ///
     /// # Errors
     ///
-    /// Same as [`Self::parse_prefix`], plus [`FormatError::CorruptedLength`]
+    /// Same as [`Self::parse_prefix`], plus `corrupted length`
     /// when bytes remain after `wrap_count` entries.
-    pub(crate) fn parse_exact(bytes: &'a [u8]) -> Result<Self, FormatError> {
+    pub(crate) fn parse_exact(bytes: &'a [u8]) -> anyhow::Result<Self> {
         let (dir, tail) = Self::parse_prefix(bytes)?;
         if tail.is_empty() {
             Ok(dir)
         } else {
-            Err(FormatError::CorruptedLength)
+            Err(anyhow::anyhow!("corrupted length"))
         }
     }
 
@@ -39,15 +38,15 @@ impl<'a> WrapDir<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`FormatError::CorruptedLength`] when the prefix is shorter than
+    /// Returns `corrupted length` when the prefix is shorter than
     /// `wrap_count` and `generation`, an entry is truncated or the wrong size,
     /// the kind is unknown, the password count is not one, or a `device_id`
-    /// repeats. Returns [`FormatError::UnsupportedKem`] for a device KEM other
+    /// repeats. Returns `unsupported kem` for a device KEM other
     /// than sntrup1277.
-    pub(crate) fn parse_prefix(bytes: &'a [u8]) -> Result<(Self, &'a [u8]), FormatError> {
+    pub(crate) fn parse_prefix(bytes: &'a [u8]) -> anyhow::Result<(Self, &'a [u8])> {
         // Do not read wrap_count or generation until both fields fit.
         if bytes.len() < WRAP_DIR_HEADER_LEN {
-            return Err(FormatError::CorruptedLength);
+            return Err(anyhow::anyhow!("corrupted length"));
         }
         let wrap_count = read_u16(bytes, 0)?;
         let generation = read_u64(bytes, 2)?;
@@ -59,7 +58,7 @@ impl<'a> WrapDir<'a> {
             offset = next;
         }
         check_entries(&entries)?;
-        let tail = bytes.get(offset..).ok_or(FormatError::CorruptedLength)?;
+        let tail = bytes.get(offset..).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         Ok((
             Self {
                 generation,
@@ -71,7 +70,7 @@ impl<'a> WrapDir<'a> {
 }
 
 impl<'a> TryFrom<&'a [u8]> for WrapDir<'a> {
-    type Error = FormatError;
+    type Error = anyhow::Error;
 
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         Self::parse_exact(bytes)
@@ -82,17 +81,17 @@ impl<'a> TryFrom<&'a [u8]> for WrapDir<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`FormatError::CorruptedLength`] when `entries.len()` does not fit
+/// Returns `corrupted length` when `entries.len()` does not fit
 /// in a `u16`, or when the concatenated length overflows `usize`.
-pub fn encode_wrap_dir(generation: u64, entries: &[&[u8]]) -> Result<Vec<u8>, FormatError> {
-    let count = u16::try_from(entries.len()).map_err(|_| FormatError::CorruptedLength)?;
+pub fn encode_wrap_dir(generation: u64, entries: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
+    let count = u16::try_from(entries.len()).map_err(|_| anyhow::anyhow!("corrupted length"))?;
     let payload = entries
         .iter()
         .try_fold(0usize, |acc, entry| acc.checked_add(entry.len()))
-        .ok_or(FormatError::CorruptedLength)?;
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let total = payload
         .checked_add(WRAP_DIR_HEADER_LEN)
-        .ok_or(FormatError::CorruptedLength)?;
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(&count.to_le_bytes());
     out.extend_from_slice(&generation.to_le_bytes());
@@ -102,7 +101,7 @@ pub fn encode_wrap_dir(generation: u64, entries: &[&[u8]]) -> Result<Vec<u8>, Fo
     Ok(out)
 }
 
-fn check_entries(entries: &[WrapEntry<'_>]) -> Result<(), FormatError> {
+fn check_entries(entries: &[WrapEntry<'_>]) -> anyhow::Result<()> {
     let mut saw_password = false;
     // Ids are public labels, not MAC tags, so ordinary equality is enough.
     let mut device_ids = Vec::with_capacity(entries.len());
@@ -110,13 +109,13 @@ fn check_entries(entries: &[WrapEntry<'_>]) -> Result<(), FormatError> {
         match entry {
             WrapEntry::Password(_) => {
                 if saw_password {
-                    return Err(FormatError::CorruptedLength);
+                    return Err(anyhow::anyhow!("corrupted length"));
                 }
                 saw_password = true;
             }
             WrapEntry::Device(device) => {
                 if device_ids.contains(&device.device_id) {
-                    return Err(FormatError::CorruptedLength);
+                    return Err(anyhow::anyhow!("corrupted length"));
                 }
                 device_ids.push(device.device_id);
             }
@@ -125,6 +124,6 @@ fn check_entries(entries: &[WrapEntry<'_>]) -> Result<(), FormatError> {
     if saw_password {
         Ok(())
     } else {
-        Err(FormatError::CorruptedLength)
+        Err(anyhow::anyhow!("corrupted length"))
     }
 }

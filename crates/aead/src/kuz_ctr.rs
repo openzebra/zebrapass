@@ -5,7 +5,7 @@ use kuznechik_rs::{Block128, Key, Kuznechik};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
-use crate::error::{copy_array, split_packed, AeadError};
+use crate::error::{copy_array, split_packed};
 
 const IV_LEN: usize = 8;
 const TAG_LEN: usize = 32;
@@ -19,7 +19,7 @@ pub fn seal(
     nonce: &[u8],
     ad: &[u8],
     pt: &[u8],
-) -> Result<Vec<u8>, AeadError> {
+) -> anyhow::Result<Vec<u8>> {
     let iv: [u8; IV_LEN] = copy_array(nonce)?;
     let mut ct = pt.to_vec();
     apply_ctr(k_body, iv, &mut ct);
@@ -32,13 +32,13 @@ pub fn open(
     k_bmac: &[u8; 32],
     packed: &[u8],
     ad: &[u8],
-) -> Result<Vec<u8>, AeadError> {
+) -> anyhow::Result<Vec<u8>> {
     let (nonce, ct, tag) = split_packed(packed, IV_LEN, TAG_LEN)?;
     let iv: [u8; IV_LEN] = copy_array(nonce)?;
     let expected: [u8; TAG_LEN] = copy_array(tag)?;
     let computed = mac_tag(k_bmac, &iv, ct, ad)?;
     if !bool::from(expected.ct_eq(&computed)) {
-        return Err(AeadError::BodyAuthFailed);
+        return Err(anyhow::anyhow!("body authentication failed"));
     }
     let mut pt = ct.to_vec();
     apply_ctr(k_body, iv, &mut pt);
@@ -77,10 +77,10 @@ fn increment_be(block: &mut [u8; BLOCK_LEN]) {
 }
 
 /// Tag is HMAC-SHA256(`k_bmac`, `IV ‖ ct ‖ AD`). The nonce is not copied into `AD`.
-fn mac_tag(k_bmac: &[u8; 32], iv: &[u8], ct: &[u8], ad: &[u8]) -> Result<[u8; TAG_LEN], AeadError> {
+fn mac_tag(k_bmac: &[u8; 32], iv: &[u8], ct: &[u8], ad: &[u8]) -> anyhow::Result<[u8; TAG_LEN]> {
     // A 32-byte key is a legal HMAC key. The constructor still returns `Result`.
     let Ok(mut mac) = HmacSha256::new_from_slice(k_bmac) else {
-        return Err(AeadError::CorruptedLength);
+        return Err(anyhow::anyhow!("corrupted length"));
     };
     mac.update(iv);
     mac.update(ct);
@@ -122,26 +122,15 @@ mod tests {
         "cb91fab1f20cbab6d1c6d15820bdba73",
     );
 
-    fn nibble(byte: u8) -> u8 {
-        match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            b'A'..=b'F' => byte - b'A' + 10,
-            _ => panic!("not hex"),
-        }
-    }
-
     fn unhex(input: &str) -> Vec<u8> {
-        let bytes = input.as_bytes();
-        assert_eq!(bytes.len() % 2, 0);
-        bytes
-            .chunks_exact(2)
-            .map(|pair| (nibble(pair[0]) << 4) | nibble(pair[1]))
-            .collect()
+        hex::decode(input).expect("valid hex")
     }
 
     fn unhex_array<const N: usize>(input: &str) -> [u8; N] {
-        unhex(input).try_into().expect("hex width")
+        hex::decode(input)
+            .expect("valid hex")
+            .try_into()
+            .expect("hex width")
     }
 
     #[test]

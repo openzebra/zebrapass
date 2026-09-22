@@ -13,7 +13,7 @@
 use aead::BodyAlg;
 use container::{
     assemble, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry,
-    BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, HEADER_LEN, KDF_ARGON2ID,
+    BODY_AEGIS256, BODY_KUZ_CTR_HMAC, COMMIT_LEN, HEADER_LEN, KDF_ARGON2ID,
     KDF_M_KIB_MAX, KDF_P_MIN, KDF_T_MIN, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, WRAP_AEGIS256,
 };
 use kdf::KdfProfile;
@@ -21,7 +21,7 @@ use pq::keypair;
 use secret::Secret;
 use session::{
     add_device, change_password, create, reencrypt_body, remove_device, unlock, write_records,
-    Seen, Session, VaultV2Error,
+    Seen, Session,
 };
 use wraps::{DeviceKeys, DevicePublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
@@ -57,12 +57,12 @@ fn vault_operations_mobile_and_one_desktop() {
 
 fn reject_before_argon() {
     assert_eq!(
-        create("", KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err(),
-        VaultV2Error::EmptyPassword
+        create("", KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err().to_string(),
+        "empty password"
     );
     assert_eq!(
-        create("not-empty", KdfProfile::Mobile, BodyAlg::KuzMgm).unwrap_err(),
-        VaultV2Error::UnsupportedBodyAlg(BODY_KUZ_MGM)
+        create("not-empty", KdfProfile::Mobile, BodyAlg::KuzMgm).unwrap_err().to_string(),
+        "unsupported body algorithm 0xa002"
     );
     let header = StaticHeader {
         kdf_alg: KDF_ARGON2ID,
@@ -77,8 +77,8 @@ fn reject_before_argon() {
     let mut bytes = header.to_bytes().to_vec();
     bytes.extend_from_slice(&[0u8; COMMIT_LEN]);
     assert_eq!(
-        unlock(&VaultFile::new(bytes), "password", None, None).unwrap_err(),
-        VaultV2Error::KdfParamsRejected
+        unlock(&VaultFile::new(bytes), "password", None, None).unwrap_err().to_string(),
+        "kdf parameters rejected"
     );
     // v1 bytes have no BRBY magic. Reject them before Argon2, feature or not.
     assert_eq!(
@@ -88,8 +88,8 @@ fn reject_before_argon() {
             None,
             None
         )
-        .unwrap_err(),
-        VaultV2Error::BadMagic
+        .unwrap_err().to_string(),
+        "bad magic"
     );
 }
 
@@ -104,18 +104,18 @@ fn round_trip(password: &str, alg: BodyAlg) -> (VaultFile, Session) {
 
 fn tamper(file: &VaultFile, password: &str) {
     assert_eq!(
-        unlock(file, "wrong-password", None, None).unwrap_err(),
-        VaultV2Error::WrapAuthFailed
+        unlock(file, "wrong-password", None, None).unwrap_err().to_string(),
+        "wrap authentication failed"
     );
     let flipped_header = flip_at(file, 20);
     assert_eq!(
-        unlock(&flipped_header, password, None, None).unwrap_err(),
-        VaultV2Error::WrapAuthFailed
+        unlock(&flipped_header, password, None, None).unwrap_err().to_string(),
+        "wrap authentication failed"
     );
     let flipped_body = flip_at(file, body_offset(file));
     assert_eq!(
-        unlock(&flipped_body, password, None, None).unwrap_err(),
-        VaultV2Error::CommitMismatch
+        unlock(&flipped_body, password, None, None).unwrap_err().to_string(),
+        "commit mismatch"
     );
     let parsed = file.parse().unwrap();
     let WrapEntry::Password(wrap) = &parsed.entries[0] else {
@@ -124,13 +124,13 @@ fn tamper(file: &VaultFile, password: &str) {
     assert_eq!(file.as_bytes()[PASSWORD_CT_OFFSET], wrap.ct[0]);
     let flipped_ct = flip_at(file, PASSWORD_CT_OFFSET);
     assert_eq!(
-        unlock(&flipped_ct, password, None, None).unwrap_err(),
-        VaultV2Error::WrapAuthFailed
+        unlock(&flipped_ct, password, None, None).unwrap_err().to_string(),
+        "wrap authentication failed"
     );
     let swapped_alg = set_body_alg(file, BODY_KUZ_CTR_HMAC);
     assert_eq!(
-        unlock(&swapped_alg, password, None, None).unwrap_err(),
-        VaultV2Error::WrapAuthFailed
+        unlock(&swapped_alg, password, None, None).unwrap_err().to_string(),
+        "wrap authentication failed"
     );
 }
 
@@ -138,14 +138,14 @@ fn transplant(aegis: &VaultFile, kuz: &VaultFile) {
     let foreign = password_record(aegis);
     let mixed = with_password_record(kuz, &foreign);
     assert_eq!(
-        unlock(&mixed, PW_AEGIS, None, None).unwrap_err(),
-        VaultV2Error::WrapAuthFailed
+        unlock(&mixed, PW_AEGIS, None, None).unwrap_err().to_string(),
+        "wrap authentication failed"
     );
     // B's password wrap stays. A's record replaces the body, so the commit is stale.
     let spliced = replace_body(kuz, &foreign);
     assert_eq!(
-        unlock(&spliced, PW_KUZ, None, None).unwrap_err(),
-        VaultV2Error::CommitMismatch
+        unlock(&spliced, PW_KUZ, None, None).unwrap_err().to_string(),
+        "commit mismatch"
     );
 }
 
@@ -156,11 +156,11 @@ fn reject_zero_x25519(session: &mut Session, file: &mut VaultFile) {
     let dev = DevicePublics {
         id: [9; 16],
         x_pk: [0; 32],
-        pq_pk: [0; 2067],
+        pq_pk: [0; pq::PQ_PK_LEN],
     };
     assert_eq!(
-        add_device(session, file, &dev).unwrap_err(),
-        VaultV2Error::ZeroSharedSecret
+        add_device(session, file, &dev).unwrap_err().to_string(),
+        "zero shared secret"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
     assert_eq!(session.generation(), generation);
@@ -180,8 +180,8 @@ fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics,
     let generation_after = session.generation();
     let tag_after = *session.commit_tag();
     assert_eq!(
-        add_device(session, file, &device.0).unwrap_err(),
-        VaultV2Error::CorruptedLength
+        add_device(session, file, &device.0).unwrap_err().to_string(),
+        "corrupted length"
     );
     assert_eq!(file.as_bytes(), after_add.as_slice());
     assert_eq!(session.generation(), generation_after);
@@ -199,8 +199,8 @@ fn reencrypt_and_check(
 ) {
     reencrypt_body(session, file, b"rotated-records", PW_ROTATED, &[device.0]).unwrap();
     assert_eq!(
-        unlock(file, PW_AEGIS, None, None).unwrap_err(),
-        VaultV2Error::WrapAuthFailed
+        unlock(file, PW_AEGIS, None, None).unwrap_err().to_string(),
+        "wrap authentication failed"
     );
     let opened = unlock(file, PW_ROTATED, None, None).unwrap();
     assert_eq!(opened.commit_tag(), session.commit_tag());
@@ -221,8 +221,8 @@ fn change_password_and_check(session: &mut Session, file: &mut VaultFile) {
         commit_tag: *session.commit_tag(),
     };
     assert_eq!(
-        unlock(&old, PW_ROTATED, None, Some(seen)).unwrap_err(),
-        VaultV2Error::Rollback
+        unlock(&old, PW_ROTATED, None, Some(seen)).unwrap_err().to_string(),
+        "rollback"
     );
     let opened_old = unlock(&old, PW_ROTATED, None, None).unwrap();
     assert_eq!(opened_old.generation() + 1, session.generation());
@@ -245,8 +245,8 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
     let generation = session.generation();
     let missing = [0x11; 16];
     assert_eq!(
-        remove_device(session, file, &missing).unwrap_err(),
-        VaultV2Error::WrapNotFound
+        remove_device(session, file, &missing).unwrap_err().to_string(),
+        "wrap not found"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
     assert_eq!(session.generation(), generation);
@@ -275,7 +275,7 @@ fn desktop_once() {
 
 fn device_identity(id_byte: u8) -> (DevicePublics, DeviceKeys) {
     let (ntru_bytes, kem_secret) = keypair().unwrap();
-    let ntru_pk: [u8; 2067] = ntru_bytes.as_slice().try_into().unwrap();
+    let ntru_pk: [u8; pq::PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
     let mut scalar = [0u8; 32];
     getrandom::fill(&mut scalar).unwrap();
     let x_pk = x25519(scalar, X25519_BASEPOINT_BYTES);

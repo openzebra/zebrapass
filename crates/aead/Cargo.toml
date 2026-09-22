@@ -8,11 +8,16 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 aegis.workspace = true
 kuznechik-rs.workspace = true
 hmac.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+
+[dev-dependencies]
+# KAT vectors only; production code never touches strings or hex.
+hex.workspace = true
 
 [lints]
 workspace = true

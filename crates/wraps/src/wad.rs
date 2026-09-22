@@ -3,12 +3,10 @@
 use aegis::aegis256::Aegis256;
 use container::{
     StaticHeader, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, KIND_DEVICE, KIND_PASSWORD,
-    SNTRUP_CT_LEN,
 };
 use secret::Secret;
 use zeroize::Zeroize;
 
-use crate::error::WrapError;
 
 pub fn password_wad(header: &StaticHeader, kid: [u8; 8], nonce: &[u8; 32]) -> Vec<u8> {
     let header_bytes = header.to_bytes();
@@ -76,7 +74,7 @@ pub fn open_vk(
     ad: &[u8],
     ct: &[u8; 32],
     tag: &[u8; 32],
-) -> Result<Secret<[u8; 32]>, WrapError> {
+) -> anyhow::Result<Secret<[u8; 32]>> {
     // Decrypt writes the plaintext over this copy. A bad tag erases it.
     let mut vk = *ct;
     match Aegis256::<32>::new(key, nonce).decrypt_in_place(&mut vk, tag, ad) {
@@ -87,14 +85,14 @@ pub fn open_vk(
         }
         Err(_err) => {
             vk.zeroize();
-            Err(WrapError::WrapAuthFailed)
+            Err(anyhow::anyhow!("wrap authentication failed"))
         }
     }
 }
 
-pub fn random_array<const N: usize>() -> Result<[u8; N], WrapError> {
+pub fn random_array<const N: usize>() -> anyhow::Result<[u8; N]> {
     let mut bytes = [0u8; N];
-    getrandom::fill(&mut bytes).map_err(|_| WrapError::Entropy)?;
+    getrandom::fill(&mut bytes).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
     Ok(bytes)
 }
 
@@ -104,12 +102,12 @@ pub fn device_ikm(
     dev_x_pk: &[u8; 32],
     eph_pk: &[u8; 32],
     sntrup_ct: &[u8],
-) -> Result<Vec<u8>, WrapError> {
-    // Fixed layout: 32 + 32 + 32 + 32 + 1847. A short ciphertext must not reach HKDF.
-    if sntrup_ct.len() != SNTRUP_CT_LEN {
-        return Err(WrapError::KemLength);
+) -> anyhow::Result<Vec<u8>> {
+    // An empty ciphertext is not an `ntrulp` blob. Do not feed it to HKDF.
+    if sntrup_ct.is_empty() {
+        return Err(anyhow::anyhow!("kem length"));
     }
-    let mut ikm = Vec::with_capacity(32 + 32 + 32 + 32 + SNTRUP_CT_LEN);
+    let mut ikm = Vec::with_capacity(32 + 32 + 32 + 32 + sntrup_ct.len());
     ikm.extend_from_slice(ss_x);
     ikm.extend_from_slice(ss_pq);
     ikm.extend_from_slice(dev_x_pk);

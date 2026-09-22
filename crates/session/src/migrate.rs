@@ -15,7 +15,6 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
 use crate::create::create;
-use crate::error::VaultV2Error;
 use crate::rotate::write_records;
 
 /// v1 `ARGON2_DEFAULT_CONFIG`: 64 MiB, one pass, one lane, 64-byte output.
@@ -60,43 +59,11 @@ pub struct Migrated {
     pub shared_salt: bool,
 }
 
-/// Failure opening a v1 blob or sealing the v2 vault.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MigrateError {
-    /// Password was empty. Argon2 was not run.
-    EmptyPassword,
-    /// v1 key derivation or AES-GCM authentication failed.
-    V1Auth,
-    /// Kuznechik, NTRU, or CYBER was requested and this build cannot open it.
-    UnsupportedLayer,
-    /// The v2 vault could not be sealed. The v1 plaintext was not kept.
-    Vault(VaultV2Error),
-}
-
-impl core::fmt::Display for MigrateError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::EmptyPassword => formatter.write_str("empty password"),
-            Self::V1Auth => formatter.write_str("v1 authentication failed"),
-            Self::UnsupportedLayer => formatter.write_str("unsupported v1 layer"),
-            Self::Vault(err) => write!(formatter, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for MigrateError {}
-
-impl From<VaultV2Error> for MigrateError {
-    fn from(err: VaultV2Error) -> Self {
-        Self::Vault(err)
-    }
-}
-
 /// Open v1 layers and seal the plaintext in a new v2 vault.
 ///
 /// `orders_outer_first` peels `ciphertext` from the outside in. AES-256-GCM
 /// uses `SHA-256(argon2(password) ‖ [0])`. Kuznechik, NTRU, and CYBER return
-/// [`MigrateError::UnsupportedLayer`] and are not skipped.
+/// `unsupported v1 layer` and are not skipped.
 ///
 /// The v2 vault is [`create`] then [`write_records`] of the recovered bytes:
 /// new vault key, new salt, new vault id. Generation is 2 because `create`
@@ -104,11 +71,11 @@ impl From<VaultV2Error> for MigrateError {
 ///
 /// # Errors
 ///
-/// [`MigrateError::EmptyPassword`] when `password` is empty, before Argon2.
-/// [`MigrateError::UnsupportedLayer`] when any order is Kuznechik, NTRU, or CYBER.
-/// [`MigrateError::V1Auth`] when the outer AES buffer is shorter than 28 bytes,
+/// `empty password` when `password` is empty, before Argon2.
+/// `unsupported v1 layer` when any order is Kuznechik, NTRU, or CYBER.
+/// `v1 authentication failed` when the outer AES buffer is shorter than 28 bytes,
 /// a tag does not match, or Argon2 rejects the input.
-/// [`MigrateError::Vault`] when the password is not UTF-8 or v2 sealing fails.
+/// the sealing failure message when the password is not UTF-8 or v2 sealing fails.
 pub fn migrate(
     password: &[u8],
     caller_salt: &[u8],
@@ -116,13 +83,13 @@ pub fn migrate(
     orders_outer_first: &[V1LayerKind],
     profile: KdfProfile,
     body_alg: BodyAlg,
-) -> Result<Migrated, MigrateError> {
+) -> anyhow::Result<Migrated> {
     if password.is_empty() {
-        return Err(MigrateError::EmptyPassword);
+        return Err(anyhow::anyhow!("empty password"));
     }
     // `create` seals with `&str`. Reject non-UTF-8 before either Argon2.
     let pw = core::str::from_utf8(password)
-        .map_err(|_| MigrateError::Vault(VaultV2Error::CorruptedLength))?;
+        ?;
     reject_unsupported(orders_outer_first)?;
     // One outer buffer. Inner lengths are only known after that layer opens.
     reject_short_outer(ciphertext, orders_outer_first)?;
@@ -137,13 +104,13 @@ pub fn migrate(
     sealed
 }
 
-fn reject_unsupported(orders: &[V1LayerKind]) -> Result<(), MigrateError> {
+fn reject_unsupported(orders: &[V1LayerKind]) -> anyhow::Result<()> {
     for order in orders {
         match order {
             V1LayerKind::AesGcm => {}
             // Do not peel an outer AES layer and pretend an inner one opened.
             V1LayerKind::Kuznechik | V1LayerKind::Ntrup | V1LayerKind::Cyber => {
-                return Err(MigrateError::UnsupportedLayer);
+                return Err(anyhow::anyhow!("unsupported v1 layer"));
             }
         }
     }
@@ -151,12 +118,12 @@ fn reject_unsupported(orders: &[V1LayerKind]) -> Result<(), MigrateError> {
 }
 
 /// The outside AES layer needs a 16-byte tag and a 12-byte nonce before Argon2.
-const fn reject_short_outer(ciphertext: &[u8], orders: &[V1LayerKind]) -> Result<(), MigrateError> {
+const fn reject_short_outer(ciphertext: &[u8], orders: &[V1LayerKind]) -> anyhow::Result<()> {
     let Some(V1LayerKind::AesGcm) = orders.first().copied() else {
         return Ok(());
     };
     if ciphertext.len() < GCM_NONCE_LEN + GCM_TAG_LEN {
-        return Err(MigrateError::V1Auth);
+        return Err(anyhow::anyhow!("v1 authentication failed"));
     }
     Ok(())
 }
@@ -166,7 +133,7 @@ fn decrypt_layers(
     caller_salt: &[u8],
     ciphertext: &[u8],
     orders: &[V1LayerKind],
-) -> Result<Vec<u8>, MigrateError> {
+) -> anyhow::Result<Vec<u8>> {
     let seed = derive_seed(password, caller_salt)?;
     // Index byte 0 is AES. Other orders already failed before Argon2.
     let aes_key = Secret::new(indexed_key(seed.expose(), 0)?);
@@ -179,7 +146,7 @@ fn seal_recovered(
     body_alg: BodyAlg,
     records: &[u8],
     shared_salt: bool,
-) -> Result<Migrated, MigrateError> {
+) -> anyhow::Result<Migrated> {
     let (mut file, mut session) = create(pw, profile, body_alg)?;
     write_records(&mut session, &mut file, records)?;
     Ok(Migrated {
@@ -192,8 +159,8 @@ fn seal_recovered(
 fn derive_seed(
     password: &[u8],
     caller_salt: &[u8],
-) -> Result<Secret<[u8; SEED_LEN]>, MigrateError> {
-    let ad = AssociatedData::new(APP_ID).map_err(|_| MigrateError::V1Auth)?;
+) -> anyhow::Result<Secret<[u8; SEED_LEN]>> {
+    let ad = AssociatedData::new(APP_ID).map_err(|_| anyhow::anyhow!("v1 authentication failed"))?;
     let mut builder = ParamsBuilder::new();
     builder
         .m_cost(MEM_KIB)
@@ -201,7 +168,7 @@ fn derive_seed(
         .p_cost(LANES)
         .output_len(SEED_LEN)
         .data(ad);
-    let params = builder.build().map_err(|_| MigrateError::V1Auth)?;
+    let params = builder.build().map_err(|_| anyhow::anyhow!("v1 authentication failed"))?;
     let hasher = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut salt = legacy_salt(caller_salt)?;
     let mut raw = [0u8; SEED_LEN];
@@ -209,7 +176,7 @@ fn derive_seed(
     salt.zeroize();
     if argon_out.is_err() {
         raw.zeroize();
-        return Err(MigrateError::V1Auth);
+        return Err(anyhow::anyhow!("v1 authentication failed"));
     }
     let seed = Secret::new(raw);
     raw.zeroize();
@@ -217,11 +184,11 @@ fn derive_seed(
 }
 
 /// `caller_salt ‖ WALLET_SALT`. Empty caller salt is exactly the constant.
-fn legacy_salt(caller_salt: &[u8]) -> Result<Vec<u8>, MigrateError> {
+fn legacy_salt(caller_salt: &[u8]) -> anyhow::Result<Vec<u8>> {
     let cap = caller_salt
         .len()
         .checked_add(WALLET_SALT.len())
-        .ok_or(MigrateError::V1Auth)?;
+        .ok_or_else(|| anyhow::anyhow!("v1 authentication failed"))?;
     let mut salt = Vec::with_capacity(cap);
     salt.extend_from_slice(caller_salt);
     salt.extend_from_slice(WALLET_SALT);
@@ -229,25 +196,25 @@ fn legacy_salt(caller_salt: &[u8]) -> Result<Vec<u8>, MigrateError> {
 }
 
 /// `SHA-256(seed ‖ [idx])`, the v1 `derive_key_from_seed` step.
-fn indexed_key(seed: &[u8], idx: u8) -> Result<[u8; 32], MigrateError> {
+fn indexed_key(seed: &[u8], idx: u8) -> anyhow::Result<[u8; 32]> {
     let digest = Sha256::new()
         .chain_update(seed)
         .chain_update([idx])
         .finalize();
-    <[u8; 32]>::try_from(digest.as_slice()).map_err(|_| MigrateError::V1Auth)
+    <[u8; 32]>::try_from(digest.as_slice()).map_err(|_| anyhow::anyhow!("v1 authentication failed"))
 }
 
 fn peel(
     aes_key: &[u8; 32],
     ciphertext: &[u8],
     orders: &[V1LayerKind],
-) -> Result<Vec<u8>, MigrateError> {
+) -> anyhow::Result<Vec<u8>> {
     let mut current = ciphertext.to_vec();
     for order in orders {
         let next = match order {
             V1LayerKind::AesGcm => open_aes_gcm(aes_key, &current)?,
             V1LayerKind::Kuznechik | V1LayerKind::Ntrup | V1LayerKind::Cyber => {
-                return Err(MigrateError::UnsupportedLayer);
+                return Err(anyhow::anyhow!("unsupported v1 layer"));
             }
         };
         current = next;
@@ -255,24 +222,24 @@ fn peel(
     Ok(current)
 }
 
-fn open_aes_gcm(key: &[u8; 32], packed: &[u8]) -> Result<Vec<u8>, MigrateError> {
+fn open_aes_gcm(key: &[u8; 32], packed: &[u8]) -> anyhow::Result<Vec<u8>> {
     let min_len = GCM_NONCE_LEN + GCM_TAG_LEN;
     if packed.len() < min_len {
-        return Err(MigrateError::V1Auth);
+        return Err(anyhow::anyhow!("v1 authentication failed"));
     }
     let nonce_at = packed
         .len()
         .checked_sub(GCM_NONCE_LEN)
-        .ok_or(MigrateError::V1Auth)?;
+        .ok_or_else(|| anyhow::anyhow!("v1 authentication failed"))?;
     // `get` after the length check. v1 sliced the tail with no check.
-    let ct_and_tag = packed.get(..nonce_at).ok_or(MigrateError::V1Auth)?;
-    let nonce_bytes = packed.get(nonce_at..).ok_or(MigrateError::V1Auth)?;
+    let ct_and_tag = packed.get(..nonce_at).ok_or_else(|| anyhow::anyhow!("v1 authentication failed"))?;
+    let nonce_bytes = packed.get(nonce_at..).ok_or_else(|| anyhow::anyhow!("v1 authentication failed"))?;
     let nonce_array: [u8; GCM_NONCE_LEN] =
-        nonce_bytes.try_into().map_err(|_| MigrateError::V1Auth)?;
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| MigrateError::V1Auth)?;
+        nonce_bytes.try_into().map_err(|_| anyhow::anyhow!("v1 authentication failed"))?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| anyhow::anyhow!("v1 authentication failed"))?;
     cipher
         .decrypt(&Nonce::from(nonce_array), ct_and_tag)
-        .map_err(|_| MigrateError::V1Auth)
+        .map_err(|_| anyhow::anyhow!("v1 authentication failed"))
 }
 
 #[cfg(test)]
@@ -283,8 +250,7 @@ mod tests {
         WALLET_SALT,
     };
     use crate::create::body_ad;
-    use crate::migrate::{migrate, MigrateError, V1LayerKind};
-    use crate::VaultV2Error;
+    use crate::migrate::{migrate, V1LayerKind};
     use aead::{decrypt_body, BodyAlg};
     use aes_gcm::aead::Aead;
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -294,8 +260,8 @@ mod tests {
     #[test]
     fn layout_salt_and_rejections_do_not_hash() {
         assert_eq!(
-            migrate(b"", b"", b"", &[], KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err(),
-            MigrateError::EmptyPassword
+            migrate(b"", b"", b"", &[], KdfProfile::Mobile, BodyAlg::Aegis256).unwrap_err().to_string(),
+            "empty password"
         );
         let short = [0u8; GCM_NONCE_LEN + GCM_TAG_LEN - 1];
         assert_eq!(
@@ -307,8 +273,8 @@ mod tests {
                 KdfProfile::Mobile,
                 BodyAlg::Aegis256
             )
-            .unwrap_err(),
-            MigrateError::V1Auth
+            .unwrap_err().to_string(),
+            "v1 authentication failed"
         );
         for kind in [
             V1LayerKind::Kuznechik,
@@ -324,8 +290,8 @@ mod tests {
                     KdfProfile::Mobile,
                     BodyAlg::Aegis256
                 )
-                .unwrap_err(),
-                MigrateError::UnsupportedLayer
+                .unwrap_err().to_string(),
+                "unsupported v1 layer"
             );
         }
         // An inner NTRU order must fail closed, not be sealed as the v2 body.
@@ -338,8 +304,8 @@ mod tests {
                 KdfProfile::Mobile,
                 BodyAlg::Aegis256
             )
-            .unwrap_err(),
-            MigrateError::UnsupportedLayer
+            .unwrap_err().to_string(),
+            "unsupported v1 layer"
         );
         assert_eq!(
             migrate(
@@ -350,8 +316,8 @@ mod tests {
                 KdfProfile::Mobile,
                 BodyAlg::Aegis256
             )
-            .unwrap_err(),
-            MigrateError::Vault(VaultV2Error::CorruptedLength)
+            .unwrap_err().to_string(),
+            "corrupted length"
         );
 
         let salt = legacy_salt(b"").unwrap();
@@ -381,15 +347,15 @@ mod tests {
         );
         assert_eq!(open_aes_gcm(&key, &blob).unwrap(), outer_pt);
         assert_eq!(
-            open_aes_gcm(&key, &[0; 27]).unwrap_err(),
-            MigrateError::V1Auth
+            open_aes_gcm(&key, &[0; 27]).unwrap_err().to_string(),
+            "v1 authentication failed"
         );
         let mut tampered = blob;
         let first = tampered.first_mut().unwrap();
         *first ^= 0x01;
         assert_eq!(
-            open_aes_gcm(&key, &tampered).unwrap_err(),
-            MigrateError::V1Auth
+            open_aes_gcm(&key, &tampered).unwrap_err().to_string(),
+            "v1 authentication failed"
         );
 
         let inner = seal_aes(&key, outer_pt, nonce);

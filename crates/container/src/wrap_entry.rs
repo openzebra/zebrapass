@@ -5,11 +5,10 @@
 
 use std::marker::PhantomData;
 
-use crate::error::FormatError;
 use crate::limits::{
-    self, read_array, read_ref, read_u16, read_u32, shift, DEVICE_PAYLOAD_LEN, DEVICE_RECORD_LEN,
-    ENTRY_HEADER_LEN, KEM_SNTRUP1277, KIND_DEVICE, KIND_PASSWORD, PASSWORD_PAYLOAD_LEN,
-    PASSWORD_RECORD_LEN, SNTRUP_CT_LEN,
+    self, read_array, read_u16, read_u32, shift, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
+    DEVICE_SUFFIX_LEN, ENTRY_HEADER_LEN, KEM_NTRULP, KIND_DEVICE, KIND_PASSWORD,
+    PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
 };
 
 const PW_NONCE: usize = 8;
@@ -19,15 +18,10 @@ const PW_TAG: usize = 72;
 const DEV_KEM: usize = 16;
 const DEV_X_PK: usize = 18;
 const DEV_EPH_X_PK: usize = 50;
-const DEV_SNTRUP: usize = 82;
-const DEV_NONCE: usize = DEV_SNTRUP + SNTRUP_CT_LEN;
-const DEV_CT: usize = DEV_NONCE + 32;
-const DEV_TAG: usize = DEV_CT + 32;
 
 const _: () = {
     assert!(PW_TAG + 32 == PASSWORD_PAYLOAD_LEN);
-    assert!(16 + 2 + 32 + 32 == DEV_SNTRUP);
-    assert!(DEV_TAG + 32 == DEVICE_PAYLOAD_LEN);
+    assert!(DEV_EPH_X_PK + 32 == DEVICE_PREFIX_LEN);
 };
 
 /// Password wrap. Fixed fields are copies; the lifetime ties the entry to the file
@@ -45,19 +39,19 @@ pub struct PasswordWrap<'a> {
     _file: PhantomData<&'a [u8]>,
 }
 
-/// Device wrap. The sntrup ciphertext borrows the file.
+/// Device wrap. The `ntrulp` ciphertext borrows the file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceWrap<'a> {
     /// Device id.
     pub device_id: [u8; 16],
-    /// KEM id. Parsed entries hold [`KEM_SNTRUP1277`].
+    /// KEM id. Parsed entries hold [`KEM_NTRULP`].
     pub kem_alg: u16,
     /// Long-term X25519 public key of the device.
     pub dev_x_pk: [u8; 32],
     /// Ephemeral X25519 public key of the vault owner.
     pub eph_x_pk: [u8; 32],
-    /// sntrup1277 ciphertext borrowed from the file, not a `Vec` copy.
-    pub sntrup_ct: &'a [u8; SNTRUP_CT_LEN],
+    /// `ntrulp` ciphertext borrowed from the file, not a `Vec` copy.
+    pub ntru_ct: &'a [u8],
     /// AEGIS-256 nonce.
     pub nonce: [u8; 32],
     /// Wrapped vault key ciphertext.
@@ -88,11 +82,12 @@ pub fn encode_password_entry(
     limits::concat_array(&[&record_kind, &entry_len, &kid, &nonce, &ct, &tag])
 }
 
-/// Encode one device record (`2031` bytes).
+/// Encode one device record. `ntru_ct` is the `ntrulp` ciphertext, any non-empty length.
 ///
-/// The buffer is reserved at [`DEVICE_RECORD_LEN`]. `kem_alg` is written as given;
-/// parsing rejects anything other than [`KEM_SNTRUP1277`].
-#[must_use]
+/// # Errors
+///
+/// Returns `corrupted length` when `ntru_ct` is empty or the payload
+/// does not fit in `entry_len`.
 #[allow(
     clippy::too_many_arguments,
     reason = "each argument is one device-wrap wire field"
@@ -102,31 +97,43 @@ pub fn encode_device_entry(
     kem_alg: u16,
     dev_x_pk: [u8; 32],
     eph_x_pk: [u8; 32],
-    sntrup_ct: &[u8; SNTRUP_CT_LEN],
+    ntru_ct: &[u8],
     nonce: [u8; 32],
     ct: [u8; 32],
     tag: [u8; 32],
-) -> Vec<u8> {
-    let mut out = Vec::with_capacity(DEVICE_RECORD_LEN);
+) -> anyhow::Result<Vec<u8>> {
+    if ntru_ct.is_empty() {
+        return Err(anyhow::anyhow!("corrupted length"));
+    }
+    let payload = DEVICE_PREFIX_LEN
+        .checked_add(ntru_ct.len())
+        .and_then(|len| len.checked_add(DEVICE_SUFFIX_LEN))
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let entry_len = u32::try_from(payload).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+    let mut out = Vec::with_capacity(
+        ENTRY_HEADER_LEN
+            .checked_add(payload)
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?,
+    );
     out.extend_from_slice(&KIND_DEVICE.to_le_bytes());
-    out.extend_from_slice(&limits::wire_len(DEVICE_PAYLOAD_LEN));
+    out.extend_from_slice(&entry_len.to_le_bytes());
     out.extend_from_slice(&device_id);
     out.extend_from_slice(&kem_alg.to_le_bytes());
     out.extend_from_slice(&dev_x_pk);
     out.extend_from_slice(&eph_x_pk);
-    out.extend_from_slice(sntrup_ct);
+    out.extend_from_slice(ntru_ct);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ct);
     out.extend_from_slice(&tag);
-    out
+    Ok(out)
 }
 
-pub fn parse_entry(bytes: &[u8], offset: usize) -> Result<(WrapEntry<'_>, usize), FormatError> {
+pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>, usize)> {
     let header_end = shift(offset, ENTRY_HEADER_LEN)?;
     // Kind and entry_len are read only when those 6 bytes sit inside the buffer
     // (the caller passes bytes that already stop before the commit).
     if bytes.get(offset..header_end).is_none() {
-        return Err(FormatError::CorruptedLength);
+        return Err(anyhow::anyhow!("corrupted length"));
     }
     let kind = read_u16(bytes, offset)?;
     let entry_len = read_u32(bytes, shift(offset, 2)?)?;
@@ -134,7 +141,7 @@ pub fn parse_entry(bytes: &[u8], offset: usize) -> Result<(WrapEntry<'_>, usize)
         KIND_PASSWORD => parse_password(bytes, header_end, entry_len),
         KIND_DEVICE => parse_device(bytes, header_end, entry_len),
         // Unknown kinds are corruption. This version does not skip them.
-        _ => Err(FormatError::CorruptedLength),
+        _ => Err(anyhow::anyhow!("corrupted length")),
     }
 }
 
@@ -142,13 +149,13 @@ fn parse_password(
     bytes: &[u8],
     payload: usize,
     entry_len: u32,
-) -> Result<(WrapEntry<'_>, usize), FormatError> {
+) -> anyhow::Result<(WrapEntry<'_>, usize)> {
     if u32::try_from(PASSWORD_PAYLOAD_LEN) != Ok(entry_len) {
-        return Err(FormatError::CorruptedLength);
+        return Err(anyhow::anyhow!("corrupted length"));
     }
     let end = shift(payload, PASSWORD_PAYLOAD_LEN)?;
     if bytes.get(payload..end).is_none() {
-        return Err(FormatError::CorruptedLength);
+        return Err(anyhow::anyhow!("corrupted length"));
     }
     Ok((
         WrapEntry::Password(PasswordWrap {
@@ -166,49 +173,56 @@ fn parse_device(
     bytes: &[u8],
     payload: usize,
     entry_len: u32,
-) -> Result<(WrapEntry<'_>, usize), FormatError> {
-    if u32::try_from(DEVICE_PAYLOAD_LEN) != Ok(entry_len) {
-        return Err(FormatError::CorruptedLength);
+) -> anyhow::Result<(WrapEntry<'_>, usize)> {
+    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+    if payload_len < DEVICE_PAYLOAD_MIN {
+        return Err(anyhow::anyhow!("corrupted length"));
     }
-    let end = shift(payload, DEVICE_PAYLOAD_LEN)?;
+    let end = shift(payload, payload_len)?;
     if bytes.get(payload..end).is_none() {
-        return Err(FormatError::CorruptedLength);
+        return Err(anyhow::anyhow!("corrupted length"));
     }
     let kem_alg = read_u16(bytes, shift(payload, DEV_KEM)?)?;
-    if kem_alg != KEM_SNTRUP1277 {
-        return Err(FormatError::UnsupportedKem(kem_alg));
+    if kem_alg != KEM_NTRULP {
+        return Err(anyhow::anyhow!("unsupported kem {kem_alg:#06x}"));
     }
+    let ct_len = payload_len - DEVICE_PREFIX_LEN - DEVICE_SUFFIX_LEN;
+    let ct_at = shift(payload, DEVICE_PREFIX_LEN)?;
+    let after_ct = shift(ct_at, ct_len)?;
+    let ntru_ct = bytes
+        .get(ct_at..after_ct)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     Ok((
         WrapEntry::Device(DeviceWrap {
             device_id: read_array(bytes, payload)?,
             kem_alg,
             dev_x_pk: read_array(bytes, shift(payload, DEV_X_PK)?)?,
             eph_x_pk: read_array(bytes, shift(payload, DEV_EPH_X_PK)?)?,
-            sntrup_ct: read_ref(bytes, shift(payload, DEV_SNTRUP)?)?,
-            nonce: read_array(bytes, shift(payload, DEV_NONCE)?)?,
-            ct: read_array(bytes, shift(payload, DEV_CT)?)?,
-            tag: read_array(bytes, shift(payload, DEV_TAG)?)?,
+            ntru_ct,
+            nonce: read_array(bytes, after_ct)?,
+            ct: read_array(bytes, shift(after_ct, 32)?)?,
+            tag: read_array(bytes, shift(after_ct, 64)?)?,
         }),
         end,
     ))
 }
 
 impl<'a> TryFrom<&'a [u8]> for WrapEntry<'a> {
-    type Error = FormatError;
+    type Error = anyhow::Error;
 
     /// Accept one record and nothing after it.
     ///
     /// # Errors
     ///
-    /// Returns [`FormatError::CorruptedLength`] when the record is truncated,
+    /// Returns `corrupted length` when the record is truncated,
     /// the kind is unknown, or `entry_len` disagrees with the kind, and
-    /// [`FormatError::UnsupportedKem`] when a device record names another KEM.
+    /// `unsupported kem` when a device record names another KEM.
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let (entry, next) = parse_entry(bytes, 0)?;
         if next == bytes.len() {
             Ok(entry)
         } else {
-            Err(FormatError::CorruptedLength)
+            Err(anyhow::anyhow!("corrupted length"))
         }
     }
 }

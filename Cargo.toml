@@ -23,11 +23,12 @@ hkdf = "=0.13.0"
 sha2 = "=0.11.0"
 hmac = "=0.13.0"
 x25519-dalek = "=3.0.0"
-pqcrypto-ntruprime = "=0.1.6"
-# Exact pin of the version pqcrypto-ntruprime 0.1.6 declares. Do not float.
-pqcrypto-traits = "=0.3.4"
+ntrulp = { version = "=0.2.7", default-features = false, features = ["ntrup1277", "std"] }
 rand = "=0.10.3"
+anyhow = "=1.0.100"
 getrandom = "=0.4.3"
+# Tests only: KAT vectors are hex strings on the wire of the test files; prod code is bytes-only.
+hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
 

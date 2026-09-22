@@ -1,6 +1,5 @@
 //! Static header. Magic and version are checked, not stored: a parsed header is version 2.
 
-use crate::error::FormatError;
 use crate::limits::{
     self, read_array, read_u16, read_u32, HEADER_LEN, KDF_ARGON2ID, MAGIC, VERSION, WRAP_AEGIS256,
 };
@@ -79,38 +78,38 @@ impl StaticHeader {
 }
 
 impl TryFrom<&[u8]> for StaticHeader {
-    type Error = FormatError;
+    type Error = anyhow::Error;
 
     /// Accept exactly [`HEADER_LEN`] bytes.
     ///
     /// # Errors
     ///
-    /// Returns [`FormatError::BadMagic`] when the first bytes are not `BRBY`,
-    /// [`FormatError::CorruptedLength`] when the slice is not 72 bytes,
-    /// [`FormatError::UnsupportedVersion`], [`FormatError::UnsupportedKdf`],
-    /// [`FormatError::UnsupportedWrapAlg`], or [`FormatError::UnsupportedBodyAlg`]
-    /// for an unknown id, and [`FormatError::KdfParamsRejected`] when Argon2
+    /// Returns `bad magic` when the first bytes are not `BRBY`,
+    /// `corrupted length` when the slice is not 72 bytes,
+    /// `unsupported version`, `unsupported kdf`,
+    /// `unsupported wrap algorithm`, or `unsupported body algorithm`
+    /// for an unknown id, and `kdf parameters rejected` when Argon2
     /// parameters fall outside the floor or ceiling.
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         check_magic(bytes)?;
         if bytes.len() != HEADER_LEN {
-            return Err(FormatError::CorruptedLength);
+            return Err(anyhow::anyhow!("corrupted length"));
         }
         let version = read_u16(bytes, OFF_VERSION)?;
         if version != VERSION {
-            return Err(FormatError::UnsupportedVersion(version));
+            return Err(anyhow::anyhow!("unsupported version {version:#06x}"));
         }
         let kdf_alg = read_u16(bytes, OFF_KDF_ALG)?;
         if kdf_alg != KDF_ARGON2ID {
-            return Err(FormatError::UnsupportedKdf(kdf_alg));
+            return Err(anyhow::anyhow!("unsupported kdf {kdf_alg:#06x}"));
         }
         let wrap_alg = read_u16(bytes, OFF_WRAP_ALG)?;
         if wrap_alg != WRAP_AEGIS256 {
-            return Err(FormatError::UnsupportedWrapAlg(wrap_alg));
+            return Err(anyhow::anyhow!("unsupported wrap algorithm {wrap_alg:#06x}"));
         }
         let body_alg = read_u16(bytes, OFF_BODY_ALG)?;
         if !limits::known_body_alg(body_alg) {
-            return Err(FormatError::UnsupportedBodyAlg(body_alg));
+            return Err(anyhow::anyhow!("unsupported body algorithm {body_alg:#06x}"));
         }
         let kdf_m_kib = read_u32(bytes, OFF_KDF_M)?;
         let kdf_t = read_u32(bytes, OFF_KDF_T)?;
@@ -118,7 +117,7 @@ impl TryFrom<&[u8]> for StaticHeader {
         // Floor and ceiling run inside header acceptance so callers never start
         // Argon2, and the file parser does not read the wrap directory yet.
         if !limits::kdf_params_ok(kdf_m_kib, kdf_t, kdf_p) {
-            return Err(FormatError::KdfParamsRejected);
+            return Err(anyhow::anyhow!("kdf parameters rejected"));
         }
         Ok(Self {
             kdf_alg,
@@ -133,9 +132,9 @@ impl TryFrom<&[u8]> for StaticHeader {
     }
 }
 
-pub fn check_magic(bytes: &[u8]) -> Result<(), FormatError> {
+pub fn check_magic(bytes: &[u8]) -> anyhow::Result<()> {
     match bytes.get(..MAGIC.len()) {
         Some(magic) if magic == MAGIC.as_slice() => Ok(()),
-        _ => Err(FormatError::BadMagic),
+        _ => Err(anyhow::anyhow!("bad magic")),
     }
 }

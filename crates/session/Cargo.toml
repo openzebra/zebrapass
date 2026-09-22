@@ -11,6 +11,7 @@ rust-version.workspace = true
 legacy-v1 = ["dep:aes-gcm", "dep:argon2"]
 
 [dependencies]
+anyhow.workspace = true
 aead = { path = "../aead" }
 # v1 GCM only. Not in the default build: bearby-cipher does not link here.
 aes-gcm = { version = "=0.10.3", optional = true, default-features = false, features = ["aes", "alloc"] }

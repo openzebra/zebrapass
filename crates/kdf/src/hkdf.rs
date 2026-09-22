@@ -5,7 +5,6 @@ use hkdf_impl::Hkdf;
 use secret::Secret;
 use sha2::Sha512;
 
-use crate::error::KdfError;
 
 /// HKDF info for the device wrap key (`k_dev`).
 pub const INFO_DEVICE_WRAP: &[u8] = b"brby/v2/device-wrap";
@@ -22,16 +21,16 @@ const OUTPUT_LEN: usize = 32;
 ///
 /// # Errors
 ///
-/// [`KdfError::KdfParamsRejected`] when HKDF-Expand rejects the output length.
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn hkdf_sha512(
     ikm: &[u8],
     salt: &[u8; 16],
     info: &[u8],
-) -> Result<Secret<[u8; OUTPUT_LEN]>, KdfError> {
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
     let hk = Hkdf::<Sha512>::new(Some(salt.as_slice()), ikm);
     let mut okm = [0u8; OUTPUT_LEN];
     hk.expand(info, &mut okm)
-        .map_err(|_| KdfError::KdfParamsRejected)?;
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
     Ok(Secret::new(okm))
 }
 
@@ -42,7 +41,7 @@ pub fn hkdf_sha512(
 ///
 /// # Errors
 ///
-/// [`KdfError::KdfParamsRejected`] when HKDF-Expand fails.
+/// `kdf parameters rejected` when HKDF-Expand fails.
 #[allow(
     clippy::type_complexity,
     reason = "the cross-crate signature is the three derived keys"
@@ -50,14 +49,11 @@ pub fn hkdf_sha512(
 pub fn derive_vault_keys(
     vk: &[u8; 32],
     vault_id: &[u8; 16],
-) -> Result<
-    (
-        Secret<[u8; OUTPUT_LEN]>,
-        Secret<[u8; OUTPUT_LEN]>,
-        Secret<[u8; OUTPUT_LEN]>,
-    ),
-    KdfError,
-> {
+) -> anyhow::Result<(
+    Secret<[u8; OUTPUT_LEN]>,
+    Secret<[u8; OUTPUT_LEN]>,
+    Secret<[u8; OUTPUT_LEN]>,
+)> {
     let k_body = hkdf_sha512(vk, vault_id, INFO_BODY_ENC)?;
     let k_bmac = hkdf_sha512(vk, vault_id, INFO_BODY_MAC)?;
     let k_commit = hkdf_sha512(vk, vault_id, INFO_COMMIT)?;

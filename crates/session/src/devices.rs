@@ -4,7 +4,6 @@ use container::{VaultFile, WrapEntry};
 use wraps::{seal_device, DeviceGrant, DevicePublics};
 
 use crate::create::{encode_entry, next_generation, publish, Session};
-use crate::error::VaultV2Error;
 
 /// Append a device wrap of the session vault key.
 ///
@@ -13,15 +12,15 @@ use crate::error::VaultV2Error;
 ///
 /// # Errors
 ///
-/// [`VaultV2Error::CorruptedLength`] when `dev_pks.id` is already in the directory.
+/// `corrupted length` when `dev_pks.id` is already in the directory.
 /// That check runs before the device is sealed, so the file is unchanged.
-/// [`VaultV2Error::ZeroSharedSecret`] when `dev_pks.x_pk` yields a zero X25519 secret.
+/// `zero shared secret` when `dev_pks.x_pk` yields a zero X25519 secret.
 /// Parse and RNG failures use the same variants as [`crate::create`].
 pub fn add_device(
     session: &mut Session,
     file: &mut VaultFile,
     dev_pks: &DevicePublics,
-) -> Result<DeviceGrant, VaultV2Error> {
+) -> anyhow::Result<DeviceGrant> {
     let (header, generation, body, records, grant) = {
         let parsed = file.parse()?;
         // A repeated device id does not parse. Reject it before sealing.
@@ -30,12 +29,12 @@ pub fn add_device(
             .iter()
             .any(|entry| matches!(entry, WrapEntry::Device(dev) if dev.device_id == dev_pks.id))
         {
-            return Err(VaultV2Error::CorruptedLength);
+            return Err(anyhow::anyhow!("corrupted length"));
         }
         let (record, grant) = seal_device(&parsed.header, dev_pks, session.vk.expose())?;
         let mut records = Vec::with_capacity(parsed.entries.len().saturating_add(1));
         for entry in &parsed.entries {
-            records.push(encode_entry(entry));
+            records.push(encode_entry(entry)?);
         }
         records.push(record);
         let generation = next_generation(parsed.generation)?;
@@ -58,12 +57,12 @@ pub fn add_device(
 ///
 /// # Errors
 ///
-/// [`VaultV2Error::WrapNotFound`] when no device entry has `device_id`.
+/// `wrap not found` when no device entry has `device_id`.
 pub fn remove_device(
     session: &mut Session,
     file: &mut VaultFile,
     device_id: &[u8; 16],
-) -> Result<(), VaultV2Error> {
+) -> anyhow::Result<()> {
     let (header, generation, body, records) = {
         let parsed = file.parse()?;
         let mut found = false;
@@ -73,11 +72,11 @@ pub fn remove_device(
                 WrapEntry::Device(dev) if dev.device_id == *device_id => {
                     found = true;
                 }
-                other => records.push(encode_entry(other)),
+                other => records.push(encode_entry(other)?),
             }
         }
         if !found {
-            return Err(VaultV2Error::WrapNotFound);
+            return Err(anyhow::anyhow!("wrap not found"));
         }
         let generation = next_generation(parsed.generation)?;
         (parsed.header, generation, parsed.body.to_vec(), records)

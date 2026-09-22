@@ -4,7 +4,6 @@ use container::{encode_password_entry, PasswordWrap, StaticHeader};
 use kdf::argon2id;
 use secret::Secret;
 
-use crate::error::WrapError;
 use crate::wad::{self, password_wad};
 
 /// Seal `vk` under `password`.
@@ -16,14 +15,14 @@ use crate::wad::{self, password_wad};
 ///
 /// # Errors
 ///
-/// [`WrapError::EmptyPassword`] when `password` is empty. Argon2 is not run.
-/// [`WrapError::KdfParamsRejected`] when the header parameters are rejected.
-/// [`WrapError::Entropy`] when the OS RNG fails.
+/// `empty password` when `password` is empty. Argon2 is not run.
+/// `kdf parameters rejected` when the header parameters are rejected.
+/// `os entropy failed` when the OS RNG fails.
 pub fn seal_password(
     header: &StaticHeader,
     password: &str,
     vk: &[u8; 32],
-) -> Result<Vec<u8>, WrapError> {
+) -> anyhow::Result<Vec<u8>> {
     let kid = wad::random_array::<8>()?;
     let nonce = wad::random_array::<32>()?;
     let k_pw = argon2id(
@@ -41,18 +40,18 @@ pub fn seal_password(
 /// Open a password wrap.
 ///
 /// A wrong password and a corrupt tag both finish Argon2 and then return
-/// [`WrapError::WrapAuthFailed`]. They are not distinguished.
+/// `wrap authentication failed`. They are not distinguished.
 ///
 /// # Errors
 ///
-/// [`WrapError::EmptyPassword`] when `password` is empty, before Argon2.
-/// [`WrapError::KdfParamsRejected`] when the header parameters are rejected.
-/// [`WrapError::WrapAuthFailed`] when the AEGIS-256 tag does not match.
+/// `empty password` when `password` is empty, before Argon2.
+/// `kdf parameters rejected` when the header parameters are rejected.
+/// `wrap authentication failed` when the AEGIS-256 tag does not match.
 pub fn open_password(
     header: &StaticHeader,
     wrap: &PasswordWrap<'_>,
     password: &str,
-) -> Result<Secret<[u8; 32]>, WrapError> {
+) -> anyhow::Result<Secret<[u8; 32]>> {
     let k_pw = argon2id(
         password.as_bytes(),
         &header.kdf_salt,
@@ -79,7 +78,6 @@ mod tests {
     };
 
     use super::{open_password, seal_password};
-    use crate::error::WrapError;
 
     fn floor_header() -> StaticHeader {
         StaticHeader {
@@ -103,8 +101,8 @@ mod tests {
         let password = "floor-password";
 
         assert_eq!(
-            seal_password(&header, "", &vk).unwrap_err(),
-            WrapError::EmptyPassword
+            seal_password(&header, "", &vk).unwrap_err().to_string(),
+            "empty password"
         );
 
         let record = seal_password(&header, password, &vk).unwrap();
@@ -122,12 +120,12 @@ mod tests {
         let opened = open_password(&header, &parsed, password).unwrap();
         assert_eq!(opened.expose(), &vk);
         assert_eq!(
-            open_password(&header, &parsed, "not-the-password").unwrap_err(),
-            WrapError::WrapAuthFailed
+            open_password(&header, &parsed, "not-the-password").unwrap_err().to_string(),
+            "wrap authentication failed"
         );
         assert_eq!(
-            open_password(&header, &parsed, "").unwrap_err(),
-            WrapError::EmptyPassword
+            open_password(&header, &parsed, "").unwrap_err().to_string(),
+            "empty password"
         );
     }
 }

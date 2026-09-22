@@ -1,6 +1,5 @@
 //! File framing: static header, wrap directory, body, and an unverified commit tag.
 
-use crate::error::FormatError;
 use crate::header::{check_magic, StaticHeader};
 use crate::limits::{self, read_array, COMMIT_LEN, HEADER_LEN, MIN_FILE_LEN};
 use crate::wrap_dir::WrapDir;
@@ -29,34 +28,34 @@ impl VaultFile {
     ///
     /// # Errors
     ///
-    /// See [`FormatError`]. Magic is checked first. A file shorter than the
-    /// header plus the commit is [`FormatError::CorruptedLength`] before version
+    /// Magic is checked first. A file shorter than the
+    /// header plus the commit is `corrupted length` before version
     /// or KDF parameters are interpreted. Argon2 floor and ceiling are rejected
     /// before the wrap directory is read.
-    pub fn parse(&self) -> Result<Parsed<'_>, FormatError> {
+    pub fn parse(&self) -> anyhow::Result<Parsed<'_>> {
         let bytes = self.as_bytes();
         check_magic(bytes)?;
         if bytes.len() < MIN_FILE_LEN {
-            return Err(FormatError::CorruptedLength);
+            return Err(anyhow::anyhow!("corrupted length"));
         }
         let header_bytes = bytes
             .get(..HEADER_LEN)
-            .ok_or(FormatError::CorruptedLength)?;
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let header = StaticHeader::try_from(header_bytes)?;
         let commit_at = bytes
             .len()
             .checked_sub(COMMIT_LEN)
-            .ok_or(FormatError::CorruptedLength)?;
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let commit = read_array(bytes, commit_at)?;
-        let prefix = bytes.get(..commit_at).ok_or(FormatError::CorruptedLength)?;
+        let prefix = bytes.get(..commit_at).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let dir_and_body = prefix
             .get(HEADER_LEN..)
-            .ok_or(FormatError::CorruptedLength)?;
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let (dir, body) = WrapDir::parse_prefix(dir_and_body)?;
         let min_body = limits::min_body_len(header.body_alg)
-            .ok_or(FormatError::UnsupportedBodyAlg(header.body_alg))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported body algorithm {:#06x}", header.body_alg))?;
         if body.len() < min_body {
-            return Err(FormatError::CorruptedLength);
+            return Err(anyhow::anyhow!("corrupted length"));
         }
         Ok(Parsed {
             header,

@@ -19,27 +19,16 @@ pub enum BodyAlg {
 }
 
 impl TryFrom<u16> for BodyAlg {
-    type Error = AeadError;
+    type Error = anyhow::Error;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             AEGIS256_ID => Ok(Self::Aegis256),
             KUZ_MGM_ID => Ok(Self::KuzMgm),
             KUZ_CTR_HMAC_ID => Ok(Self::KuzCtrHmac),
-            other => Err(AeadError::UnsupportedBodyAlg(other)),
+            other => Err(anyhow::anyhow!("unsupported body algorithm {other:#06x}")),
         }
     }
-}
-
-/// Failure of body encryption or decryption.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AeadError {
-    /// Unknown `body_alg`, or a known id this build does not implement.
-    UnsupportedBodyAlg(u16),
-    /// Authentication tag did not match.
-    BodyAuthFailed,
-    /// Nonce or packed bytes are not the length `body_alg` requires.
-    CorruptedLength,
 }
 
 /// Nonce, ciphertext, and tag borrowed from a packed body.
@@ -49,29 +38,29 @@ pub type NonceCtTag<'a> = (&'a [u8], &'a [u8], &'a [u8]);
 ///
 /// # Errors
 ///
-/// [`AeadError::CorruptedLength`] when `bytes` is not `N` bytes long.
-pub fn copy_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N], AeadError> {
-    <[u8; N]>::try_from(bytes).map_err(|_err| AeadError::CorruptedLength)
+/// `corrupted length` when `bytes` is not `N` bytes long.
+pub fn copy_array<const N: usize>(bytes: &[u8]) -> anyhow::Result<[u8; N]> {
+    <[u8; N]>::try_from(bytes).map_err(|_err| anyhow::anyhow!("corrupted length"))
 }
 
 /// Splits `nonce ‖ ct ‖ tag`.
 ///
 /// # Errors
 ///
-/// [`AeadError::CorruptedLength`] when `packed` is shorter than `nonce_len + tag_len`.
+/// `corrupted length` when `packed` is shorter than `nonce_len + tag_len`.
 pub fn split_packed(
     packed: &[u8],
     nonce_len: usize,
     tag_len: usize,
-) -> Result<NonceCtTag<'_>, AeadError> {
-    let nonce = packed.get(..nonce_len).ok_or(AeadError::CorruptedLength)?;
-    let rest = packed.get(nonce_len..).ok_or(AeadError::CorruptedLength)?;
+) -> anyhow::Result<NonceCtTag<'_>> {
+    let nonce = packed.get(..nonce_len).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let rest = packed.get(nonce_len..).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let ct_len = rest
         .len()
         .checked_sub(tag_len)
-        .ok_or(AeadError::CorruptedLength)?;
-    let ct = rest.get(..ct_len).ok_or(AeadError::CorruptedLength)?;
-    let tag = rest.get(ct_len..).ok_or(AeadError::CorruptedLength)?;
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let ct = rest.get(..ct_len).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let tag = rest.get(ct_len..).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     Ok((nonce, ct, tag))
 }
 
@@ -82,8 +71,8 @@ pub fn split_packed(
 ///
 /// # Errors
 ///
-/// [`AeadError::UnsupportedBodyAlg`] for [`BodyAlg::KuzMgm`].
-/// [`AeadError::CorruptedLength`] when `nonce` is not the length `alg` requires.
+/// `unsupported body algorithm` for [`BodyAlg::KuzMgm`].
+/// `corrupted length` when `nonce` is not the length `alg` requires.
 pub fn encrypt_body(
     alg: BodyAlg,
     k_body: &[u8; 32],
@@ -91,10 +80,10 @@ pub fn encrypt_body(
     nonce: &[u8],
     ad: &[u8],
     pt: &[u8],
-) -> Result<Vec<u8>, AeadError> {
+) -> anyhow::Result<Vec<u8>> {
     match alg {
         BodyAlg::Aegis256 => aegis::seal(k_body, nonce, ad, pt),
-        BodyAlg::KuzMgm => Err(AeadError::UnsupportedBodyAlg(KUZ_MGM_ID)),
+        BodyAlg::KuzMgm => Err(anyhow::anyhow!("unsupported body algorithm {KUZ_MGM_ID:#06x}")),
         BodyAlg::KuzCtrHmac => kuz_ctr::seal(k_body, k_bmac, nonce, ad, pt),
     }
 }
@@ -103,19 +92,19 @@ pub fn encrypt_body(
 ///
 /// # Errors
 ///
-/// [`AeadError::UnsupportedBodyAlg`] for [`BodyAlg::KuzMgm`].
-/// [`AeadError::CorruptedLength`] when `packed` is shorter than the nonce and tag.
-/// [`AeadError::BodyAuthFailed`] when the tag does not match.
+/// `unsupported body algorithm` for [`BodyAlg::KuzMgm`].
+/// `corrupted length` when `packed` is shorter than the nonce and tag.
+/// `body authentication failed` when the tag does not match.
 pub fn decrypt_body(
     alg: BodyAlg,
     k_body: &[u8; 32],
     k_bmac: &[u8; 32],
     packed: &[u8],
     ad: &[u8],
-) -> Result<Vec<u8>, AeadError> {
+) -> anyhow::Result<Vec<u8>> {
     match alg {
         BodyAlg::Aegis256 => aegis::open(k_body, packed, ad),
-        BodyAlg::KuzMgm => Err(AeadError::UnsupportedBodyAlg(KUZ_MGM_ID)),
+        BodyAlg::KuzMgm => Err(anyhow::anyhow!("unsupported body algorithm {KUZ_MGM_ID:#06x}")),
         BodyAlg::KuzCtrHmac => kuz_ctr::open(k_body, k_bmac, packed, ad),
     }
 }
@@ -129,54 +118,14 @@ pub fn decrypt_body(
     clippy::unwrap_in_result
 )]
 mod tests {
-    use super::{decrypt_body, encrypt_body, AeadError, BodyAlg};
+    use super::{decrypt_body, encrypt_body, BodyAlg};
 
     #[test]
     fn body_alg_ids() {
-        assert_eq!(BodyAlg::try_from(0xA001).unwrap(), BodyAlg::Aegis256);
-        assert_eq!(BodyAlg::try_from(0xA002).unwrap(), BodyAlg::KuzMgm);
-        assert_eq!(BodyAlg::try_from(0xA003).unwrap(), BodyAlg::KuzCtrHmac);
-        assert_eq!(
-            BodyAlg::try_from(0xA004).unwrap_err(),
-            AeadError::UnsupportedBodyAlg(0xA004)
-        );
-    }
-
-    #[test]
-    fn kuz_mgm_is_unsupported() {
-        let key = [0u8; 32];
-        assert_eq!(
-            encrypt_body(BodyAlg::KuzMgm, &key, &key, &[0u8; 16], b"", b""),
-            Err(AeadError::UnsupportedBodyAlg(0xA002))
-        );
-        assert_eq!(
-            decrypt_body(BodyAlg::KuzMgm, &key, &key, b"", b""),
-            Err(AeadError::UnsupportedBodyAlg(0xA002))
-        );
-    }
-
-    #[test]
-    fn wrong_nonce_length_is_corrupted() {
-        let k_body = [1u8; 32];
-        let k_bmac = [2u8; 32];
-        let ad = b"ad";
-        let pt = b"pt";
-        assert_eq!(
-            encrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 16], ad, pt),
-            Err(AeadError::CorruptedLength)
-        );
-        assert_eq!(
-            encrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &[0u8; 32], ad, pt),
-            Err(AeadError::CorruptedLength)
-        );
-        assert_eq!(
-            decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 63], ad),
-            Err(AeadError::CorruptedLength)
-        );
-        assert_eq!(
-            decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &[0u8; 39], ad),
-            Err(AeadError::CorruptedLength)
-        );
+        assert_eq!(BodyAlg::try_from(0xA001).unwrap(), BodyAlg::Aegis256); assert_eq!(BodyAlg::try_from(0xA002).unwrap(), BodyAlg::KuzMgm); assert_eq!(BodyAlg::try_from(0xA003).unwrap(), BodyAlg::KuzCtrHmac); assert_eq!( BodyAlg::try_from(0xA004).unwrap_err().to_string(), "unsupported body algorithm 0xa004" ); } #[test] fn kuz_mgm_is_unsupported() { let key = [0u8; 32]; assert_eq!( encrypt_body(BodyAlg::KuzMgm, &key, &key, &[0u8; 16], b"", b"") .unwrap_err() .to_string(), "unsupported body algorithm 0xa002" ); assert_eq!( decrypt_body(BodyAlg::KuzMgm, &key, &key, b"", b"") .unwrap_err() .to_string(), "unsupported body algorithm 0xa002" ); } #[test] fn wrong_nonce_length_is_corrupted() { let k_body = [1u8; 32]; let k_bmac = [2u8; 32]; let ad = b"ad"; let pt = b"pt"; assert_eq!( encrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 16], ad, pt).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(encrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &[0u8; 32], ad, pt).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 63], ad).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &[0u8; 39], ad).unwrap_err().to_string(), "corrupted length");
     }
 
     #[test]
@@ -194,17 +143,7 @@ mod tests {
         assert_eq!(ct_tag.len(), 64);
         assert_eq!(ct_tag[..32].len(), 32);
         assert_eq!(ct_tag[32..].len(), 32);
-        assert_eq!(
-            decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &packed, ad).unwrap(),
-            pt
-        );
-
-        let mut flipped = packed.clone();
-        flipped[32] ^= 1;
-        assert_eq!(
-            decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &flipped, ad),
-            Err(AeadError::BodyAuthFailed)
-        );
+        assert_eq!(decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &packed, ad).unwrap(), pt ); let mut flipped = packed.clone(); flipped[32] ^= 1; assert_eq!( decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &flipped, ad).unwrap_err().to_string(), "body authentication failed");
     }
 
     #[test]
@@ -218,18 +157,7 @@ mod tests {
         let packed = encrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &iv, ad, pt).unwrap();
         assert_eq!(packed.len(), iv.len() + pt.len() + 32);
         assert_eq!(&packed[..iv.len()], &iv);
-        assert_eq!(
-            decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &packed, ad).unwrap(),
-            pt
-        );
-
-        let mut other_iv = packed.clone();
-        other_iv[0] ^= 0x01;
-        assert_eq!(&other_iv[iv.len()..], &packed[iv.len()..]);
-        assert_eq!(
-            decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &other_iv, ad),
-            Err(AeadError::BodyAuthFailed)
-        );
+        assert_eq!(decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &packed, ad).unwrap(), pt ); let mut other_iv = packed.clone(); other_iv[0] ^= 0x01; assert_eq!(&other_iv[iv.len()..], &packed[iv.len()..]); assert_eq!( decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &other_iv, ad).unwrap_err().to_string(), "body authentication failed");
     }
 
     #[test]

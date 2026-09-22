@@ -1,8 +1,7 @@
 //! Wire constants, Argon2 bounds, and bounds-checked reads.
 //!
-//! Reads go through `get` so a short or hostile file is [`FormatError`], not a panic.
+//! Reads go through `get` so a short or hostile file yields an error, not a panic.
 
-use crate::error::FormatError;
 
 /// File magic `BRBY`.
 pub const MAGIC: [u8; 4] = *b"BRBY";
@@ -31,8 +30,8 @@ pub const KIND_PASSWORD: u16 = 0x0001;
 /// Device wrap kind.
 pub const KIND_DEVICE: u16 = 0x0002;
 
-/// sntrup1277 `kem_alg`.
-pub const KEM_SNTRUP1277: u16 = 0xC001;
+/// `ntrulp` device KEM (`ntrup761`).
+pub const KEM_NTRULP: u16 = 0xC001;
 
 /// Body associated-data domain.
 pub const DOMAIN_BODY: &[u8] = b"brby/v2/body";
@@ -64,14 +63,14 @@ pub const PASSWORD_PAYLOAD_LEN: usize = 104;
 /// Password record on the wire, including kind and `entry_len`.
 pub const PASSWORD_RECORD_LEN: usize = ENTRY_HEADER_LEN + PASSWORD_PAYLOAD_LEN;
 
-/// Device payload after `entry_len` for kem `0xC001`.
-pub const DEVICE_PAYLOAD_LEN: usize = 2025;
+/// Device fields before the `ntrulp` ciphertext: id, kem, two X25519 keys.
+pub const DEVICE_PREFIX_LEN: usize = 82;
 
-/// Device record on the wire, including kind and `entry_len`.
-pub const DEVICE_RECORD_LEN: usize = ENTRY_HEADER_LEN + DEVICE_PAYLOAD_LEN;
+/// Device fields after the `ntrulp` ciphertext: nonce, AEGIS ct, AEGIS tag.
+pub const DEVICE_SUFFIX_LEN: usize = 96;
 
-/// sntrup1277 ciphertext size. Borrowed from the file, never copied into a `Vec`.
-pub const SNTRUP_CT_LEN: usize = 1847;
+/// Shortest device payload: prefix, one ciphertext byte, suffix.
+pub const DEVICE_PAYLOAD_MIN: usize = DEVICE_PREFIX_LEN + 1 + DEVICE_SUFFIX_LEN;
 
 const BODY_MIN_AEGIS: usize = 64;
 const BODY_MIN_KUZ_MGM: usize = 32;
@@ -98,9 +97,9 @@ pub const KDF_P_MAX: u32 = 16;
 const _: () = {
     assert!(MIN_FILE_LEN == 104);
     assert!(PASSWORD_RECORD_LEN == 110);
-    assert!(DEVICE_RECORD_LEN == 2031);
+    assert!(DEVICE_PREFIX_LEN == 16 + 2 + 32 + 32);
+    assert!(DEVICE_SUFFIX_LEN == 32 + 32 + 32);
     assert!(8 + 32 + 32 + 32 == PASSWORD_PAYLOAD_LEN);
-    assert!(16 + 2 + 32 + 32 + SNTRUP_CT_LEN + 32 + 32 + 32 == DEVICE_PAYLOAD_LEN);
     assert!(BODY_MIN_AEGIS == 32 + 32);
     assert!(BODY_MIN_KUZ_MGM == 16 + 16);
     assert!(BODY_MIN_KUZ_CTR == 8 + 32);
@@ -130,25 +129,25 @@ pub const fn min_body_len(alg: u16) -> Option<usize> {
     }
 }
 
-pub fn read_array<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N], FormatError> {
+pub fn read_array<const N: usize>(bytes: &[u8], offset: usize) -> anyhow::Result<[u8; N]> {
     Ok(*read_ref(bytes, offset)?)
 }
 
-pub fn read_ref<const N: usize>(bytes: &[u8], offset: usize) -> Result<&[u8; N], FormatError> {
-    let end = offset.checked_add(N).ok_or(FormatError::CorruptedLength)?;
-    let slice = bytes.get(offset..end).ok_or(FormatError::CorruptedLength)?;
-    slice.first_chunk::<N>().ok_or(FormatError::CorruptedLength)
+pub fn read_ref<const N: usize>(bytes: &[u8], offset: usize) -> anyhow::Result<&[u8; N]> {
+    let end = offset.checked_add(N).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let slice = bytes.get(offset..end).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    slice.first_chunk::<N>().ok_or_else(|| anyhow::anyhow!("corrupted length"))
 }
 
-pub fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, FormatError> {
+pub fn read_u16(bytes: &[u8], offset: usize) -> anyhow::Result<u16> {
     Ok(u16::from_le_bytes(read_array(bytes, offset)?))
 }
 
-pub fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, FormatError> {
+pub fn read_u32(bytes: &[u8], offset: usize) -> anyhow::Result<u32> {
     Ok(u32::from_le_bytes(read_array(bytes, offset)?))
 }
 
-pub fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, FormatError> {
+pub fn read_u64(bytes: &[u8], offset: usize) -> anyhow::Result<u64> {
     Ok(u64::from_le_bytes(read_array(bytes, offset)?))
 }
 
@@ -181,6 +180,6 @@ pub fn concat_array<const N: usize>(parts: &[&[u8]]) -> [u8; N] {
     out
 }
 
-pub fn shift(base: usize, rel: usize) -> Result<usize, FormatError> {
-    base.checked_add(rel).ok_or(FormatError::CorruptedLength)
+pub fn shift(base: usize, rel: usize) -> anyhow::Result<usize> {
+    base.checked_add(rel).ok_or_else(|| anyhow::anyhow!("corrupted length"))
 }

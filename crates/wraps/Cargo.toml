@@ -8,6 +8,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 aegis.workspace = true
 container = { path = "../container" }
 getrandom.workspace = true
