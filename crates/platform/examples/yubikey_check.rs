@@ -38,6 +38,8 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Human names for the CTAP status codes a PRF run can realistically hit.
+/// Covers both numberings: CTAP2.1 (0x30+, modern `YubiKey` firmware) and the
+/// older CTAP2.0 range (0x25..0x2C) kept for older tokens.
 const fn ctap_name(status: u8) -> &'static str {
     match status {
         0x01 => "invalid command",
@@ -45,20 +47,30 @@ const fn ctap_name(status: u8) -> &'static str {
         0x03 => "invalid length",
         0x05 => "timeout",
         0x11 => "invalid cbor",
+        0x12 => "missing parameter",
         0x14 => "unsupported extension",
         0x15 => "credential excluded",
         0x17 => "invalid credential",
+        0x19 => "operation pending",
         0x1B => "unsupported algorithm",
         0x1C => "operation denied",
-        0x20 => "unsupported option",
-        0x23 => "no credentials",
-        0x25 => "pin invalid",
-        0x26 => "pin blocked",
-        0x27 => "pin auth invalid",
-        0x29 => "pin not set",
-        0x2A => "pin required",
-        0x2B => "pin policy violation",
-        0x2F => "user action timeout (touch declined or timed out)",
+        0x21 => "unsupported option",
+        0x24 => "not allowed",
+        // CTAP2.1 numbering (0x30+), merged with the legacy CTAP2.0 codes
+        // that carry the same meaning (0x27..0x2C).
+        0x30 => "user action timeout (touch declined or timed out)",
+        0x31 => "pin invalid (wrong PIN)",
+        0x32 | 0x27 => "pin auth invalid",
+        0x33 | 0x28 => "pin auth limit reached",
+        0x34 | 0x26 => "pin blocked",
+        0x35 | 0x29 => "pin not set",
+        0x36 | 0x2B => "pin policy violation",
+        0x37 | 0x2C => "pin token deprecated",
+        0x38 => "request too large",
+        0x39 => "action timeout",
+        0x3A => "user presence required",
+        0x3B => "uv blocked",
+        0x3C => "uv invalid",
         _ => "unknown status",
     }
 }
@@ -71,8 +83,15 @@ fn ctap_hint(err: &anyhow::Error) -> String {
         return String::new();
     };
     match status.as_byte() {
-        0x2A | 0x2B => " — token requires PIN, rerun with --pin".to_owned(),
-        0x2F => " — touch declined or timed out".to_owned(),
+        0x31 | 0x32 => " — wrong PIN; factory default is 123456 if never changed. \
+            Careful: ~8 wrong attempts block the PIN"
+            .to_owned(),
+        0x33 | 0x34 => " — too many wrong PIN attempts; the token is locked. \
+            Reset required (ykman fido reset)"
+            .to_owned(),
+        0x2A | 0x35 => " — PIN not handled; rerun with --pin".to_owned(),
+        0x2B | 0x36 => " — token requires PIN, rerun with --pin".to_owned(),
+        0x30 | 0x39 => " — touch declined or timed out".to_owned(),
         code => format!(" ({})", ctap_name(code)),
     }
 }
