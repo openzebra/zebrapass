@@ -1,4 +1,5 @@
 #![allow(
+    clippy::cast_possible_truncation,
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::large_stack_arrays,
@@ -7,7 +8,7 @@
     clippy::too_many_lines,
     clippy::unwrap_in_result,
     clippy::unwrap_used,
-    reason = "tests may unwrap, index, and build sntrup keys"
+    reason = "tests may unwrap, index, cast counters to byte patterns, and build sntrup keys"
 )]
 
 //! Envelope-encryption conformance matrix for zebrapass (BRBY v2 = GEE1).
