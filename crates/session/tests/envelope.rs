@@ -29,7 +29,7 @@ use kdf::{derive_vault_keys, KdfProfile};
 use pq::keypair;
 use secret::Secret;
 use session::{
-    add_device, change_password, create, remove_device, unlock, Seen, Session,
+    add_device, change_password, create, remove_device, unlock, Seen, UnlockCreds,
 };
 use wraps::{DeviceKeys, DevicePublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
@@ -99,7 +99,7 @@ fn gee1_correctness_password_and_device_lifecycle() {
     let (mut file, mut session) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     assert_eq!(session.generation(), 1);
 
-    let s = unlock(&file, PW, None, None).unwrap();
+    let s = unlock(&file, &UnlockCreds::password(PW), None).unwrap();
     assert_eq!(s.generation(), 1);
     assert_eq!(s.commit_tag(), session.commit_tag());
 
@@ -111,9 +111,9 @@ fn gee1_correctness_password_and_device_lifecycle() {
     assert_eq!(session.generation(), 3);
 
     // Dec via device 1, device 2, and password: same underlying vault key.
-    let s1 = unlock(&file, "", Some(&keys1), None).unwrap();
-    let s2 = unlock(&file, "", Some(&keys2), None).unwrap();
-    let sp = unlock(&file, PW, None, None).unwrap();
+    let s1 = unlock(&file, &UnlockCreds::password("").with_device(&keys1), None).unwrap();
+    let s2 = unlock(&file, &UnlockCreds::password("").with_device(&keys2), None).unwrap();
+    let sp = unlock(&file, &UnlockCreds::password(PW), None).unwrap();
     assert_eq!(s1.commit_tag(), s2.commit_tag());
     assert_eq!(s2.commit_tag(), sp.commit_tag());
     assert_eq!(s1.generation(), 3);
@@ -136,8 +136,8 @@ fn gee1_wrap_rotation_leaves_body_bytes_untouched() {
     assert_eq!(body_before, body_after);
 
     // New KEK opens, old KEK does not.
-    unlock(&file, PW2, None, None).unwrap();
-    assert!(unlock(&file, PW, None, None).is_err());
+    unlock(&file, &UnlockCreds::password(PW2), None).unwrap();
+    assert!(unlock(&file, &UnlockCreds::password(PW), None).is_err());
 }
 
 #[test]
@@ -152,9 +152,9 @@ fn correctness_remove_device_revokes_only_target_kek() {
     // create=1, add=2, add=3, remove=4 — every wrapdir mutation bumps generation.
     assert_eq!(session.generation(), 4);
 
-    assert!(unlock(&file, "", Some(&keys1), None).is_err()); // revoked
-    unlock(&file, "", Some(&keys2), None).unwrap(); // sibling intact
-    unlock(&file, PW, None, None).unwrap(); // password intact
+    assert!(unlock(&file, &UnlockCreds::password("").with_device(&keys1), None).is_err()); // revoked
+    unlock(&file, &UnlockCreds::password("").with_device(&keys2), None).unwrap(); // sibling intact
+    unlock(&file, &UnlockCreds::password(PW), None).unwrap(); // password intact
     assert!(remove_device(&mut session, &mut file, &pubs1.id).is_err()); // idempotent? no
 }
 
@@ -169,19 +169,19 @@ fn correctness_seen_blocks_rollback_to_older_file() {
         generation: 2,
         commit_tag: *session.commit_tag(),
     };
-    unlock(&file, PW2, None, Some(seen_now)).unwrap(); // current accepted
+    unlock(&file, &UnlockCreds::password(PW2), Some(seen_now)).unwrap(); // current accepted
 
     let seen_stale = Seen {
         generation: 2,
         commit_tag: *session.commit_tag(),
     };
-    assert!(unlock(&old_file, PW, None, Some(seen_stale)).is_err()); // rollback
+    assert!(unlock(&old_file, &UnlockCreds::password(PW), Some(seen_stale)).is_err()); // rollback
 
     let seen_same_gen_wrong_tag = Seen {
         generation: 1,
         commit_tag: [0u8; 32],
     };
-    assert!(unlock(&old_file, PW, None, Some(seen_same_gen_wrong_tag)).is_err());
+    assert!(unlock(&old_file, &UnlockCreds::password(PW), Some(seen_same_gen_wrong_tag)).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ fn correctness_seen_blocks_rollback_to_older_file() {
 #[test]
 fn conf_wrong_password_rejected() {
     let (file, _s) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    let err = unlock(&file, "wrong-password", None, None).unwrap_err();
+    let err = unlock(&file, &UnlockCreds::password("wrong-password"), None).unwrap_err();
     // Wrong password and tampered wrap must be indistinguishable.
     assert!(err.to_string().contains("wrap authentication failed"));
 }
@@ -203,7 +203,7 @@ fn conf_wrong_device_secret_same_id_rejected() {
     let (pubs, _keys) = device_identity(0x11);
     add_device(&mut session, &mut file, &pubs).unwrap();
     let (_forged_pubs, forged_keys) = device_identity(0x11); // same id, own secrets
-    assert!(unlock(&file, "", Some(&forged_keys), None).is_err());
+    assert!(unlock(&file, &UnlockCreds::password("").with_device(&forged_keys), None).is_err());
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn conf_cross_vault_transplant_password_wrap_rejected() {
     let mut bytes_b = file_b.as_bytes().to_vec();
     bytes_b[OFF_ENTRY..ENTRY_END].copy_from_slice(&file_a.as_bytes()[OFF_ENTRY..ENTRY_END]);
     let forged = VaultFile::new(bytes_b);
-    let err = unlock(&forged, PW, None, None).unwrap_err();
+    let err = unlock(&forged, &UnlockCreds::password(PW), None).unwrap_err();
     assert!(err.to_string().contains("wrap authentication failed"));
 }
 
@@ -235,7 +235,7 @@ fn conf_cross_vault_transplant_device_wrap_rejected() {
     spliced.extend_from_slice(&a_bytes[OFF_ENTRY..dev_rec_end]);
     spliced.extend_from_slice(&bytes_b[ENTRY_END..]);
     bytes_b = spliced;
-    assert!(unlock(&VaultFile::new(bytes_b), PW, None, None).is_err());
+    assert!(unlock(&VaultFile::new(bytes_b), &UnlockCreds::password(PW), None).is_err());
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn conf_cross_vault_body_swap_rejected() {
     let (bb, _be) = body_span(&file_b);
     assert_eq!(ae - ab, 64, "empty-record body is nonce||tag");
     bytes_b[bb..bb + (ae - ab)].copy_from_slice(&file_a.as_bytes()[ab..ae]);
-    assert!(unlock(&VaultFile::new(bytes_b), PW, None, None).is_err());
+    assert!(unlock(&VaultFile::new(bytes_b), &UnlockCreds::password(PW), None).is_err());
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn conf_cross_vault_tail_swap_rejected() {
     let (file_b, _sb) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     let mut bytes_b = file_b.as_bytes()[..ENTRY_END].to_vec();
     bytes_b.extend_from_slice(&file_a.as_bytes()[ENTRY_END..]);
-    assert!(unlock(&VaultFile::new(bytes_b), PW, None, None).is_err());
+    assert!(unlock(&VaultFile::new(bytes_b), &UnlockCreds::password(PW), None).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ fn int_header_field_flips_all_rejected() {
     // vault_id@52, body_alg@68, wrap_alg@70.
     for idx in [0, 4, 6, 8, 12, 16, 20, 52, 68, 70] {
         let f = flip(&file, idx);
-        assert!(unlock(&f, PW, None, None).is_err(), "header byte {idx} accepted");
+        assert!(unlock(&f, &UnlockCreds::password(PW), None).is_err(), "header byte {idx} accepted");
     }
 }
 
@@ -281,7 +281,7 @@ fn int_password_record_field_flips_all_rejected() {
     let (file, _s) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     for idx in [OFF_KID, OFF_NONCE, OFF_CT, OFF_TAG] {
         let f = flip(&file, idx);
-        let err = unlock(&f, PW, None, None).unwrap_err();
+        let err = unlock(&f, &UnlockCreds::password(PW), None).unwrap_err();
         assert!(err.to_string().contains("wrap authentication failed"), "byte {idx}");
     }
 }
@@ -304,10 +304,10 @@ fn int_device_record_field_flips_all_rejected() {
     let off_tail_tag = off_tail_ct + 32;
     for idx in [off_id, off_dev_x, off_eph_x, off_tail_nonce, off_tail_ct, off_tail_tag] {
         let f = flip(&file, idx);
-        assert!(unlock(&f, "", Some(&keys), None).is_err(), "device byte {idx}");
+        assert!(unlock(&f, &UnlockCreds::password("").with_device(&keys), None).is_err(), "device byte {idx}");
     }
     // Sanity: untampered device still opens.
-    unlock(&file, "", Some(&keys), None).unwrap();
+    unlock(&file, &UnlockCreds::password("").with_device(&keys), None).unwrap();
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn int_wrapdir_generation_flip_detected_by_commit() {
     // wrap_count@72 and generation@74 are covered by the commit HMAC.
     for idx in [OFF_COUNT, OFF_DIR_GEN] {
         let f = flip(&file, idx);
-        assert!(unlock(&f, PW, None, None).is_err(), "wrapdir byte {idx}");
+        assert!(unlock(&f, &UnlockCreds::password(PW), None).is_err(), "wrapdir byte {idx}");
     }
 }
 
@@ -324,7 +324,7 @@ fn int_wrapdir_generation_flip_detected_by_commit() {
 fn int_commit_tag_flip_detected() {
     let (file, _s) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     let f = flip(&file, file.as_bytes().len() - 1);
-    let err = unlock(&f, PW, None, None).unwrap_err();
+    let err = unlock(&f, &UnlockCreds::password(PW), None).unwrap_err();
     assert!(err.to_string().contains("commit"), "got: {err}");
 }
 
@@ -335,17 +335,17 @@ fn int_truncation_and_extension_rejected() {
 
     // Below minimum file length.
     let short = VaultFile::new(bytes[..103].to_vec());
-    assert!(unlock(&short, PW, None, None).is_err());
+    assert!(unlock(&short, &UnlockCreds::password(PW), None).is_err());
     // Truncate into the body.
     let cut = VaultFile::new(bytes[..bytes.len() - 40].to_vec());
-    assert!(unlock(&cut, PW, None, None).is_err());
+    assert!(unlock(&cut, &UnlockCreds::password(PW), None).is_err());
     // Drop exactly the commit.
     let no_commit = VaultFile::new(bytes[..bytes.len() - 32].to_vec());
-    assert!(unlock(&no_commit, PW, None, None).is_err());
+    assert!(unlock(&no_commit, &UnlockCreds::password(PW), None).is_err());
     // Append junk: commit is the last 32 bytes, so it shifts.
     let mut long = bytes.to_vec();
     long.push(0);
-    assert!(unlock(&VaultFile::new(long), PW, None, None).is_err());
+    assert!(unlock(&VaultFile::new(long), &UnlockCreds::password(PW), None).is_err());
 }
 
 #[test]
@@ -353,11 +353,11 @@ fn int_wrapdir_invariants_enforced() {
     let (mut file, mut session) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     // A second password entry must not parse (exactly one is required).
     let pw_rec = file.as_bytes()[OFF_ENTRY..ENTRY_END].to_vec();
-    let mut bytes = file.as_bytes().to_vec();
+    let bytes = file.as_bytes().to_vec();
     let mut duplicated = bytes[..ENTRY_END].to_vec();
     duplicated.extend_from_slice(&pw_rec);
     duplicated.extend_from_slice(&bytes[ENTRY_END..]);
-    assert!(unlock(&VaultFile::new(duplicated), PW, None, None).is_err());
+    assert!(unlock(&VaultFile::new(duplicated), &UnlockCreds::password(PW), None).is_err());
 
     // A repeated device id does not parse.
     let (pubs, _keys) = device_identity(0x14);
@@ -396,7 +396,7 @@ fn kci_no_key_ambiguity_cross_body_with_own_keys() {
     bytes_b[bb..bb + (ae - ab)].copy_from_slice(&file_a.as_bytes()[ab..ae]);
     let swapped = VaultFile::new(bytes_b);
     // Body is authenticated under k_body derived from B's vk: must fail.
-    assert!(unlock(&swapped, PW2, None, None).is_err());
+    assert!(unlock(&swapped, &UnlockCreds::password(PW2), None).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -413,18 +413,18 @@ fn mu_three_devices_interleaved_unlocks() {
         devs.push((pubs, keys));
         // Every KEK added so far must open the current file (benign multi-user).
         for (p, k) in &devs {
-            unlock(&file, "", Some(k), None).unwrap_or_else(|e| {
+            unlock(&file, &UnlockCreds::password("").with_device(k), None).unwrap_or_else(|e| {
                 panic!("device id {:?} failed after add: {e}", &p.id[..2])
             });
         }
-        unlock(&file, PW, None, None).unwrap();
+        unlock(&file, &UnlockCreds::password(PW), None).unwrap();
     }
     // Revoke the middle device; the others keep working.
     let (mid_pubs, mid_keys) = &devs[1];
     remove_device(&mut session, &mut file, &mid_pubs.id).unwrap();
-    assert!(unlock(&file, "", Some(mid_keys), None).is_err());
-    unlock(&file, "", Some(&devs[0].1), None).unwrap();
-    unlock(&file, "", Some(&devs[2].1), None).unwrap();
+    assert!(unlock(&file, &UnlockCreds::password("").with_device(mid_keys), None).is_err());
+    unlock(&file, &UnlockCreds::password("").with_device(&devs[0].1), None).unwrap();
+    unlock(&file, &UnlockCreds::password("").with_device(&devs[2].1), None).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -436,12 +436,12 @@ fn policy_kdf_bounds_rejected_pre_argon() {
     let (file, _s) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     // Below floor: 19 MiB - 1 KiB and t = 1.
     let f = set_u32_le(&file, 8, KDF_M_KIB_MIN - 1);
-    let err = unlock(&f, PW, None, None).unwrap_err();
+    let err = unlock(&f, &UnlockCreds::password(PW), None).unwrap_err();
     assert!(err.to_string().contains("kdf parameters rejected"));
     let f = set_u32_le(&file, 8, KDF_M_KIB_MAX + 1);
-    assert!(unlock(&f, PW, None, None).is_err());
+    assert!(unlock(&f, &UnlockCreds::password(PW), None).is_err());
     let f = set_u32_le(&file, 12, KDF_T_MIN - 1);
-    assert!(unlock(&f, PW, None, None).is_err());
+    assert!(unlock(&f, &UnlockCreds::password(PW), None).is_err());
 }
 
 #[test]
@@ -451,7 +451,7 @@ fn policy_empty_password_and_kuzmgm_rejected_pre_kdf() {
     assert!(create("", KdfProfile::Mobile, BodyAlg::Aegis256).is_err());
     assert!(change_password_rejects_empty());
     let (file, _s) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    assert!(unlock(&file, "", None, None).is_err());
+    assert!(unlock(&file, &UnlockCreds::password(""), None).is_err());
     assert!(
         t0.elapsed() < std::time::Duration::from_secs(5),
         "empty-password paths must reject before Argon2"

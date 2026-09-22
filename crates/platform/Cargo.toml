@@ -1,0 +1,18 @@
+[package]
+name = "platform"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ctap-fido2.workspace = true
+getrandom.workspace = true
+p256.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

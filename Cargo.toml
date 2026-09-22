@@ -7,6 +7,7 @@ members = [
     "crates/pq",
     "crates/wraps",
     "crates/session",
+    "crates/platform",
 ]
 resolver = "2"
 
@@ -23,6 +24,7 @@ hkdf = "=0.13.0"
 sha2 = "=0.11.0"
 hmac = "=0.13.0"
 x25519-dalek = "=3.0.0"
+p256 = { version = "=0.13.2", default-features = false, features = ["ecdh", "arithmetic", "alloc"] }
 ntrulp = { version = "=0.2.7", default-features = false, features = ["ntrup1277", "std"] }
 rand = "=0.10.3"
 anyhow = "=1.0.100"
@@ -31,6 +33,7 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
+ctap-fido2 = "=0.1.3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -45,3 +48,9 @@ expect_used = "deny"
 panic = "deny"
 indexing_slicing = "deny"
 cargo_common_metadata = "allow"
+# `ctap-fido2` sits on its own RustCrypto/getrandom/syn wave, so a few crates
+# resolve twice: once for this workspace's pinned stack, once transitively
+# behind the platform boundary. The duplicates never mix — no type from the
+# crate's stack crosses `platform`'s public API. Revisit when the workspace
+# migrates its crypto stack or the crate is replaced.
+multiple_crate_versions = "allow"

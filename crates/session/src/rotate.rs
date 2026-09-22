@@ -3,7 +3,9 @@
 use container::{VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{seal_device, seal_password, DevicePublics};
+use wraps::{
+    seal_chip, seal_device, seal_password, seal_prf, ChipPublics, DevicePublics, PrfPublics,
+};
 
 use crate::create::{
     assemble_committed, dir_bytes, draw_secret, encode_entry, encrypt_records, next_generation,
@@ -70,13 +72,17 @@ pub fn write_records(
 /// Rotate the vault key, re-encrypt `records`, and re-seal every wrap.
 ///
 /// Old wrap ciphertexts are not reused: they seal the previous vault key.
-/// A file device id with no matching [`DevicePublics`] is `wrap not found`
-/// and does not modify `file` or `session`. Generation increases by one.
+/// A file wrap id with no matching entry in `devices`, `chips`, or `prfs` is
+/// `wrap not found` and does not modify `file` or `session`. Generation
+/// increases by one. Sealing a chip wrap draws a fresh ephemeral P-256 key in
+/// this process, so the platform must re-derive its shared secret against the
+/// new ephemeral public key after the call; the secret paired with a
+/// [`ChipPublics`] is accepted for symmetry with `prfs` and is not read.
 ///
 /// # Errors
 ///
 /// `empty password` when `password` is empty, before Argon2.
-/// `wrap not found` when a device wrap has no matching public id.
+/// `wrap not found` when a device, chip, or PRF wrap has no matching public id.
 /// `zero shared secret` when a device X25519 public key is zero.
 pub fn reencrypt_body(
     session: &mut Session,
@@ -84,6 +90,8 @@ pub fn reencrypt_body(
     records: &[u8],
     password: &str,
     devices: &[DevicePublics],
+    chips: &[(ChipPublics, [u8; 32])],
+    prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     if password.is_empty() {
         return Err(anyhow::anyhow!("empty password"));
@@ -91,6 +99,8 @@ pub fn reencrypt_body(
     let (header, generation, sealed, body, keys) = {
         let parsed = file.parse()?;
         require_device_publics(&parsed.entries, devices)?;
+        require_chip_publics(&parsed.entries, chips)?;
+        require_prf_publics(&parsed.entries, prfs)?;
         let vk = draw_secret()?;
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
         // Fresh seals. The records already in the file wrap the old vault key.
@@ -100,6 +110,8 @@ pub fn reencrypt_body(
             vk.expose(),
             password,
             devices,
+            chips,
+            prfs,
         )?;
         let body = encrypt_records(
             session.body_alg,
@@ -168,7 +180,9 @@ fn replace_password(
                 replaced = true;
                 records.push(seal_password(header, password, vk)?);
             }
-            WrapEntry::Device(_) => records.push(encode_entry(entry)?),
+            WrapEntry::Device(_) | WrapEntry::Chip(_) | WrapEntry::Prf(_) => {
+                records.push(encode_entry(entry)?);
+            }
         }
     }
     if replaced {
@@ -192,12 +206,42 @@ fn require_device_publics(
     Ok(())
 }
 
+fn require_chip_publics(
+    entries: &[WrapEntry<'_>],
+    chips: &[(ChipPublics, [u8; 32])],
+) -> anyhow::Result<()> {
+    for entry in entries {
+        if let WrapEntry::Chip(chip) = entry {
+            if !chips.iter().any(|(publics, _)| publics.id == chip.id) {
+                return Err(anyhow::anyhow!("wrap not found"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn require_prf_publics(
+    entries: &[WrapEntry<'_>],
+    prfs: &[(PrfPublics, [u8; 32])],
+) -> anyhow::Result<()> {
+    for entry in entries {
+        if let WrapEntry::Prf(prf) = entry {
+            if !prfs.iter().any(|(publics, _)| publics.id == prf.id) {
+                return Err(anyhow::anyhow!("wrap not found"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn reseal(
     entries: &[WrapEntry<'_>],
     header: &container::StaticHeader,
     vk: &[u8; 32],
     password: &str,
     devices: &[DevicePublics],
+    chips: &[(ChipPublics, [u8; 32])],
+    prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut records = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -209,6 +253,22 @@ fn reseal(
                     .find(|item| item.id == dev.device_id)
                     .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
                 let (record, _grant) = seal_device(header, publics, vk)?;
+                record
+            }
+            WrapEntry::Chip(chip) => {
+                let (publics, _) = chips
+                    .iter()
+                    .find(|(item, _)| item.id == chip.id)
+                    .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
+                let (record, _grant) = seal_chip(header, publics, vk)?;
+                record
+            }
+            WrapEntry::Prf(prf) => {
+                let (publics, prf_out) = prfs
+                    .iter()
+                    .find(|(item, _)| item.id == prf.id)
+                    .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
+                let (record, _grant) = seal_prf(header, publics, prf_out, vk)?;
                 record
             }
         };

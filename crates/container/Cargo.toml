@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+pq = { path = "../pq" }

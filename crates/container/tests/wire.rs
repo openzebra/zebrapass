@@ -7,13 +7,15 @@
 )]
 
 use container::{
-    assemble, encode_device_entry, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile,
-    WrapDir, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM,
-    COMMIT_LEN, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN, DEVICE_SUFFIX_LEN, DOMAIN_BODY,
-    DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX,
-    KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN, KEM_NTRULP, KIND_PASSWORD, MAGIC,
-    PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
+    assemble, encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry,
+    encode_wrap_dir, StaticHeader, VaultFile, WrapDir, WrapEntry, BODY_AEGIS256,
+    BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
+    DEVICE_SUFFIX_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, HEADER_LEN,
+    KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN,
+    KEM_NTRULP, KIND_CHIP, KIND_PASSWORD, KIND_PRF, MAGIC, PASSWORD_PAYLOAD_LEN,
+    PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
 };
+use pq::PQ_PK_LEN;
 
 const fn header_with(body_alg: u16, m_kib: u32, t: u32, p: u32) -> StaticHeader {
     StaticHeader {
@@ -55,6 +57,20 @@ fn device_record(id_byte: u8, kem_alg: u16, ct_byte: u8) -> Vec<u8> {
     .expect("dummy ciphertext fits")
 }
 
+fn chip_record(id_byte: u8, ct_byte: u8) -> Vec<u8> {
+    encode_chip_entry(
+        [id_byte; 16],
+        [0x41; 65],
+        [0x43; 65],
+        [0x42; PQ_PK_LEN],
+        &[0x5A; 16],
+        [1; 32],
+        [ct_byte; 32],
+        [3; 32],
+    )
+    .unwrap()
+}
+
 fn file_from(header: &StaticHeader, entries: &[&[u8]], body: &[u8], generation: u64) -> VaultFile {
     let dir = encode_wrap_dir(generation, entries).unwrap();
     let commit = [0x44; COMMIT_LEN];
@@ -63,7 +79,12 @@ fn file_from(header: &StaticHeader, entries: &[&[u8]], body: &[u8], generation: 
 
 fn assert_allowed(err: &anyhow::Error) {
     let msg = err.to_string();
-    let allowed = ["bad magic", "corrupted length", "kdf parameters rejected"];
+    let allowed = [
+        "bad magic",
+        "corrupted length",
+        "kdf parameters rejected",
+        "no password wrap",
+    ];
     assert!(
         allowed.contains(&msg.as_str()) || msg.starts_with("unsupported "),
         "unexpected parse error: {msg}"
@@ -80,6 +101,8 @@ fn constants_match_the_spec() {
     assert_eq!(BODY_KUZ_CTR_HMAC, 0xA003);
     assert_eq!(WRAP_AEGIS256, 0xB001);
     assert_eq!(KIND_PASSWORD, 0x0001);
+    assert_eq!(KIND_CHIP, 0x0003);
+    assert_eq!(KIND_PRF, 0x0004);
     assert_eq!(KEM_NTRULP, 0xC001);
     assert_eq!(DOMAIN_BODY, b"brby/v2/body");
     assert_eq!(DOMAIN_WRAP_PASSWORD, b"brby/v2/wrap-password");
@@ -177,7 +200,7 @@ fn truncated_prefixes_of_a_valid_file_fail() {
 }
 
 #[test]
-fn two_password_entries_are_rejected() {
+fn two_password_entries_are_allowed() {
     let first = password_record();
     let second = encode_password_entry([8; 8], [4; 32], [5; 32], [6; 32]);
     let file = file_from(
@@ -186,7 +209,62 @@ fn two_password_entries_are_rejected() {
         &[0x22; 64],
         1,
     );
-    assert_eq!(file.parse().unwrap_err().to_string(), "corrupted length");
+    let parsed = file.parse().unwrap();
+    assert_eq!(parsed.entries.len(), 2);
+}
+
+#[test]
+fn file_without_password_wrap_is_rejected() {
+    let device = device_record(0xAB, KEM_NTRULP, 0x5A);
+    let file = file_from(&sample_header(BODY_AEGIS256), &[&device], &[0x22; 64], 1);
+    assert_eq!(file.parse().unwrap_err().to_string(), "no password wrap");
+}
+
+#[test]
+fn chip_entry_roundtrip() {
+    let entry = chip_record(0xA1, 0x5A);
+    assert_eq!(&entry[..2], &KIND_CHIP.to_le_bytes());
+    let WrapEntry::Chip(chip) = WrapEntry::try_from(entry.as_slice()).unwrap() else {
+        panic!("expected a chip entry");
+    };
+    assert_eq!(chip.id, [0xA1; 16]);
+    assert_eq!(chip.chip_pub, [0x41; 65]);
+    assert_eq!(chip.eph_pub, [0x43; 65]);
+    assert_eq!(chip.pq_pk, [0x42; PQ_PK_LEN]);
+    assert_eq!(chip.sntrup_ct, &[0x5A; 16]);
+    assert_eq!(chip.nonce, [1; 32]);
+    assert_eq!(chip.ct, [0x5A; 32]);
+    assert_eq!(chip.tag, [3; 32]);
+    let password = password_record();
+    let file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, &entry],
+        &[0x22; 64],
+        1,
+    );
+    let parsed = file.parse().unwrap();
+    assert_eq!(parsed.entries.len(), 2);
+}
+
+#[test]
+fn prf_entry_roundtrip() {
+    let entry =
+        encode_prf_entry([0xB2; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32]).unwrap();
+    assert_eq!(&entry[..2], &KIND_PRF.to_le_bytes());
+    let WrapEntry::Prf(prf) = WrapEntry::try_from(entry.as_slice()).unwrap() else {
+        panic!("expected a prf entry");
+    };
+    assert_eq!(prf.id, [0xB2; 16]);
+    assert_eq!(prf.cred_id, &[0x77; 32]);
+    assert_eq!(prf.salt, [9; 32]);
+    assert_eq!(prf.nonce, [1; 32]);
+    assert_eq!(prf.ct, [2; 32]);
+    assert_eq!(prf.tag, [3; 32]);
+    // Credential ids outside 16..=64 bytes are corruption.
+    let short = encode_prf_entry([0; 16], &[0; 15], [0; 32], [0; 32], [0; 32], [0; 32]);
+    assert_eq!(short.unwrap_err().to_string(), "corrupted length");
+    let long = encode_prf_entry([0; 16], &[0; 65], [0; 32], [0; 32], [0; 32], [0; 32]);
+    assert_eq!(long.unwrap_err().to_string(), "corrupted length");
 }
 
 #[test]

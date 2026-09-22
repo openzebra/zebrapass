@@ -85,7 +85,8 @@ fn mac_tag(k_bmac: &[u8; 32], iv: &[u8], ct: &[u8], ad: &[u8]) -> anyhow::Result
     mac.update(iv);
     mac.update(ct);
     mac.update(ad);
-    copy_array(mac.finalize().into_bytes().as_slice())
+    let digest = mac.finalize().into_bytes();
+    copy_array(&digest)
 }
 
 fn pack(iv: &[u8], ct: &[u8], tag: &[u8]) -> Vec<u8> {

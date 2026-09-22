@@ -21,6 +21,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 pq = { path = "../pq" }
+platform = { path = "../platform" }
 x25519-dalek.workspace = true
 
 [lints]

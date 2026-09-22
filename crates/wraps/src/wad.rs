@@ -1,9 +1,11 @@
-//! Associated data for a password or device wrap, and AEGIS-256 over it.
+//! Associated data for password, device, chip, and PRF wraps, and AEGIS-256 over it.
 
 use aegis::aegis256::Aegis256;
 use container::{
-    StaticHeader, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, KIND_DEVICE, KIND_PASSWORD,
+    StaticHeader, DOMAIN_WRAP_CHIP, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, DOMAIN_WRAP_PRF,
+    KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PRF,
 };
+use pq::PQ_PK_LEN;
 use secret::Secret;
 use zeroize::Zeroize;
 
@@ -114,4 +116,99 @@ pub fn device_ikm(
     ikm.extend_from_slice(eph_pk);
     ikm.extend_from_slice(sntrup_ct);
     Ok(ikm)
+}
+
+/// Concatenate IKM parts. Every part must be non-empty: an empty ciphertext is
+/// not a KEM blob and must not reach HKDF.
+fn ikm_concat(parts: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err(anyhow::anyhow!("kem length"));
+    }
+    let total = parts
+        .iter()
+        .fold(0usize, |acc, part| acc.saturating_add(part.len()));
+    let mut ikm = Vec::with_capacity(total);
+    for part in parts {
+        ikm.extend_from_slice(part);
+    }
+    Ok(ikm)
+}
+
+/// IKM for the chip wrap key: private halves first, then the public fields
+/// that pin the transcript, then the KEM blob.
+pub fn chip_ikm(
+    ss_p256: &[u8; 32],
+    ss_pq: &[u8; 32],
+    chip_pub: &[u8; 65],
+    eph_pub: &[u8; 65],
+    pq_pk: &[u8; PQ_PK_LEN],
+    sntrup_ct: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    ikm_concat(&[ss_p256, ss_pq, chip_pub, eph_pub, pq_pk, sntrup_ct])
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is one chip-wrap associated-data field"
+)]
+pub fn chip_wad(
+    header: &StaticHeader,
+    chip_id: &[u8; 16],
+    chip_pub: &[u8; 65],
+    eph_pub: &[u8; 65],
+    pq_pk: &[u8; PQ_PK_LEN],
+    sntrup_ct: &[u8],
+    nonce: &[u8; 32],
+) -> Vec<u8> {
+    let header_bytes = header.to_bytes();
+    let kind_le = KIND_CHIP.to_le_bytes();
+    let mut wad = Vec::with_capacity(
+        header_bytes.len()
+            + kind_le.len()
+            + chip_id.len()
+            + chip_pub.len()
+            + eph_pub.len()
+            + pq_pk.len()
+            + sntrup_ct.len()
+            + nonce.len()
+            + DOMAIN_WRAP_CHIP.len(),
+    );
+    wad.extend_from_slice(&header_bytes);
+    wad.extend_from_slice(&kind_le);
+    wad.extend_from_slice(chip_id);
+    wad.extend_from_slice(chip_pub);
+    wad.extend_from_slice(eph_pub);
+    wad.extend_from_slice(pq_pk);
+    wad.extend_from_slice(sntrup_ct);
+    wad.extend_from_slice(nonce);
+    wad.extend_from_slice(DOMAIN_WRAP_CHIP);
+    wad
+}
+
+pub fn prf_wad(
+    header: &StaticHeader,
+    prf_id: &[u8; 16],
+    cred_id: &[u8],
+    salt: &[u8; 32],
+    nonce: &[u8; 32],
+) -> Vec<u8> {
+    let header_bytes = header.to_bytes();
+    let kind_le = KIND_PRF.to_le_bytes();
+    let mut wad = Vec::with_capacity(
+        header_bytes.len()
+            + kind_le.len()
+            + prf_id.len()
+            + cred_id.len()
+            + salt.len()
+            + nonce.len()
+            + DOMAIN_WRAP_PRF.len(),
+    );
+    wad.extend_from_slice(&header_bytes);
+    wad.extend_from_slice(&kind_le);
+    wad.extend_from_slice(prf_id);
+    wad.extend_from_slice(cred_id);
+    wad.extend_from_slice(salt);
+    wad.extend_from_slice(nonce);
+    wad.extend_from_slice(DOMAIN_WRAP_PRF);
+    wad
 }

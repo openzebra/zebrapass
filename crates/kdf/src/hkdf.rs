@@ -9,6 +9,12 @@ use sha2::Sha512;
 /// HKDF info for the device wrap key (`k_dev`).
 pub const INFO_DEVICE_WRAP: &[u8] = b"brby/v2/device-wrap";
 
+/// HKDF info for the secure-chip wrap key (`k_chip`).
+pub const INFO_CHIP_WRAP: &[u8] = b"brby/v2/chip-wrap";
+
+/// HKDF info for the `YubiKey` PRF wrap key (`k_prf`).
+pub const INFO_PRF_WRAP: &[u8] = b"brby/v2/prf-wrap";
+
 const INFO_BODY_ENC: &[u8] = b"brby/v2/body-enc";
 const INFO_BODY_MAC: &[u8] = b"brby/v2/body-mac";
 const INFO_COMMIT: &[u8] = b"brby/v2/commit";

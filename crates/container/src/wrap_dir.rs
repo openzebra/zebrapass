@@ -11,7 +11,7 @@ use crate::wrap_entry::{parse_entry, WrapEntry};
 pub struct WrapDir<'a> {
     /// Directory generation. Creation starts at 1; this layer accepts any `u64`.
     pub generation: u64,
-    /// Password and device records, in file order.
+    /// Wrap records, in file order.
     pub entries: Vec<WrapEntry<'a>>,
 }
 
@@ -40,9 +40,8 @@ impl<'a> WrapDir<'a> {
     ///
     /// Returns `corrupted length` when the prefix is shorter than
     /// `wrap_count` and `generation`, an entry is truncated or the wrong size,
-    /// the kind is unknown, the password count is not one, or a `device_id`
-    /// repeats. Returns `unsupported kem` for a device KEM other
-    /// than sntrup1277.
+    /// the kind is unknown, or a `device_id` repeats. Returns `unsupported kem`
+    /// for a device KEM other than sntrup1277.
     pub(crate) fn parse_prefix(bytes: &'a [u8]) -> anyhow::Result<(Self, &'a [u8])> {
         // Do not read wrap_count or generation until both fields fit.
         if bytes.len() < WRAP_DIR_HEADER_LEN {
@@ -102,17 +101,11 @@ pub fn encode_wrap_dir(generation: u64, entries: &[&[u8]]) -> anyhow::Result<Vec
 }
 
 fn check_entries(entries: &[WrapEntry<'_>]) -> anyhow::Result<()> {
-    let mut saw_password = false;
     // Ids are public labels, not MAC tags, so ordinary equality is enough.
     let mut device_ids = Vec::with_capacity(entries.len());
     for entry in entries {
         match entry {
-            WrapEntry::Password(_) => {
-                if saw_password {
-                    return Err(anyhow::anyhow!("corrupted length"));
-                }
-                saw_password = true;
-            }
+            WrapEntry::Password(_) | WrapEntry::Chip(_) | WrapEntry::Prf(_) => {}
             WrapEntry::Device(device) => {
                 if device_ids.contains(&device.device_id) {
                     return Err(anyhow::anyhow!("corrupted length"));
@@ -121,9 +114,5 @@ fn check_entries(entries: &[WrapEntry<'_>]) -> anyhow::Result<()> {
             }
         }
     }
-    if saw_password {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("corrupted length"))
-    }
+    Ok(())
 }

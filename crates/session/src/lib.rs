@@ -15,9 +15,14 @@ mod unlock;
 pub use aead::BodyAlg;
 pub use container::VaultFile;
 pub use create::{create, Session};
-pub use devices::{add_device, remove_device};
+pub use devices::{
+    add_chip_unlock, add_device, add_prf_unlock, remove_chip_unlock, remove_device,
+    remove_prf_unlock,
+};
 pub use error::Seen;
 pub use kdf::KdfProfile;
 pub use rotate::{change_password, reencrypt_body, write_records};
-pub use unlock::unlock;
-pub use wraps::{DeviceGrant, DeviceKeys, DevicePublics};
+pub use unlock::{unlock, UnlockCreds};
+pub use wraps::{
+    ChipGrant, ChipKeys, ChipPublics, DeviceGrant, DeviceKeys, DevicePublics, PrfGrant, PrfPublics,
+};

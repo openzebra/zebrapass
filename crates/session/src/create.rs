@@ -2,9 +2,9 @@
 
 use aead::{encrypt_body, BodyAlg};
 use container::{
-    assemble, encode_device_entry, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile,
-    WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY,
-    KDF_ARGON2ID, WRAP_AEGIS256,
+    assemble, encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry,
+    encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC,
+    BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID, WRAP_AEGIS256,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use kdf::{derive_vault_keys, KdfProfile};
@@ -118,6 +118,24 @@ pub fn encode_entry(entry: &WrapEntry<'_>) -> anyhow::Result<Vec<u8>> {
             wrap.ct,
             wrap.tag,
         )?),
+        WrapEntry::Chip(wrap) => Ok(encode_chip_entry(
+            wrap.id,
+            wrap.chip_pub,
+            wrap.eph_pub,
+            wrap.pq_pk,
+            wrap.sntrup_ct,
+            wrap.nonce,
+            wrap.ct,
+            wrap.tag,
+        )?),
+        WrapEntry::Prf(wrap) => Ok(encode_prf_entry(
+            wrap.id,
+            wrap.cred_id,
+            wrap.salt,
+            wrap.nonce,
+            wrap.ct,
+            wrap.tag,
+        )?),
     }
 }
 
@@ -203,7 +221,11 @@ fn mac_commit(key: &[u8; 32], parts: &[&[u8]]) -> anyhow::Result<[u8; 32]> {
         mac.update(part);
     }
     let digest = mac.finalize().into_bytes();
-    <[u8; 32]>::try_from(digest.as_slice()).map_err(|_| anyhow::anyhow!("corrupted length"))
+    let mut out = [0u8; 32];
+    for (dst, src) in out.iter_mut().zip(digest.iter()) {
+        *dst = *src;
+    }
+    Ok(out)
 }
 
 pub fn verify_commit(

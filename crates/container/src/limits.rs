@@ -30,6 +30,12 @@ pub const KIND_PASSWORD: u16 = 0x0001;
 /// Device wrap kind.
 pub const KIND_DEVICE: u16 = 0x0002;
 
+/// Chip (secure enclave) wrap kind.
+pub const KIND_CHIP: u16 = 0x0003;
+
+/// `YubiKey` PRF wrap kind.
+pub const KIND_PRF: u16 = 0x0004;
+
 /// `ntrulp` device KEM (`ntrup761`).
 pub const KEM_NTRULP: u16 = 0xC001;
 
@@ -41,6 +47,12 @@ pub const DOMAIN_WRAP_PASSWORD: &[u8] = b"brby/v2/wrap-password";
 
 /// Device-wrap associated-data domain.
 pub const DOMAIN_WRAP_DEVICE: &[u8] = b"brby/v2/wrap-device";
+
+/// Chip-wrap associated-data domain.
+pub const DOMAIN_WRAP_CHIP: &[u8] = b"brby/v2/wrap-chip";
+
+/// PRF-wrap associated-data domain.
+pub const DOMAIN_WRAP_PRF: &[u8] = b"brby/v2/wrap-prf";
 
 /// Static header size in bytes.
 pub const HEADER_LEN: usize = 72;

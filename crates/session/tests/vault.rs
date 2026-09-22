@@ -21,7 +21,7 @@ use pq::keypair;
 use secret::Secret;
 use session::{
     add_device, change_password, create, reencrypt_body, remove_device, unlock, write_records,
-    Seen, Session,
+    Seen, Session, UnlockCreds,
 };
 use wraps::{DeviceKeys, DevicePublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
@@ -77,15 +77,14 @@ fn reject_before_argon() {
     let mut bytes = header.to_bytes().to_vec();
     bytes.extend_from_slice(&[0u8; COMMIT_LEN]);
     assert_eq!(
-        unlock(&VaultFile::new(bytes), "password", None, None).unwrap_err().to_string(),
+        unlock(&VaultFile::new(bytes), &UnlockCreds::password("password"), None).unwrap_err().to_string(),
         "kdf parameters rejected"
     );
     // Non-BRBY bytes are rejected before Argon2 runs.
     assert_eq!(
         unlock(
             &VaultFile::new(b"v1-vault-no-magic".to_vec()),
-            "password",
-            None,
+            &UnlockCreds::password("password"),
             None
         )
         .unwrap_err().to_string(),
@@ -96,7 +95,7 @@ fn reject_before_argon() {
 fn round_trip(password: &str, alg: BodyAlg) -> (VaultFile, Session) {
     let (file, session) = create(password, KdfProfile::Mobile, alg).unwrap();
     assert_eq!(session.generation(), 1);
-    let opened = unlock(&file, password, None, None).unwrap();
+    let opened = unlock(&file, &UnlockCreds::password(password), None).unwrap();
     assert_eq!(opened.generation(), session.generation());
     assert_eq!(opened.commit_tag(), session.commit_tag());
     (file, session)
@@ -104,17 +103,17 @@ fn round_trip(password: &str, alg: BodyAlg) -> (VaultFile, Session) {
 
 fn tamper(file: &VaultFile, password: &str) {
     assert_eq!(
-        unlock(file, "wrong-password", None, None).unwrap_err().to_string(),
+        unlock(file, &UnlockCreds::password("wrong-password"), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
     let flipped_header = flip_at(file, 20);
     assert_eq!(
-        unlock(&flipped_header, password, None, None).unwrap_err().to_string(),
+        unlock(&flipped_header, &UnlockCreds::password(password), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
     let flipped_body = flip_at(file, body_offset(file));
     assert_eq!(
-        unlock(&flipped_body, password, None, None).unwrap_err().to_string(),
+        unlock(&flipped_body, &UnlockCreds::password(password), None).unwrap_err().to_string(),
         "commit mismatch"
     );
     let parsed = file.parse().unwrap();
@@ -124,12 +123,12 @@ fn tamper(file: &VaultFile, password: &str) {
     assert_eq!(file.as_bytes()[PASSWORD_CT_OFFSET], wrap.ct[0]);
     let flipped_ct = flip_at(file, PASSWORD_CT_OFFSET);
     assert_eq!(
-        unlock(&flipped_ct, password, None, None).unwrap_err().to_string(),
+        unlock(&flipped_ct, &UnlockCreds::password(password), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
     let swapped_alg = set_body_alg(file, BODY_KUZ_CTR_HMAC);
     assert_eq!(
-        unlock(&swapped_alg, password, None, None).unwrap_err().to_string(),
+        unlock(&swapped_alg, &UnlockCreds::password(password), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
 }
@@ -138,13 +137,13 @@ fn transplant(aegis: &VaultFile, kuz: &VaultFile) {
     let foreign = password_record(aegis);
     let mixed = with_password_record(kuz, &foreign);
     assert_eq!(
-        unlock(&mixed, PW_AEGIS, None, None).unwrap_err().to_string(),
+        unlock(&mixed, &UnlockCreds::password(PW_AEGIS), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
     // B's password wrap stays. A's record replaces the body, so the commit is stale.
     let spliced = replace_body(kuz, &foreign);
     assert_eq!(
-        unlock(&spliced, PW_KUZ, None, None).unwrap_err().to_string(),
+        unlock(&spliced, &UnlockCreds::password(PW_KUZ), None).unwrap_err().to_string(),
         "commit mismatch"
     );
 }
@@ -186,7 +185,7 @@ fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics,
     assert_eq!(file.as_bytes(), after_add.as_slice());
     assert_eq!(session.generation(), generation_after);
     assert_eq!(session.commit_tag(), &tag_after);
-    let opened = unlock(file, PW_AEGIS, None, None).unwrap();
+    let opened = unlock(file, &UnlockCreds::password(PW_AEGIS), None).unwrap();
     assert_eq!(opened.generation(), session.generation());
     assert_eq!(opened.commit_tag(), session.commit_tag());
     device
@@ -197,14 +196,14 @@ fn reencrypt_and_check(
     file: &mut VaultFile,
     device: &(DevicePublics, DeviceKeys),
 ) {
-    reencrypt_body(session, file, b"rotated-records", PW_ROTATED, &[device.0]).unwrap();
+    reencrypt_body(session, file, b"rotated-records", PW_ROTATED, &[device.0], &[], &[]).unwrap();
     assert_eq!(
-        unlock(file, PW_AEGIS, None, None).unwrap_err().to_string(),
+        unlock(file, &UnlockCreds::password(PW_AEGIS), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
-    let opened = unlock(file, PW_ROTATED, None, None).unwrap();
+    let opened = unlock(file, &UnlockCreds::password(PW_ROTATED), None).unwrap();
     assert_eq!(opened.commit_tag(), session.commit_tag());
-    let via_device = unlock(file, "", Some(&device.1), None).unwrap();
+    let via_device = unlock(file, &UnlockCreds::password("").with_device(&device.1), None).unwrap();
     assert_eq!(via_device.generation(), session.generation());
     assert_eq!(via_device.commit_tag(), session.commit_tag());
 }
@@ -221,12 +220,12 @@ fn change_password_and_check(session: &mut Session, file: &mut VaultFile) {
         commit_tag: *session.commit_tag(),
     };
     assert_eq!(
-        unlock(&old, PW_ROTATED, None, Some(seen)).unwrap_err().to_string(),
+        unlock(&old, &UnlockCreds::password(PW_ROTATED), Some(seen)).unwrap_err().to_string(),
         "rollback"
     );
-    let opened_old = unlock(&old, PW_ROTATED, None, None).unwrap();
+    let opened_old = unlock(&old, &UnlockCreds::password(PW_ROTATED), None).unwrap();
     assert_eq!(opened_old.generation() + 1, session.generation());
-    unlock(file, PW_NEXT, None, None).unwrap();
+    unlock(file, &UnlockCreds::password(PW_NEXT), None).unwrap();
 }
 
 fn write_and_check(session: &mut Session, file: &mut VaultFile) {
@@ -236,7 +235,7 @@ fn write_and_check(session: &mut Session, file: &mut VaultFile) {
     assert_eq!(entry_wire(file), wraps_before);
     assert_eq!(session.generation(), generation + 1);
     assert_eq!(file.parse().unwrap().generation, session.generation());
-    let opened = unlock(file, PW_NEXT, None, None).unwrap();
+    let opened = unlock(file, &UnlockCreds::password(PW_NEXT), None).unwrap();
     assert_eq!(opened.commit_tag(), session.commit_tag());
 }
 
@@ -268,7 +267,7 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
 fn desktop_once() {
     let (file, session) = create(PW_DESKTOP, KdfProfile::Desktop, BodyAlg::Aegis256).unwrap();
     assert_eq!(session.generation(), 1);
-    let opened = unlock(&file, PW_DESKTOP, None, None).unwrap();
+    let opened = unlock(&file, &UnlockCreds::password(PW_DESKTOP), None).unwrap();
     assert_eq!(opened.generation(), 1);
     assert_eq!(opened.commit_tag(), session.commit_tag());
 }

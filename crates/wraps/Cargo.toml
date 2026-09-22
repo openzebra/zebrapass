@@ -13,6 +13,7 @@ aegis.workspace = true
 container = { path = "../container" }
 getrandom.workspace = true
 kdf = { path = "../kdf" }
+p256.workspace = true
 pq = { path = "../pq" }
 secret = { path = "../secret" }
 x25519-dalek.workspace = true
