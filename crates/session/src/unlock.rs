@@ -1,10 +1,10 @@
 //! Open a vault file into a [`Session`](crate::Session).
 
 use aead::{decrypt_body, BodyAlg};
-use container::{ChipWrap, PrfWrap, VaultFile, WrapEntry};
+use container::{ChipWrap, VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{open_chip, open_device, open_password, open_prf, ChipKeys, DeviceKeys};
+use wraps::{open_chip, open_device, open_password, ChipKeys, DeviceKeys};
 use zeroize::Zeroize;
 
 use crate::create::{body_ad, verify_commit, Session};
@@ -13,9 +13,9 @@ use crate::error::Seen;
 /// Factors a caller can present for one unlock.
 ///
 /// Every field is optional and independent: [`unlock`] picks the first factor
-/// that is present both here and in the file, in the order chip → PRF →
-/// device → password. A factor listed here but absent from the file is an
-/// error, not a silent fallback.
+/// that is present both here and in the file, in the order chip → device →
+/// password. A factor listed here but absent from the file is an error, not
+/// a silent fallback.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnlockCreds<'a> {
     /// The vault password.
@@ -25,8 +25,6 @@ pub struct UnlockCreds<'a> {
     /// This phone's chip keys and the P-256 shared secret the platform
     /// computes as `ECDH(chip_sk, wrap.eph_pub)`.
     pub chip: Option<(&'a ChipKeys, [u8; 32])>,
-    /// A PRF grant id and the 32-byte hmac-secret output for it.
-    pub prf: Option<([u8; 16], [u8; 32])>,
 }
 
 impl<'a> UnlockCreds<'a> {
@@ -37,7 +35,6 @@ impl<'a> UnlockCreds<'a> {
             password: Some(pw),
             device: None,
             chip: None,
-            prf: None,
         }
     }
 
@@ -55,17 +52,13 @@ impl<'a> UnlockCreds<'a> {
         self
     }
 
-    /// Present a PRF output with its grant id.
-    #[must_use]
-    pub const fn with_prf(mut self, id: [u8; 16], prf_out: [u8; 32]) -> Self {
-        self.prf = Some((id, prf_out));
-        self
-    }
+    // !todo!: PRF factor (YubiKey) removed — restore `pub prf` +
+    // `with_prf` together with the `platform::PrfBackend` trait.
 }
 
 /// Open `file` with the factors in `creds`.
 ///
-/// Attempts go chip → PRF → device → password: the first factor present in
+/// Attempts go chip → device → password: the first factor present in
 /// `creds` is tried against its wrap. The body is decrypted only after the
 /// commit matches. The plaintext is wiped and not stored on the session.
 ///
@@ -73,9 +66,8 @@ impl<'a> UnlockCreds<'a> {
 ///
 /// Parse failures surface as `anyhow` errors with stable messages.
 /// `no chip wrap for this device` when the chip factor is present but the
-/// file has no chip wrap with that id; `no prf wrap for this credential`
-/// analogously for the PRF factor; `wrap not found` for a missing device or
-/// password wrap.
+/// file has no chip wrap with that id; `wrap not found` for a missing device
+/// or password wrap.
 /// `wrap authentication failed` when the wrap tag does not match.
 /// `commit mismatch` when the HMAC over every byte except the
 /// last 32 does not match. This is returned before the body is decrypted.
@@ -124,10 +116,8 @@ fn unwrap_vk(
         let wrap = find_chip(entries, &keys.id)?;
         return open_chip(header, wrap, keys, &ss_p256);
     }
-    if let Some((id, prf_out)) = creds.prf {
-        let wrap = find_prf(entries, &id)?;
-        return open_prf(header, wrap, &prf_out);
-    }
+    // !todo!: PRF factor (YubiKey) removed — restore here between chip and
+    // device, together with `UnlockCreds::prf` and `find_prf`.
     if let Some(keys) = creds.device {
         let wrap = find_device(entries, &keys.id)?;
         return open_device(header, wrap, keys);
@@ -154,20 +144,6 @@ fn find_chip<'a>(
         }
     }
     Err(anyhow::anyhow!("no chip wrap for this device"))
-}
-
-fn find_prf<'a>(
-    entries: &'a [WrapEntry<'a>],
-    id: &[u8; 16],
-) -> anyhow::Result<&'a PrfWrap<'a>> {
-    for entry in entries {
-        if let WrapEntry::Prf(wrap) = entry {
-            if wrap.id == *id {
-                return Ok(wrap);
-            }
-        }
-    }
-    Err(anyhow::anyhow!("no prf wrap for this credential"))
 }
 
 fn find_password<'a>(

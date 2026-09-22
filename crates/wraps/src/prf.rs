@@ -1,4 +1,8 @@
 //! `YubiKey` PRF wrap: the hmac-secret output seals the vault key directly.
+//!
+//! !todo!: physical-key support is removed from `session`/`platform` for
+//! now; the wire kind `0x0004` and this module stay so the format slot is
+//! reserved and files stay forward-compatible.
 
 use container::{encode_prf_entry, PrfWrap, StaticHeader};
 use kdf::{hkdf_sha512, INFO_PRF_WRAP};

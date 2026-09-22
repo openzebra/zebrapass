@@ -196,7 +196,7 @@ fn reencrypt_and_check(
     file: &mut VaultFile,
     device: &(DevicePublics, DeviceKeys),
 ) {
-    reencrypt_body(session, file, b"rotated-records", PW_ROTATED, &[device.0], &[], &[]).unwrap();
+    reencrypt_body(session, file, b"rotated-records", PW_ROTATED, &[device.0], &[]).unwrap();
     assert_eq!(
         unlock(file, &UnlockCreds::password(PW_AEGIS), None).unwrap_err().to_string(),
         "wrap authentication failed"

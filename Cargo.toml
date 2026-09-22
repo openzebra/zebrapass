@@ -34,7 +34,6 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
-ctap-fido2 = "=0.1.3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -49,9 +48,10 @@ expect_used = "deny"
 panic = "deny"
 indexing_slicing = "deny"
 cargo_common_metadata = "allow"
-# `ctap-fido2` sits on its own RustCrypto/getrandom/syn wave, so a few crates
-# resolve twice: once for this workspace's pinned stack, once transitively
-# behind the platform boundary. The duplicates never mix — no type from the
-# crate's stack crosses `platform`'s public API. Revisit when the workspace
-# migrates its crypto stack or the crate is replaced.
+# The RustCrypto ecosystem is split across release waves: `p256` 0.13 drags
+# digest/hmac/hkdf 0.12 via elliptic-curve 0.13, and `argon2` 0.6 drags
+# blake2/block-buffer 0.10 — while this workspace pins the 0.11/0.13 wave.
+# These duplicates are transitive (no type crosses our API boundaries);
+# drop the allow when blake2/argon2 and elliptic-curve publish on the
+# workspace's wave.
 multiple_crate_versions = "allow"

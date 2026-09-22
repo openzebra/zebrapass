@@ -1,19 +1,15 @@
-//! Platform backends for fast unlock factors.
+//! Platform backends for the fast unlock factor: the secure chip.
 //!
-//! Two traits cover the phone-side hardware:
+//! [`ChipBackend`] — a secure chip that owns a non-exportable P-256 key
+//! per alias (`iOS` Secure Enclave, `Android` `StrongBox`). The
+//! implementation computes ECDH inside the chip and hands out only shared
+//! secrets; the private key never leaves the platform.
 //!
-//! - [`ChipBackend`] — a secure chip that owns a non-exportable P-256 key
-//!   (`iOS` Secure Enclave, `Android` `StrongBox`). The implementation computes
-//!   ECDH inside the chip and hands out only shared secrets.
-//! - [`PrfBackend`] — a FIDO2 authenticator exposing CTAP2.1 `hmac-secret`
-//!   (`YubiKey`). The PRF output never leaves the token as a key.
-//!
-//! Both traits are consumed through static dispatch (generics or
-//! `impl Trait`); there is no `dyn` in this crate.
+//! The trait is consumed through static dispatch (generics or `impl Trait`
+//! in argument position); there is no `dyn` in this crate.
 //!
 //! Real native bridges (Swift/Kotlin) live in the mobile apps. This crate
-//! ships [`SoftwareChip`] for tests and examples, and [`CtapPrf`] as the
-//! working USB/NFC token backend.
+//! ships [`SoftwareChip`] for tests and examples.
 //!
 //! # Contract for a native `ChipBackend`
 //!
@@ -23,15 +19,22 @@
 //! 32-byte X9.63 shared secret. Bare P-256 without the PQ half is not a
 //! valid grant: sealing always adds the software `ntrulp` half, so opening
 //! needs both.
+//!
+//! !todo!: physical-key (`YubiKey` PRF) support was removed. To restore it:
+//! a `PrfBackend` trait here (`enroll`/`prf`/`prf_with`/`remove`) over a
+//! fixed `CTAP` client — `ctap-fido2` 0.1.3 has a PIN-v1 `alg` bug (wrong
+//! `-25` label, `PinAuthInvalid` with a correct PIN; reported upstream
+//! 2026-09) — plus the `session` side: `UnlockCreds::with_prf`,
+//! `add_prf_unlock` / `remove_prf_unlock`, the `prfs` parameter of
+//! `reencrypt_body`. The vault format already reserves wrap kind `0x0004`
+//! and `wraps::prf` still compiles, so files stay forward-compatible.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use ctap_fido2::cmd::get_assertion::HmacSecretRequest;
-use ctap_fido2::cmd::{Algorithm, Authenticator, MakeCredentialOptions};
-use ctap_fido2::device::{list_devices, DeviceInfo};
 use ec::{decode_pub, encode_pub, fresh_pair, shared};
-use sha2::{Digest, Sha256};
+use p256::SecretKey;
+use zeroize::Zeroizing;
 
 /// What a backend can offer right now.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,67 +77,10 @@ pub trait ChipBackend {
     fn delete(&self, alias: &str) -> anyhow::Result<()>;
 }
 
-/// A FIDO2 authenticator with the CTAP2.1 `hmac-secret` extension.
-pub trait PrfBackend {
-    /// Create a non-discoverable `hmac-secret` credential.
-    ///
-    /// Returns the credential id to store in a [`wraps`](#) grant and the
-    /// stable 16-byte grant id derived from it. `dev` is the HID device path
-    /// from [`list_devices`]; pass an empty slice to use the first token.
-    ///
-    /// # Errors
-    ///
-    /// CTAP errors: PIN required or wrong, touch timeout, no token.
-    fn enroll(
-        &self,
-        rp_id: &str,
-        user: &[u8],
-        dev: &str,
-        pin: Option<&str>,
-    ) -> anyhow::Result<(Vec<u8>, [u8; 16])>;
-
-    /// Compute the PRF output for `salt`. Touch only; no PIN.
-    ///
-    /// # Errors
-    ///
-    /// CTAP errors as in [`Self::prf_with`].
-    fn prf(&self, cred_id: &[u8], salt: &[u8; 32], dev: &str) -> anyhow::Result<[u8; 32]> {
-        self.prf_with(cred_id, salt, dev, None)
-    }
-
-    /// Compute the PRF output for `salt`, optionally with a PIN.
-    ///
-    /// # Errors
-    ///
-    /// `device not found` when `dev` matches no token.
-    /// CTAP errors from the token: PIN required or wrong, touch timeout,
-    /// missing `hmac-secret` extension, unknown credential.
-    fn prf_with(
-        &self,
-        cred_id: &[u8],
-        salt: &[u8; 32],
-        dev: &str,
-        pin: Option<&str>,
-    ) -> anyhow::Result<[u8; 32]>;
-
-    /// Drop the binding locally. CTAP2.1 has no per-credential delete for
-    /// non-discoverable credentials; the token-side secret becomes
-    /// unreachable once the vault wrap is removed by the session layer.
-    ///
-    /// # Errors
-    ///
-    /// Always succeeds. Kept for trait symmetry with native backends that
-    /// can clean device-side state.
-    fn remove(&self, cred_id: &[u8]) -> anyhow::Result<()> {
-        let _ = cred_id;
-        Ok(())
-    }
-}
-
 /// In-memory chip for tests and examples. Not for production.
 #[derive(Default)]
 pub struct SoftwareChip {
-    keys: Mutex<HashMap<String, zeroize::Zeroizing<[u8; 32]>>>,
+    keys: Mutex<HashMap<String, Zeroizing<[u8; 32]>>>,
 }
 
 impl SoftwareChip {
@@ -160,7 +106,7 @@ impl ChipBackend for SoftwareChip {
         self.keys
             .lock()
             .map_err(|_| anyhow::anyhow!("chip store poisoned"))?
-            .insert(alias.to_owned(), zeroize::Zeroizing::new(sk.to_bytes().into()));
+            .insert(alias.to_owned(), Zeroizing::new(sk.to_bytes().into()));
         Ok(encoded)
     }
 
@@ -174,11 +120,9 @@ impl ChipBackend for SoftwareChip {
                 .map_err(|_| anyhow::anyhow!("chip store poisoned"))?;
             store.get(alias).cloned()
         };
-        let sk_bytes =
-            sk_bytes.ok_or_else(|| anyhow::anyhow!("no such key"))?;
-        let field: p256::elliptic_curve::FieldBytes<p256::NistP256> =
-            (*sk_bytes).into();
-        let sk = p256::SecretKey::from_bytes(&field).map_err(|_| anyhow::anyhow!("kem length"))?;
+        let sk_bytes = sk_bytes.ok_or_else(|| anyhow::anyhow!("no such key"))?;
+        let field: p256::elliptic_curve::FieldBytes<p256::NistP256> = (*sk_bytes).into();
+        let sk = SecretKey::from_bytes(&field).map_err(|_| anyhow::anyhow!("kem length"))?;
         let peer = decode_pub(peer_pub)?;
         Ok(shared(&sk, &peer))
     }
@@ -190,154 +134,6 @@ impl ChipBackend for SoftwareChip {
             .remove(alias);
         Ok(())
     }
-}
-
-/// Probe result for one FIDO token, safe to read at any time: no touch,
-/// no PIN consumed, no retries burned.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokenDiagnostics {
-    /// HID path, matches the `dev` argument of the other calls.
-    pub path: String,
-    /// The token advertises the `prf` (`hmac-secret`) extension.
-    pub prf: bool,
-    /// A FIDO PIN is configured on the token.
-    pub pin_set: bool,
-    /// Wrong-PIN attempts left, when the token reports them
-    /// (`None` when no PIN is set or the token hides the counter).
-    pub pin_retries: Option<u8>,
-}
-
-/// `YubiKey` PRF backend over real CTAP2.1 `hmac-secret` (crate `ctap-fido2`).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CtapPrf;
-
-impl CtapPrf {
-    /// A backend handle. The token is opened per call.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-
-    fn open(dev: &str) -> anyhow::Result<Authenticator> {
-        let devices = list_devices().map_err(anyhow::Error::new)?;
-        let info: &DeviceInfo = if dev.is_empty() {
-            devices
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("device not found"))?
-        } else {
-            devices
-                .iter()
-                .find(|item| item.path == dev)
-                .ok_or_else(|| anyhow::anyhow!("device not found"))?
-        };
-        Authenticator::open(info).map_err(anyhow::Error::new)
-    }
-
-    /// Read every FIDO token: PRF support, PIN state, retry counter.
-    ///
-    /// # Errors
-    ///
-    /// `hid open failed` when the HID subsystem is unreachable; per-token
-    /// failures are reported as `err` in that token's slot instead.
-    #[must_use]
-    pub fn diagnostics() -> Vec<Result<TokenDiagnostics, anyhow::Error>> {
-        let devices = match list_devices() {
-            Ok(devices) => devices,
-            Err(err) => return vec![Err(anyhow::Error::new(err))],
-        };
-        devices
-            .iter()
-            .map(|info| {
-                let mut auth = Authenticator::open(info).map_err(anyhow::Error::new)?;
-                let (prf, pin_set) = {
-                    let report = auth.info().map_err(anyhow::Error::new)?;
-                    (report.hmac_secret(), report.client_pin_set())
-                };
-                let pin_retries = if pin_set {
-                    Some(auth.pin_retries().map_err(anyhow::Error::new)?)
-                } else {
-                    None
-                };
-                Ok(TokenDiagnostics {
-                    path: info.path.clone(),
-                    prf,
-                    pin_set,
-                    pin_retries,
-                })
-            })
-            .collect()
-    }
-}
-
-impl PrfBackend for CtapPrf {
-    fn enroll(
-        &self,
-        rp_id: &str,
-        user: &[u8],
-        dev: &str,
-        pin: Option<&str>,
-    ) -> anyhow::Result<(Vec<u8>, [u8; 16])> {
-        let mut auth = Self::open(dev)?;
-        let hash = Sha256::new()
-            .chain_update(b"zp/vault/enroll/v1")
-            .chain_update(user)
-            .finalize();
-        let mut seed = [0u8; 32];
-        for (dst, src) in seed.iter_mut().zip(hash.iter()) {
-            *dst = *src;
-        }
-        let opts = MakeCredentialOptions {
-            algorithm: Algorithm::Es256,
-            pin,
-            ..MakeCredentialOptions::default()
-        };
-        let credential = auth
-            .make_credential(rp_id, &seed, &opts)
-            .map_err(anyhow::Error::new)?;
-        let id = grant_id(&credential.id);
-        Ok((credential.id, id))
-    }
-
-    fn prf_with(
-        &self,
-        cred_id: &[u8],
-        salt: &[u8; 32],
-        dev: &str,
-        pin: Option<&str>,
-    ) -> anyhow::Result<[u8; 32]> {
-        let mut auth = Self::open(dev)?;
-        let mut client_hash = [0u8; 32];
-        getrandom::fill(&mut client_hash).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
-        // A random nonce, not secret material; `request` borrows it and is
-        // dropped right after the call.
-        let request = HmacSecretRequest {
-            rp_id: ZP_RP_ID,
-            client_data_hash: &client_hash,
-            cred_id,
-            salt,
-            salt2: None,
-            pin,
-            public_key: None,
-            request_cred_blob: false,
-        };
-        let response = auth
-            .get_hmac_secret(&request)
-            .map_err(anyhow::Error::new)?;
-        Ok(response.secret.0)
-    }
-}
-
-/// Relying party id used for every zebrapass credential.
-pub const ZP_RP_ID: &str = "zebrapass.local";
-
-/// Stable grant id: `SHA-256(cred_id)[..16]`.
-fn grant_id(cred_id: &[u8]) -> [u8; 16] {
-    let digest = Sha256::digest(cred_id);
-    let mut id = [0u8; 16];
-    for (slot, byte) in id.iter_mut().zip(digest.iter()) {
-        *slot = *byte;
-    }
-    id
 }
 
 #[cfg(test)]

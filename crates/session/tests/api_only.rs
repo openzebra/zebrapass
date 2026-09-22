@@ -24,7 +24,7 @@ fn api_only_password_flow() {
     change_password(&mut s, &mut file, PW2).unwrap();
     assert!(unlock(&file, &UnlockCreds::password(PW), None).is_err());
 
-    reencrypt_body(&mut s, &mut file, b"{}", PW3, &[], &[], &[]).unwrap();
+    reencrypt_body(&mut s, &mut file, b"{}", PW3, &[], &[]).unwrap();
     assert!(unlock(&file, &UnlockCreds::password(PW2), None).is_err());
     unlock(&file, &UnlockCreds::password(PW3), None).unwrap();
 }
