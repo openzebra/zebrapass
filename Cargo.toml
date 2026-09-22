@@ -25,7 +25,7 @@ hkdf = "=0.13.0"
 sha2 = "=0.11.0"
 hmac = "=0.13.0"
 x25519-dalek = "=3.0.0"
-p256 = { version = "=0.13.2", default-features = false, features = ["ecdh", "arithmetic", "alloc"] }
+p256 = { version = "=0.14.0", default-features = false, features = ["ecdh", "arithmetic", "alloc"] }
 ntrulp = { version = "=0.2.7", default-features = false, features = ["ntrup1277", "std"] }
 rand = "=0.10.3"
 anyhow = "=1.0.100"
@@ -48,10 +48,3 @@ expect_used = "deny"
 panic = "deny"
 indexing_slicing = "deny"
 cargo_common_metadata = "allow"
-# The RustCrypto ecosystem is split across release waves: `p256` 0.13 drags
-# digest/hmac/hkdf 0.12 via elliptic-curve 0.13, and `argon2` 0.6 drags
-# blake2/block-buffer 0.10 — while this workspace pins the 0.11/0.13 wave.
-# These duplicates are transitive (no type crosses our API boundaries);
-# drop the allow when blake2/argon2 and elliptic-curve publish on the
-# workspace's wave.
-multiple_crate_versions = "allow"

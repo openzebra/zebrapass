@@ -6,7 +6,7 @@
 //! ownership of all key material.
 
 use p256::ecdh::diffie_hellman;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use p256::{PublicKey, SecretKey};
 use zeroize::Zeroize;
 
@@ -37,7 +37,7 @@ pub fn fresh_pair() -> anyhow::Result<(SecretKey, PublicKey)> {
 ///
 /// `kem length` when the encoded point is not 65 bytes.
 pub fn encode_pub(key: &PublicKey) -> anyhow::Result<[u8; 65]> {
-    let point = key.to_encoded_point(false);
+    let point = key.to_sec1_point(false);
     let bytes = point.as_bytes();
     let mut out = [0u8; 65];
     if bytes.len() != 65 {
@@ -72,7 +72,7 @@ pub fn shared(sk: &SecretKey, pk: &PublicKey) -> [u8; 32] {
 #[allow(clippy::unwrap_used, clippy::unwrap_in_result)]
 mod tests {
     use super::{decode_pub, encode_pub, fresh_pair, shared};
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::elliptic_curve::sec1::ToSec1Point;
 
     #[test]
     fn ecdh_is_symmetric_over_encoded_points() {
@@ -84,8 +84,8 @@ mod tests {
         // Encoding round trip preserves the point.
         let decoded = decode_pub(&encode_pub(&pk_a).unwrap()).unwrap();
         assert_eq!(
-            decoded.to_encoded_point(false).as_ref(),
-            pk_a.to_encoded_point(false).as_ref()
+            decoded.to_sec1_point(false).as_ref(),
+            pk_a.to_sec1_point(false).as_ref()
         );
     }
 }
