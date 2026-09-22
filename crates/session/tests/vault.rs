@@ -80,7 +80,7 @@ fn reject_before_argon() {
         unlock(&VaultFile::new(bytes), "password", None, None).unwrap_err().to_string(),
         "kdf parameters rejected"
     );
-    // v1 bytes have no BRBY magic. Reject them before Argon2, feature or not.
+    // Non-BRBY bytes are rejected before Argon2 runs.
     assert_eq!(
         unlock(
             &VaultFile::new(b"v1-vault-no-magic".to_vec()),
