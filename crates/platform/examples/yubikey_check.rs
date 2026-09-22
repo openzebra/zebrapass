@@ -37,40 +37,44 @@ fn hex(bytes: &[u8]) -> String {
     )
 }
 
-/// Human names for the CTAP status codes a PRF run can realistically hit.
-/// Covers both numberings: CTAP2.1 (0x30+, modern `YubiKey` firmware) and the
-/// older CTAP2.0 range (0x25..0x2C) kept for older tokens.
+/// Human names for CTAP2 status codes, canonical CTAP2.1 numbering
+/// (`CTAP2_ERR_*` from the FIDO client-to-authenticator spec).
 const fn ctap_name(status: u8) -> &'static str {
     match status {
         0x01 => "invalid command",
-        0x02 => "invalid parameter",
-        0x03 => "invalid length",
-        0x05 => "timeout",
-        0x11 => "invalid cbor",
+        0x02 | 0x11 => "invalid cbor",
+        0x03 => "invalid cbor type",
+        0x04 => "invalid length",
+        0x05 => "invalid sequence",
+        0x06 => "timeout",
+        0x0A => "channel busy",
+        0x0B => "lock required",
+        0x0C => "invalid channel",
+        0x10 => "cbor unexpected type",
         0x12 => "missing parameter",
-        0x14 => "unsupported extension",
-        0x15 => "credential excluded",
-        0x17 => "invalid credential",
-        0x19 => "operation pending",
-        0x1B => "unsupported algorithm",
-        0x1C => "operation denied",
-        0x21 => "unsupported option",
-        0x24 => "not allowed",
-        // CTAP2.1 numbering (0x30+), merged with the legacy CTAP2.0 codes
-        // that carry the same meaning (0x27..0x2C).
-        0x30 => "user action timeout (touch declined or timed out)",
-        0x31 => "pin invalid (wrong PIN)",
-        0x32 | 0x27 => "pin auth invalid",
-        0x33 | 0x28 => "pin auth limit reached",
-        0x34 | 0x26 => "pin blocked",
-        0x35 | 0x29 => "pin not set",
-        0x36 | 0x2B => "pin policy violation",
-        0x37 | 0x2C => "pin token deprecated",
-        0x38 => "request too large",
-        0x39 => "action timeout",
-        0x3A => "user presence required",
-        0x3B => "uv blocked",
-        0x3C => "uv invalid",
+        0x13 => "limit exceeded",
+        0x16 => "credential excluded",
+        0x19 => "processing",
+        0x1A => "invalid credential",
+        0x1B => "user action pending",
+        0x1C => "operation pending",
+        0x1E => "unsupported algorithm",
+        0x1F => "operation denied",
+        0x23 => "unsupported option",
+        0x26 => "no credentials",
+        0x27 => "user action timeout (touch declined or timed out)",
+        0x28 => "not allowed",
+        0x29 => "pin invalid (wrong PIN)",
+        0x2A => "pin blocked",
+        0x2B => "pin auth invalid",
+        0x2C => "pin auth limit reached",
+        0x2D => "no pin set on token",
+        0x2E => "pin not set",
+        0x31 => "pin policy violation (often: default PIN 123456 must be changed)",
+        0x32 => "pin token deprecated",
+        0x34 => "uv invalid",
+        0x35 => "uv blocked",
+        0x36 => "user presence required",
         _ => "unknown status",
     }
 }
@@ -83,15 +87,24 @@ fn ctap_hint(err: &anyhow::Error) -> String {
         return String::new();
     };
     match status.as_byte() {
-        0x31 | 0x32 => " — wrong PIN; factory default is 123456 if never changed. \
-            Careful: ~8 wrong attempts block the PIN"
+        0x29 => " — wrong PIN. Careful: every attempt burns one retry (~8 total, \
+            then the token locks). If you do not remember the PIN, reset FIDO: \
+            `brew install ykman && ykman fido reset` (wipes FIDO secrets on the token)"
             .to_owned(),
-        0x33 | 0x34 => " — too many wrong PIN attempts; the token is locked. \
-            Reset required (ykman fido reset)"
+        0x2A => " — PIN blocked after too many wrong attempts; reset required: \
+            `ykman fido reset`"
             .to_owned(),
-        0x2A | 0x35 => " — PIN not handled; rerun with --pin".to_owned(),
-        0x2B | 0x36 => " — token requires PIN, rerun with --pin".to_owned(),
-        0x30 | 0x39 => " — touch declined or timed out".to_owned(),
+        0x2B | 0x2C => " — token rejected the PIN protocol handshake. Unplug and \
+            replug the key, then retry; if it persists, this token's firmware \
+            does not accept the ctap-fido2 PIN protocol (v1)"
+            .to_owned(),
+        0x2D | 0x2E => " — no FIDO PIN configured; set one first: \
+            `ykman fido access change-pin`"
+            .to_owned(),
+        0x31 => " — the PIN is still the factory default 123456 and the token \
+            demands a change: run `ykman fido access change-pin`"
+            .to_owned(),
+        0x27 => " — touch declined or timed out".to_owned(),
         code => format!(" ({})", ctap_name(code)),
     }
 }
@@ -109,19 +122,55 @@ fn main() {
         _ => None,
     };
 
-    let devices = ctap_fido2::device::list_devices()
-        .map_err(|err| format!("hid enumeration failed: {err}"));
-    let devices = match devices {
-        Ok(devices) => devices,
-        Err(message) => fail(2, &message),
-    };
-    if devices.is_empty() {
+    // 0. Diagnose tokens first: PRF support, PIN state, retries left.
+    let reports = CtapPrf::diagnostics();
+    if reports.is_empty() {
         fail(1, "no FIDO HID token found");
     }
-    for device in &devices {
-        println!("token: {}", device.path);
+    let mut dev = String::new();
+    let mut prf_ok = false;
+    let mut pin_set = false;
+    let mut retries: Option<u8> = None;
+    for report in reports {
+        match report {
+            Ok(info) => {
+                println!(
+                    "token {}: prf={} pin_set={}{}",
+                    info.path,
+                    info.prf,
+                    info.pin_set,
+                    info.pin_retries
+                        .map(|count| format!(" retries_left={count}"))
+                        .unwrap_or_default()
+                );
+                if !prf_ok && info.prf {
+                    prf_ok = true;
+                    dev.clone_from(&info.path);
+                    pin_set = info.pin_set;
+                    retries = info.pin_retries;
+                }
+            }
+            Err(err) => println!("token probe failed: {err}"),
+        }
     }
-    let dev = devices[0].path.clone();
+    if !prf_ok {
+        fail(2, "no token advertises the prf (hmac-secret) extension");
+    }
+    if !pin_set {
+        fail(
+            2,
+            "token has no FIDO PIN; set one first: brew install ykman && ykman fido access change-pin",
+        );
+    }
+    if pin.is_none() {
+        let left = retries
+            .map(|count| format!(" (retries left: {count})"))
+            .unwrap_or_default();
+        fail(2, &format!("token requires PIN, rerun with --pin{left}"));
+    }
+    if let Some(count) = retries {
+        println!("pin retries left: {count}");
+    }
     let prf = CtapPrf::new();
 
     // 1. Enroll a non-discoverable `prf` credential. Touch required.

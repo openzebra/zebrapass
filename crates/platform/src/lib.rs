@@ -192,6 +192,21 @@ impl ChipBackend for SoftwareChip {
     }
 }
 
+/// Probe result for one FIDO token, safe to read at any time: no touch,
+/// no PIN consumed, no retries burned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenDiagnostics {
+    /// HID path, matches the `dev` argument of the other calls.
+    pub path: String,
+    /// The token advertises the `prf` (`hmac-secret`) extension.
+    pub prf: bool,
+    /// A FIDO PIN is configured on the token.
+    pub pin_set: bool,
+    /// Wrong-PIN attempts left, when the token reports them
+    /// (`None` when no PIN is set or the token hides the counter).
+    pub pin_retries: Option<u8>,
+}
+
 /// `YubiKey` PRF backend over real CTAP2.1 `hmac-secret` (crate `ctap-fido2`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CtapPrf;
@@ -216,6 +231,41 @@ impl CtapPrf {
                 .ok_or_else(|| anyhow::anyhow!("device not found"))?
         };
         Authenticator::open(info).map_err(anyhow::Error::new)
+    }
+
+    /// Read every FIDO token: PRF support, PIN state, retry counter.
+    ///
+    /// # Errors
+    ///
+    /// `hid open failed` when the HID subsystem is unreachable; per-token
+    /// failures are reported as `err` in that token's slot instead.
+    #[must_use]
+    pub fn diagnostics() -> Vec<Result<TokenDiagnostics, anyhow::Error>> {
+        let devices = match list_devices() {
+            Ok(devices) => devices,
+            Err(err) => return vec![Err(anyhow::Error::new(err))],
+        };
+        devices
+            .iter()
+            .map(|info| {
+                let mut auth = Authenticator::open(info).map_err(anyhow::Error::new)?;
+                let (prf, pin_set) = {
+                    let report = auth.info().map_err(anyhow::Error::new)?;
+                    (report.hmac_secret(), report.client_pin_set())
+                };
+                let pin_retries = if pin_set {
+                    Some(auth.pin_retries().map_err(anyhow::Error::new)?)
+                } else {
+                    None
+                };
+                Ok(TokenDiagnostics {
+                    path: info.path.clone(),
+                    prf,
+                    pin_set,
+                    pin_retries,
+                })
+            })
+            .collect()
     }
 }
 
