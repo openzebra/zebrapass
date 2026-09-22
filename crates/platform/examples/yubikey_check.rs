@@ -37,6 +37,46 @@ fn hex(bytes: &[u8]) -> String {
     )
 }
 
+/// Human names for the CTAP status codes a PRF run can realistically hit.
+const fn ctap_name(status: u8) -> &'static str {
+    match status {
+        0x01 => "invalid command",
+        0x02 => "invalid parameter",
+        0x03 => "invalid length",
+        0x05 => "timeout",
+        0x11 => "invalid cbor",
+        0x14 => "unsupported extension",
+        0x15 => "credential excluded",
+        0x17 => "invalid credential",
+        0x1B => "unsupported algorithm",
+        0x1C => "operation denied",
+        0x20 => "unsupported option",
+        0x23 => "no credentials",
+        0x25 => "pin invalid",
+        0x26 => "pin blocked",
+        0x27 => "pin auth invalid",
+        0x29 => "pin not set",
+        0x2A => "pin required",
+        0x2B => "pin policy violation",
+        0x2F => "user action timeout (touch declined or timed out)",
+        _ => "unknown status",
+    }
+}
+
+/// Extra context for a failed backend call: decodes `ctap-fido2` CTAP
+/// statuses into advice (PIN hint) or a human name.
+fn ctap_hint(err: &anyhow::Error) -> String {
+    let Some(ctap_fido2::error::Error::Ctap(status)) = err.downcast_ref::<ctap_fido2::error::Error>()
+    else {
+        return String::new();
+    };
+    match status.as_byte() {
+        0x2A | 0x2B => " — token requires PIN, rerun with --pin".to_owned(),
+        0x2F => " — touch declined or timed out".to_owned(),
+        code => format!(" ({})", ctap_name(code)),
+    }
+}
+
 fn fail(code: i32, message: &str) -> ! {
     eprintln!("FAIL: {message}");
     std::process::exit(code);
@@ -68,7 +108,7 @@ fn main() {
     // 1. Enroll a non-discoverable `prf` credential. Touch required.
     let (cred_id, id) = match prf.enroll("zebrapass.local", b"zp-check", &dev, pin) {
         Ok(result) => result,
-        Err(err) => fail(2, &format!("enroll: {err}")),
+        Err(err) => fail(2, &format!("enroll: {err}{}", ctap_hint(&err))),
     };
     println!("enroll: cred_id {} bytes, grant id {}", cred_id.len(), hex(&id));
 

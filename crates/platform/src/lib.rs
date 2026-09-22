@@ -204,7 +204,7 @@ impl CtapPrf {
     }
 
     fn open(dev: &str) -> anyhow::Result<Authenticator> {
-        let devices = list_devices().map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        let devices = list_devices().map_err(anyhow::Error::new)?;
         let info: &DeviceInfo = if dev.is_empty() {
             devices
                 .first()
@@ -215,7 +215,7 @@ impl CtapPrf {
                 .find(|item| item.path == dev)
                 .ok_or_else(|| anyhow::anyhow!("device not found"))?
         };
-        Authenticator::open(info).map_err(|err| anyhow::anyhow!(err.to_string()))
+        Authenticator::open(info).map_err(anyhow::Error::new)
     }
 }
 
@@ -243,7 +243,7 @@ impl PrfBackend for CtapPrf {
         };
         let credential = auth
             .make_credential(rp_id, &seed, &opts)
-            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            .map_err(anyhow::Error::new)?;
         let id = grant_id(&credential.id);
         Ok((credential.id, id))
     }
@@ -272,7 +272,7 @@ impl PrfBackend for CtapPrf {
         };
         let response = auth
             .get_hmac_secret(&request)
-            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            .map_err(anyhow::Error::new)?;
         Ok(response.secret.0)
     }
 }
