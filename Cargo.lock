@@ -355,6 +355,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "getrandom 0.4.3",
+ "p256",
+ "zeroize",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -694,6 +704,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ctap-fido2",
+ "ec",
  "getrandom 0.4.3",
  "p256",
  "sha2 0.11.0",
@@ -1014,6 +1025,7 @@ dependencies = [
  "aegis",
  "anyhow",
  "container",
+ "ec",
  "getrandom 0.4.3",
  "kdf",
  "p256",

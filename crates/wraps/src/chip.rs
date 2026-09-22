@@ -1,10 +1,8 @@
 //! Chip wrap: secure enclave P-256 hybrid with a software PQ half.
 
 use container::{encode_chip_entry, ChipWrap, StaticHeader};
+use ec::{decode_pub, encode_pub, fresh_pair, shared};
 use kdf::{hkdf_sha512, INFO_CHIP_WRAP};
-use p256::ecdh::diffie_hellman;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::{PublicKey, SecretKey};
 use pq::{decrypt_shared, encrypt_shared, PQ_PK_LEN, PQ_SK_LEN};
 use secret::Secret;
 use zeroize::Zeroize;
@@ -72,7 +70,7 @@ pub fn seal_chip(
     chip: &ChipPublics,
     vk: &[u8; 32],
 ) -> anyhow::Result<(Vec<u8>, ChipGrant)> {
-    let (eph_secret, eph_key) = fresh_p256()?;
+    let (eph_secret, eph_key) = fresh_pair()?;
     let eph_pub = encode_pub(&eph_key)?;
     let chip_pk = decode_pub(&chip.chip_pub)?;
     let mut ss_p256 = shared(&eph_secret, &chip_pk);
@@ -197,47 +195,6 @@ fn derive_k_chip(
     derived
 }
 
-/// Draw a software P-256 key pair from the OS RNG.
-fn fresh_p256() -> anyhow::Result<(SecretKey, PublicKey)> {
-    // Scalars are 32 random bytes; almost every draw is a valid secret key.
-    for _ in 0..8 {
-        let mut bytes = wad::random_array::<32>()?;
-        let key = SecretKey::from_bytes(&bytes.into());
-        bytes.zeroize();
-        if let Ok(sk) = key {
-            let pk = sk.public_key();
-            return Ok((sk, pk));
-        }
-    }
-    Err(anyhow::anyhow!("os entropy failed"))
-}
-
-/// Decode an uncompressed 65-byte P-256 public key.
-fn decode_pub(bytes: &[u8; 65]) -> anyhow::Result<PublicKey> {
-    PublicKey::from_sec1_bytes(bytes).map_err(|_| anyhow::anyhow!("kem length"))
-}
-
-fn shared(sk: &SecretKey, pk: &PublicKey) -> [u8; 32] {
-    let ss = diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
-    let raw = ss.raw_secret_bytes();
-    let mut out = [0u8; 32];
-    for (dst, src) in out.iter_mut().zip(raw.iter()) {
-        *dst = *src;
-    }
-    out
-}
-
-fn encode_pub(key: &PublicKey) -> anyhow::Result<[u8; 65]> {
-    let point = key.to_encoded_point(false);
-    let bytes = point.as_bytes();
-    let mut out = [0u8; 65];
-    if bytes.len() != 65 {
-        return Err(anyhow::anyhow!("kem length"));
-    }
-    out.copy_from_slice(bytes);
-    Ok(out)
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "each argument is one grant field, in wire order"
@@ -293,8 +250,9 @@ mod tests {
     };
     use pq::{keypair, PQ_PK_LEN};
 
-    use super::{decode_pub, encode_pub, fresh_p256, open_chip, seal_chip, shared, ChipKeys,
-        ChipPublics};
+    use ec::{decode_pub, encode_pub, fresh_pair, shared};
+
+    use super::{open_chip, seal_chip, ChipKeys, ChipPublics};
 
     fn floor_header() -> StaticHeader {
         StaticHeader {
@@ -315,7 +273,7 @@ mod tests {
         let vk = [0x24u8; 32];
         let (ntru_bytes, kem_secret) = keypair().unwrap();
         let ntru_pk: [u8; PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
-        let (chip_secret, chip_pub_key) = fresh_p256().unwrap();
+        let (chip_secret, chip_pub_key) = fresh_pair().unwrap();
         let chip = ChipPublics {
             id: [0x11; 16],
             chip_pub: encode_pub(&chip_pub_key).unwrap(),
@@ -335,7 +293,7 @@ mod tests {
         let opened = open_chip(&header, &wrap, &keys, &ss).unwrap();
         assert_eq!(opened.expose(), &vk);
         // A shared secret from a foreign chip key fails authentication.
-        let (other_sk, _) = fresh_p256().unwrap();
+        let (other_sk, _) = fresh_pair().unwrap();
         let wrong_ss = shared(&other_sk, &eph_pk);
         assert_eq!(
             open_chip(&header, &wrap, &keys, &wrong_ss)

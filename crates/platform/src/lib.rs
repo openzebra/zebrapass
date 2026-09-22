@@ -30,11 +30,8 @@ use std::sync::Mutex;
 use ctap_fido2::cmd::get_assertion::HmacSecretRequest;
 use ctap_fido2::cmd::{Algorithm, Authenticator, MakeCredentialOptions};
 use ctap_fido2::device::{list_devices, DeviceInfo};
-use p256::ecdh::diffie_hellman;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::{PublicKey, SecretKey};
+use ec::{decode_pub, encode_pub, fresh_pair, shared};
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
 
 /// What a backend can offer right now.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -159,11 +156,12 @@ impl ChipBackend for SoftwareChip {
 
     fn generate_pair(&self, alias: &str) -> anyhow::Result<[u8; 65]> {
         let (sk, pk) = fresh_pair()?;
+        let encoded = encode_pub(&pk)?;
         self.keys
             .lock()
             .map_err(|_| anyhow::anyhow!("chip store poisoned"))?
             .insert(alias.to_owned(), zeroize::Zeroizing::new(sk.to_bytes().into()));
-        Ok(pk)
+        Ok(encoded)
     }
 
     fn ecdh(&self, alias: &str, peer_pub: &[u8; 65]) -> anyhow::Result<[u8; 32]> {
@@ -180,7 +178,7 @@ impl ChipBackend for SoftwareChip {
             sk_bytes.ok_or_else(|| anyhow::anyhow!("no such key"))?;
         let field: p256::elliptic_curve::FieldBytes<p256::NistP256> =
             (*sk_bytes).into();
-        let sk = SecretKey::from_bytes(&field).map_err(|_| anyhow::anyhow!("kem length"))?;
+        let sk = p256::SecretKey::from_bytes(&field).map_err(|_| anyhow::anyhow!("kem length"))?;
         let peer = decode_pub(peer_pub)?;
         Ok(shared(&sk, &peer))
     }
@@ -292,51 +290,6 @@ fn grant_id(cred_id: &[u8]) -> [u8; 16] {
     id
 }
 
-/// Draw a software P-256 key pair from the OS RNG.
-fn fresh_pair() -> anyhow::Result<(SecretKey, [u8; 65])> {
-    // Scalars are 32 random bytes; almost every draw is a valid secret key.
-    for _ in 0..8 {
-        let mut bytes = [0u8; 32];
-        getrandom::fill(&mut bytes).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
-        let key = {
-            let field: p256::elliptic_curve::FieldBytes<p256::NistP256> = bytes.into();
-            SecretKey::from_bytes(&field)
-        };
-        bytes.zeroize();
-        if let Ok(sk) = key {
-            let pk = encode_pub(&sk.public_key())?;
-            return Ok((sk, pk));
-        }
-    }
-    Err(anyhow::anyhow!("os entropy failed"))
-}
-
-/// Decode an uncompressed 65-byte P-256 public key.
-fn decode_pub(bytes: &[u8; 65]) -> anyhow::Result<PublicKey> {
-    PublicKey::from_sec1_bytes(bytes).map_err(|_| anyhow::anyhow!("kem length"))
-}
-
-fn shared(sk: &SecretKey, pk: &PublicKey) -> [u8; 32] {
-    let ss = diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
-    let raw = ss.raw_secret_bytes();
-    let mut out = [0u8; 32];
-    for (dst, src) in out.iter_mut().zip(raw.iter()) {
-        *dst = *src;
-    }
-    out
-}
-
-fn encode_pub(key: &PublicKey) -> anyhow::Result<[u8; 65]> {
-    let point = key.to_encoded_point(false);
-    let bytes = point.as_bytes();
-    let mut out = [0u8; 65];
-    if bytes.len() != 65 {
-        return Err(anyhow::anyhow!("kem length"));
-    }
-    out.copy_from_slice(bytes);
-    Ok(out)
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -346,7 +299,9 @@ fn encode_pub(key: &PublicKey) -> anyhow::Result<[u8; 65]> {
     clippy::unwrap_in_result
 )]
 mod tests {
-    use super::{decode_pub, fresh_pair, shared, ChipBackend, SoftwareChip};
+    use ec::{decode_pub, encode_pub, fresh_pair, shared};
+
+    use super::{ChipBackend, SoftwareChip};
 
     #[test]
     fn software_chip_ecdh_round_trip() {
@@ -354,13 +309,14 @@ mod tests {
         assert!(chip.capability().present);
         let chip_pub = chip.generate_pair("zp/abc").unwrap();
         let (peer_secret, peer_key) = fresh_pair().unwrap();
-        let from_chip = chip.ecdh("zp/abc", &peer_key).unwrap();
+        let peer_pub = encode_pub(&peer_key).unwrap();
+        let from_chip = chip.ecdh("zp/abc", &peer_pub).unwrap();
         let peer_view = shared(&peer_secret, &decode_pub(&chip_pub).unwrap());
         // Both sides derive the same 32-byte secret.
         assert_eq!(from_chip, peer_view);
         chip.delete("zp/abc").unwrap();
         assert_eq!(
-            chip.ecdh("zp/abc", &peer_key).unwrap_err().to_string(),
+            chip.ecdh("zp/abc", &peer_pub).unwrap_err().to_string(),
             "no such key"
         );
     }

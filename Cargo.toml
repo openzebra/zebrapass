@@ -8,6 +8,7 @@ members = [
     "crates/wraps",
     "crates/session",
     "crates/platform",
+    "crates/ec",
 ]
 resolver = "2"
 

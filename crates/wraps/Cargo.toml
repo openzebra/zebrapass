@@ -11,6 +11,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 aegis.workspace = true
 container = { path = "../container" }
+ec = { path = "../ec" }
 getrandom.workspace = true
 kdf = { path = "../kdf" }
 p256.workspace = true

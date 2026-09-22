@@ -1,0 +1,16 @@
+[package]
+name = "ec"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+getrandom.workspace = true
+p256.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
