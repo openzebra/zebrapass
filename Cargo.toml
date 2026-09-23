@@ -9,6 +9,10 @@ members = [
     "crates/session",
     "crates/platform",
     "crates/ec",
+    "crates/record",
+    "crates/frame",
+    "crates/seed",
+    "crates/local",
 ]
 resolver = "2"
 
@@ -27,7 +31,9 @@ hmac = "=0.13.0"
 x25519-dalek = "=3.0.0"
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdh", "arithmetic", "alloc"] }
 ntrulp = { version = "=0.2.7", default-features = false, features = ["ntrup1277", "std"] }
+pqbip39 = "=0.2.0"
 rand = "=0.10.3"
+secrecy = "=0.10.3"
 anyhow = "=1.0.100"
 getrandom = "=0.4.3"
 # Tests only: KAT vectors are hex strings on the wire of the test files; prod code is bytes-only.

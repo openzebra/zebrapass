@@ -1,0 +1,15 @@
+[package]
+name = "record"
+version = "0.1.0"
+description = "Versioned TLV document stored inside a revision frame."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

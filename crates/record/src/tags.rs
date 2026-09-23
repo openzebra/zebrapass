@@ -1,0 +1,53 @@
+//! Standard and custom field tags.
+//!
+//! `0x0100..=0x7FFF` is the standard range; `0x8000..=0xFFFF` is the custom
+//! range where the field value carries a UTF-8 name. `0x0205..` is reserved
+//! for future sync-cursor metadata.
+
+/// Title (`Text`).
+pub const TAG_TITLE: u16 = 0x0101;
+
+/// URL (`Text`).
+pub const TAG_URL: u16 = 0x0102;
+
+/// Username (`Text`).
+pub const TAG_USERNAME: u16 = 0x0103;
+
+/// Email (`Text`).
+pub const TAG_EMAIL: u16 = 0x0104;
+
+/// Password (`Secret`).
+pub const TAG_PASSWORD: u16 = 0x0105;
+
+/// Notes (`Text`).
+pub const TAG_NOTES: u16 = 0x0106;
+
+/// TOTP seed (`Secret`).
+pub const TAG_TOTP: u16 = 0x0107;
+
+/// Local device id, 16 bytes (`Bytes`).
+pub const TAG_DEVICE_ID: u16 = 0x0201;
+
+/// Derived identity point, 64 bytes (`Bytes`).
+pub const TAG_USER_ID: u16 = 0x0202;
+
+/// Creation time in unix milliseconds (`Bytes`, 8-byte little-endian `u64`).
+pub const TAG_CREATED_AT_MS: u16 = 0x0203;
+
+/// Vault display name (`Text`).
+pub const TAG_NAME: u16 = 0x0204;
+
+/// First custom tag. Custom values carry `name_len ‖ name ‖ data`.
+pub const TAG_CUSTOM_MIN: u16 = 0x8000;
+
+/// First standard tag, inclusive.
+pub const TAG_STANDARD_MIN: u16 = 0x0100;
+
+/// Last standard tag, inclusive.
+pub const TAG_STANDARD_MAX: u16 = 0x7FFF;
+
+/// `true` when `tag` is in the custom range.
+#[must_use]
+pub const fn is_custom(tag: u16) -> bool {
+    tag >= TAG_CUSTOM_MIN
+}

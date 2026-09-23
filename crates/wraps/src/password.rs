@@ -1,4 +1,9 @@
 //! Password wrap of the vault key.
+//!
+//! Product-wise the "password" is the master factor: a validated BIP39
+//! seed phrase is converted to its 64-byte BIP39 seed, and that seed —
+//! not a user-chosen string — feeds Argon2id here. The wrap format is
+//! unchanged.
 
 use container::{encode_password_entry, PasswordWrap, StaticHeader};
 use kdf::argon2id;
@@ -6,27 +11,27 @@ use secret::Secret;
 
 use crate::wad::{self, password_wad};
 
-/// Seal `vk` under `password`.
+/// Seal `vk` under `master`.
 ///
 /// The returned bytes are one password record: kid, nonce, 32-byte ciphertext,
 /// and a 32-byte AEGIS-256 tag. `k_pw` is Argon2id at the header salt and
-/// parameters. Associated data is the static header, the password kind, the
-/// kid, the nonce, and `brby/v2/wrap-password`.
+/// parameters over the 64-byte master seed. Associated data is the static
+/// header, the password kind, the kid, the nonce, and
+/// `brby/v2/wrap-password`.
 ///
 /// # Errors
 ///
-/// `empty password` when `password` is empty. Argon2 is not run.
 /// `kdf parameters rejected` when the header parameters are rejected.
 /// `os entropy failed` when the OS RNG fails.
 pub fn seal_password(
     header: &StaticHeader,
-    password: &str,
+    master: &[u8; 64],
     vk: &[u8; 32],
 ) -> anyhow::Result<Vec<u8>> {
     let kid = wad::random_array::<8>()?;
     let nonce = wad::random_array::<32>()?;
     let k_pw = argon2id(
-        password.as_bytes(),
+        master,
         &header.kdf_salt,
         header.kdf_m_kib,
         header.kdf_t,
@@ -39,21 +44,20 @@ pub fn seal_password(
 
 /// Open a password wrap.
 ///
-/// A wrong password and a corrupt tag both finish Argon2 and then return
+/// A wrong master and a corrupt tag both finish Argon2 and then return
 /// `wrap authentication failed`. They are not distinguished.
 ///
 /// # Errors
 ///
-/// `empty password` when `password` is empty, before Argon2.
 /// `kdf parameters rejected` when the header parameters are rejected.
 /// `wrap authentication failed` when the AEGIS-256 tag does not match.
 pub fn open_password(
     header: &StaticHeader,
     wrap: &PasswordWrap<'_>,
-    password: &str,
+    master: &[u8; 64],
 ) -> anyhow::Result<Secret<[u8; 32]>> {
     let k_pw = argon2id(
-        password.as_bytes(),
+        master,
         &header.kdf_salt,
         header.kdf_m_kib,
         header.kdf_t,
@@ -98,14 +102,9 @@ mod tests {
         // Parameters are the floor (19 MiB, t = 2, p = 1), not the desktop profile.
         let header = floor_header();
         let vk = [0x42u8; 32];
-        let password = "floor-password";
+        let master = [0x2Au8; 64];
 
-        assert_eq!(
-            seal_password(&header, "", &vk).unwrap_err().to_string(),
-            "empty password"
-        );
-
-        let record = seal_password(&header, password, &vk).unwrap();
+        let record = seal_password(&header, &master, &vk).unwrap();
         assert_eq!(record.len(), 110);
         assert_eq!(record.len(), PASSWORD_RECORD_LEN);
 
@@ -117,15 +116,12 @@ mod tests {
         assert_eq!(parsed.tag.len(), 32);
         assert_eq!(parsed.ct.len() + parsed.tag.len(), 64);
 
-        let opened = open_password(&header, &parsed, password).unwrap();
+        let opened = open_password(&header, &parsed, &master).unwrap();
         assert_eq!(opened.expose(), &vk);
+        let wrong = [0x2Bu8; 64];
         assert_eq!(
-            open_password(&header, &parsed, "not-the-password").unwrap_err().to_string(),
+            open_password(&header, &parsed, &wrong).unwrap_err().to_string(),
             "wrap authentication failed"
-        );
-        assert_eq!(
-            open_password(&header, &parsed, "").unwrap_err().to_string(),
-            "empty password"
         );
     }
 }

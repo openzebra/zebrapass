@@ -10,6 +10,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 getrandom.workspace = true
 p256.workspace = true
+secret = { path = "../secret" }
 zeroize.workspace = true
 
 [lints]

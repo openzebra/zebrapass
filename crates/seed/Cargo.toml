@@ -1,0 +1,22 @@
+[package]
+name = "seed"
+version = "0.1.0"
+description = "BIP39 seed phrases and the identity derived from them."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ec = { path = "../ec" }
+getrandom.workspace = true
+kdf = { path = "../kdf" }
+pqbip39.workspace = true
+secrecy.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+
+[lints]
+workspace = true

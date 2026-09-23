@@ -11,17 +11,21 @@ rust-version.workspace = true
 anyhow.workspace = true
 aead = { path = "../aead" }
 container = { path = "../container" }
+frame = { path = "../frame" }
 getrandom.workspace = true
 hmac.workspace = true
 kdf = { path = "../kdf" }
+record = { path = "../record" }
 secret = { path = "../secret" }
 sha2.workspace = true
 wraps = { path = "../wraps" }
 zeroize.workspace = true
 
 [dev-dependencies]
+local = { path = "../local" }
 pq = { path = "../pq" }
 platform = { path = "../platform" }
+seed = { path = "../seed" }
 x25519-dalek.workspace = true
 
 [lints]

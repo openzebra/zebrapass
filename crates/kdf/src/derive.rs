@@ -1,0 +1,114 @@
+//! Domain-separated derivations over the vault key and the master seed.
+//!
+//! These are new uses of the existing HKDF-SHA512 primitive; the KDF
+//! parameters, the wraps, and the container format are unchanged. The
+//! infos live here next to the derivations that use them.
+
+// Module name shadows the `hkdf` crate.
+extern crate hkdf as hkdf_impl;
+
+use hkdf_impl::Hkdf;
+use secret::Secret;
+use sha2::Sha512;
+
+use crate::hkdf::hkdf_sha512;
+
+/// HKDF info for a per-record frame key.
+pub const INFO_FRAME_KEY: &[u8] = b"brby/v2/frame-key";
+
+/// HKDF info for the per-device local-metadata file key.
+pub const INFO_LOCAL_META: &[u8] = b"brby/v2/local-meta";
+
+/// HKDF info for the identity scalar derived from the master seed.
+pub const INFO_IDENTITY: &[u8] = b"zebrapass/identity/v1";
+
+const OUTPUT_LEN: usize = 32;
+
+/// Per-record frame key: HKDF-SHA512 with the vault key as `ikm`, the
+/// vault id as salt, and the record id appended to the info. Two records
+/// in one vault derive independent keys.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn frame_key(
+    vk: &[u8; 32],
+    vault_id: &[u8; 16],
+    record_id: u32,
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    let mut info = Vec::with_capacity(INFO_FRAME_KEY.len() + 4);
+    info.extend_from_slice(INFO_FRAME_KEY);
+    info.extend_from_slice(&record_id.to_le_bytes());
+    hkdf_sha512(vk, vault_id, &info)
+}
+
+/// Local-metadata file key: HKDF-SHA512 with the vault key as `ikm`, the
+/// vault id as salt, and a dedicated info. One file per device; it never
+/// leaves the device.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn local_meta_key(
+    vk: &[u8; 32],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(vk, vault_id, INFO_LOCAL_META)
+}
+
+/// Identity seed: HKDF-SHA512 with the 64-byte master seed as `ikm`, no
+/// salt, and a dedicated info. The same seed yields the same scalar on
+/// every device.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn identity_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    let hk = Hkdf::<Sha512>::new(None, seed);
+    let mut okm = [0u8; OUTPUT_LEN];
+    hk.expand(INFO_IDENTITY, &mut okm)
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(Secret::new(okm))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
+
+    use super::{frame_key, identity_seed, local_meta_key};
+
+    #[test]
+    fn frame_keys_are_record_separated() {
+        let vk = [7u8; 32];
+        let vault_id = [9u8; 16];
+        let a = frame_key(&vk, &vault_id, 1).unwrap();
+        let b = frame_key(&vk, &vault_id, 2).unwrap();
+        assert_ne!(a.expose(), b.expose());
+        let same = frame_key(&vk, &vault_id, 1).unwrap();
+        assert_eq!(a.expose(), same.expose());
+        // A different vault derives different keys from the same vk.
+        let other_vault = frame_key(&vk, &[8u8; 16], 1).unwrap();
+        assert_ne!(a.expose(), other_vault.expose());
+    }
+
+    #[test]
+    fn local_meta_key_is_deterministic_and_distinct() {
+        let vk = [7u8; 32];
+        let vault_id = [9u8; 16];
+        let meta = local_meta_key(&vk, &vault_id).unwrap();
+        let again = local_meta_key(&vk, &vault_id).unwrap();
+        assert_eq!(meta.expose(), again.expose());
+        let frame = frame_key(&vk, &vault_id, 0).unwrap();
+        assert_ne!(meta.expose(), frame.expose());
+    }
+
+    #[test]
+    fn identity_seed_is_deterministic_and_seed_separated() {
+        let seed = [5u8; 64];
+        let a = identity_seed(&seed).unwrap();
+        let b = identity_seed(&seed).unwrap();
+        assert_eq!(a.expose(), b.expose());
+        let other = identity_seed(&[6u8; 64]).unwrap();
+        assert_ne!(a.expose(), other.expose());
+    }
+}

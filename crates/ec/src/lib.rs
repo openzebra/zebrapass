@@ -8,6 +8,7 @@
 use p256::ecdh::diffie_hellman;
 use p256::elliptic_curve::sec1::ToSec1Point;
 use p256::{PublicKey, SecretKey};
+use secret::Secret;
 use zeroize::Zeroize;
 
 /// Draw a software P-256 key pair from the OS RNG.
@@ -56,6 +57,28 @@ pub fn decode_pub(bytes: &[u8; 65]) -> anyhow::Result<PublicKey> {
     PublicKey::from_sec1_bytes(bytes).map_err(|_| anyhow::anyhow!("kem length"))
 }
 
+/// Derive a P-256 key pair from a 32-byte scalar.
+///
+/// The point is returned as 64 bytes: the SEC1 encoding without the
+/// `0x04` prefix, that is `x ‖ y`. This is a derivation step for the
+/// identity point, not key generation: the scalar comes from a KDF, not
+/// from the RNG.
+///
+/// # Errors
+///
+/// `kem length` when the scalar is zero or not below the curve order.
+pub fn pair_from_scalar(scalar: &Secret<[u8; 32]>) -> anyhow::Result<(SecretKey, [u8; 64])> {
+    let sk = SecretKey::from_bytes(&(*scalar.expose()).into())
+        .map_err(|_| anyhow::anyhow!("kem length"))?;
+    let encoded = encode_pub(&sk.public_key())?;
+    let mut point = [0u8; 64];
+    let body = encoded.get(1..).ok_or_else(|| anyhow::anyhow!("kem length"))?;
+    point.copy_from_slice(body);
+    let mut encoded = encoded;
+    encoded.zeroize();
+    Ok((sk, point))
+}
+
 /// Raw 32-byte ECDH shared secret (the X coordinate).
 #[must_use]
 pub fn shared(sk: &SecretKey, pk: &PublicKey) -> [u8; 32] {
@@ -71,8 +94,9 @@ pub fn shared(sk: &SecretKey, pk: &PublicKey) -> [u8; 32] {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::unwrap_in_result)]
 mod tests {
-    use super::{decode_pub, encode_pub, fresh_pair, shared};
+    use super::{decode_pub, encode_pub, fresh_pair, pair_from_scalar, shared};
     use p256::elliptic_curve::sec1::ToSec1Point;
+    use secret::Secret;
 
     #[test]
     fn ecdh_is_symmetric_over_encoded_points() {
@@ -87,5 +111,25 @@ mod tests {
             decoded.to_sec1_point(false).as_ref(),
             pk_a.to_sec1_point(false).as_ref()
         );
+    }
+
+    #[test]
+    fn pair_from_scalar_is_deterministic_and_checked() {
+        let scalar = Secret::new([7u8; 32]);
+        let (sk, point) = pair_from_scalar(&scalar).unwrap();
+        let expected = encode_pub(&sk.public_key()).unwrap();
+        assert_eq!(point, <[u8; 64]>::try_from(&expected[1..]).unwrap());
+        let again = pair_from_scalar(&scalar).unwrap();
+        assert_eq!(point, again.1);
+        // The zero scalar is not a valid secret key.
+        let zero = Secret::new([0u8; 32]);
+        assert_eq!(pair_from_scalar(&zero).unwrap_err().to_string(), "kem length");
+        // A scalar at the curve order is rejected too.
+        let n = Secret::new([
+            0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2,
+            0xFC, 0x63, 0x25, 0x51,
+        ]);
+        assert!(pair_from_scalar(&n).is_err());
     }
 }

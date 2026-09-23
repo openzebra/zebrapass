@@ -1,4 +1,4 @@
-//! Password change, record rewrite, and vault-key rotation.
+//! Master change, record rewrite, and vault-key rotation.
 
 use container::{VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
@@ -10,27 +10,25 @@ use crate::create::{
     publish, Session,
 };
 
-/// Replace the password wrap. Header and body bytes stay as they are.
+/// Replace the master wrap: re-seal the same vault key under a new master
+/// seed.
 ///
 /// The new record has a new kid and nonce and seals the same vault key.
-/// Generation increases by one. On error, `file` and `session` are left as they were.
+/// Header and body bytes stay as they are. Generation increases by one.
+/// On error, `file` and `session` are left as they were.
 ///
 /// # Errors
 ///
-/// `empty password` when `new_pw` is empty, before Argon2.
-/// `wrap not found` when the file has no password wrap.
-pub fn change_password(
+/// `wrap not found` when the file has no master wrap.
+pub fn change_master(
     session: &mut Session,
     file: &mut VaultFile,
-    new_pw: &str,
+    new_master: &[u8; 64],
 ) -> anyhow::Result<()> {
-    if new_pw.is_empty() {
-        return Err(anyhow::anyhow!("empty password"));
-    }
     let (header, generation, body, records) = {
         let parsed = file.parse()?;
         let records =
-            replace_password(&parsed.entries, &parsed.header, new_pw, session.vk.expose())?;
+            replace_password(&parsed.entries, &parsed.header, new_master, session.vk.expose())?;
         let generation = next_generation(parsed.generation)?;
         (parsed.header, generation, parsed.body.to_vec(), records)
     };
@@ -40,7 +38,8 @@ pub fn change_password(
 /// Encrypt `records` under the same vault key and a fresh body nonce.
 ///
 /// Wrap records are copied unchanged. Generation increases by one.
-/// On error, `file` and `session` are left as they were.
+/// On success the session's decrypted frame body is replaced with
+/// `records`; on error, `file` and `session` are left as they were.
 ///
 /// # Errors
 ///
@@ -64,7 +63,11 @@ pub fn write_records(
         let generation = next_generation(parsed.generation)?;
         (parsed.header, generation, kept, body)
     };
-    publish(session, file, &header, &kept, &body, generation)
+    publish(session, file, &header, &kept, &body, generation)?;
+    // The plaintext is already in hand; keep the session's copy in step
+    // with the file.
+    session.records = Secret::new(records.to_vec());
+    Ok(())
 }
 
 /// Rotate the vault key, re-encrypt `records`, and re-seal every wrap.
@@ -75,11 +78,11 @@ pub fn write_records(
 /// the file aborts rotation. Generation increases by one. Sealing a chip
 /// wrap draws a fresh ephemeral P-256 key in this process, so the platform
 /// must re-derive its shared secret against the new ephemeral public key
-/// after the call.
+/// after the call. On success the session's decrypted frame body is
+/// replaced with `records`.
 ///
 /// # Errors
 ///
-/// `empty password` when `password` is empty, before Argon2.
 /// `wrap not found` when a device or chip wrap has no matching public id.
 /// `prf wrap present but physical key support is not built` when the file
 /// still carries a physical-key wrap.
@@ -88,13 +91,10 @@ pub fn reencrypt_body(
     session: &mut Session,
     file: &mut VaultFile,
     records: &[u8],
-    password: &str,
+    master: &[u8; 64],
     devices: &[DevicePublics],
     chips: &[(ChipPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
-    if password.is_empty() {
-        return Err(anyhow::anyhow!("empty password"));
-    }
     let (header, generation, sealed, body, keys) = {
         let parsed = file.parse()?;
         require_device_publics(&parsed.entries, devices)?;
@@ -106,7 +106,7 @@ pub fn reencrypt_body(
             &parsed.entries,
             &parsed.header,
             vk.expose(),
-            password,
+            master,
             devices,
             chips,
         )?;
@@ -131,7 +131,9 @@ pub fn reencrypt_body(
             },
         )
     };
-    publish_rotated(session, file, &header, &sealed, &body, generation, keys)
+    publish_rotated(session, file, &header, &sealed, &body, generation, keys)?;
+    session.records = Secret::new(records.to_vec());
+    Ok(())
 }
 
 struct RotatedKeys {
@@ -165,7 +167,7 @@ fn publish_rotated(
 fn replace_password(
     entries: &[WrapEntry<'_>],
     header: &container::StaticHeader,
-    password: &str,
+    master: &[u8; 64],
     vk: &[u8; 32],
 ) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut records = Vec::with_capacity(entries.len());
@@ -175,7 +177,7 @@ fn replace_password(
             WrapEntry::Password(_) if replaced => return Err(anyhow::anyhow!("corrupted length")),
             WrapEntry::Password(_) => {
                 replaced = true;
-                records.push(seal_password(header, password, vk)?);
+                records.push(seal_password(header, master, vk)?);
             }
             WrapEntry::Device(_) | WrapEntry::Chip(_) | WrapEntry::Prf(_) => {
                 records.push(encode_entry(entry)?);
@@ -221,14 +223,14 @@ fn reseal(
     entries: &[WrapEntry<'_>],
     header: &container::StaticHeader,
     vk: &[u8; 32],
-    password: &str,
+    master: &[u8; 64],
     devices: &[DevicePublics],
     chips: &[(ChipPublics, [u8; 32])],
 ) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut records = Vec::with_capacity(entries.len());
     for entry in entries {
         let record = match entry {
-            WrapEntry::Password(_) => seal_password(header, password, vk)?,
+            WrapEntry::Password(_) => seal_password(header, master, vk)?,
             WrapEntry::Device(dev) => {
                 let publics = devices
                     .iter()

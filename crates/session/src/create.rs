@@ -7,7 +7,7 @@ use container::{
     BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID, WRAP_AEGIS256,
 };
 use hmac::{Hmac, KeyInit, Mac};
-use kdf::{derive_vault_keys, KdfProfile};
+use kdf::{derive_vault_keys, local_meta_key, KdfProfile};
 use secret::Secret;
 use sha2::Sha256;
 use wraps::seal_password;
@@ -19,6 +19,9 @@ type HmacSha256 = Hmac<Sha256>;
 /// Open vault. The vault key and the three derived keys are wiped on drop.
 ///
 /// `generation` and `commit_tag` track the file this session last wrote or opened.
+/// `records` holds the decrypted frame body: it is materialized once at
+/// [`unlock`](crate::unlock) and kept for on-demand record access; it is
+/// wiped when the session drops.
 #[derive(Debug)]
 pub struct Session {
     pub(crate) vk: Secret<[u8; 32]>,
@@ -28,6 +31,12 @@ pub struct Session {
     pub(crate) body_alg: BodyAlg,
     pub(crate) generation: u64,
     pub(crate) commit_tag: [u8; 32],
+    /// Public vault id: the HKDF salt for frame keys.
+    pub(crate) vault_id: [u8; 16],
+    /// Device identity this session stamps into new frames.
+    pub(crate) device_id: [u8; 16],
+    /// Decrypted frame body. A per-record key opens single frames from it.
+    pub(crate) records: Secret<Vec<u8>>,
 }
 
 impl Session {
@@ -42,38 +51,58 @@ impl Session {
     pub const fn commit_tag(&self) -> &[u8; 32] {
         &self.commit_tag
     }
+
+    /// Public vault id of the opened file.
+    #[must_use]
+    pub const fn vault_id(&self) -> &[u8; 16] {
+        &self.vault_id
+    }
+
+    /// Device identity this session stamps into new frames.
+    #[must_use]
+    pub const fn device_id(&self) -> &[u8; 16] {
+        &self.device_id
+    }
+
+    /// Key for this vault's on-device local-metadata file.
+    ///
+    /// # Errors
+    ///
+    /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+    pub fn local_meta_key(&self) -> anyhow::Result<Secret<[u8; 32]>> {
+        local_meta_key(self.vk.expose(), &self.vault_id)
+    }
 }
 
 /// Create a vault and the session that holds its keys.
 ///
-/// Generation starts at 1. The file has one password wrap and a body that is
-/// the AEAD of an empty record list. The commit is HMAC-SHA256 over
+/// `master` is the 64-byte master seed (the BIP39 seed of the seed
+/// phrase); a `&[u8; 64]` can never be empty. Generation starts at 1. The
+/// file has one password wrap and a body that is the AEAD of an empty
+/// frame list. The commit is HMAC-SHA256 over
 /// `header ‖ wrap directory ‖ body`.
 ///
 /// # Errors
 ///
-/// `empty password` when `pw` is empty, before any KDF.
 /// `unsupported body algorithm` for [`BodyAlg::KuzMgm`], before Argon2.
 /// `kdf parameters rejected` when the profile parameters are rejected.
 /// `corrupted length` when the OS RNG or HMAC constructor fails.
 pub fn create(
-    pw: &str,
+    master: &[u8; 64],
     profile: KdfProfile,
     body_alg: BodyAlg,
 ) -> anyhow::Result<(VaultFile, Session)> {
-    if pw.is_empty() {
-        return Err(anyhow::anyhow!("empty password"));
-    }
     // KuzMgm is a recognized id this build cannot seal. Reject it before Argon2.
     let body_id = body_alg_id(body_alg)?;
     let vk = draw_secret()?;
     let header = new_header(profile, body_id)?;
-    let password = seal_password(&header, pw, vk.expose())?;
+    let password = seal_password(&header, master, vk.expose())?;
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &header.vault_id)?;
     let body = encrypt_records(body_alg, &header, k_body.expose(), k_bmac.expose(), &[])?;
     let records = [password];
     let wrap_dir = dir_bytes(1, &records)?;
     let (file, commit_tag) = assemble_committed(k_commit.expose(), &header, &wrap_dir, &body)?;
+    let device_id = draw_device_id()?;
     Ok((
         file,
         Session {
@@ -84,8 +113,23 @@ pub fn create(
             body_alg,
             generation: 1,
             commit_tag,
+            vault_id: header.vault_id,
+            device_id,
+            records: Secret::new(Vec::new()),
         },
     ))
+}
+
+/// Draw a device id that is never all-zero.
+pub(super) fn draw_device_id() -> anyhow::Result<[u8; 16]> {
+    for _ in 0..8 {
+        let mut id = [0u8; 16];
+        fill_random(&mut id)?;
+        if id != [0u8; 16] {
+            return Ok(id);
+        }
+    }
+    Err(anyhow::anyhow!("os entropy failed"))
 }
 
 fn body_alg_id(alg: BodyAlg) -> anyhow::Result<u16> {
