@@ -5,11 +5,11 @@
 
 use std::marker::PhantomData;
 
-use pq::PQ_PK_LEN;
+use pq::{KEM_CT_LEN, PQ_PK_LEN};
 
 use crate::limits::{
     self, read_array, read_u16, read_u32, shift, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
-    DEVICE_SUFFIX_LEN, ENTRY_HEADER_LEN, KEM_NTRULP, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
+    DEVICE_SUFFIX_LEN, ENTRY_HEADER_LEN, KEM_MLKEM768, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
     KIND_PRF, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
 };
 
@@ -26,7 +26,7 @@ const CHIP_EPH_PUB: usize = 81;
 const CHIP_PQ_PK: usize = 146;
 const CHIP_PREFIX_LEN: usize = 16 + 65 + 65 + PQ_PK_LEN;
 const CHIP_SUFFIX_LEN: usize = 96;
-const CHIP_PAYLOAD_MIN: usize = CHIP_PREFIX_LEN + 1 + CHIP_SUFFIX_LEN;
+const CHIP_PAYLOAD_MIN: usize = CHIP_PREFIX_LEN + KEM_CT_LEN + CHIP_SUFFIX_LEN;
 
 const PRF_CRED_ID_MIN: usize = 16;
 const PRF_CRED_ID_MAX: usize = 64;
@@ -59,14 +59,14 @@ pub struct PasswordWrap<'a> {
 pub struct DeviceWrap<'a> {
     /// Device id.
     pub device_id: [u8; 16],
-    /// KEM id. Parsed entries hold [`KEM_NTRULP`].
+    /// KEM id. Parsed entries hold [`KEM_MLKEM768`].
     pub kem_alg: u16,
     /// Long-term X25519 public key of the device.
     pub dev_x_pk: [u8; 32],
     /// Ephemeral X25519 public key of the vault owner.
     pub eph_x_pk: [u8; 32],
     /// `ntrulp` ciphertext borrowed from the file, not a `Vec` copy.
-    pub ntru_ct: &'a [u8],
+    pub kem_ct: &'a [u8],
     /// AEGIS-256 nonce.
     pub nonce: [u8; 32],
     /// Wrapped vault key ciphertext.
@@ -87,7 +87,7 @@ pub struct ChipWrap<'a> {
     /// `ntrulp` public key the ephemeral PQ secret is encrypted to.
     pub pq_pk: [u8; PQ_PK_LEN],
     /// `ntrulp` ciphertext borrowed from the file, not a `Vec` copy.
-    pub sntrup_ct: &'a [u8],
+    pub kem_ct: &'a [u8],
     /// AEGIS-256 nonce.
     pub nonce: [u8; 32],
     /// Wrapped vault key ciphertext.
@@ -173,11 +173,11 @@ pub fn encode_password_entry(
     limits::concat_array(&[&record_kind, &entry_len, &kid, &nonce, &ct, &tag])
 }
 
-/// Encode one device record. `ntru_ct` is the `ntrulp` ciphertext, any non-empty length.
+/// Encode one device record. `kem_ct` is the ML-KEM-768 ciphertext.
 ///
 /// # Errors
 ///
-/// Returns `corrupted length` when `ntru_ct` is empty or the payload
+/// Returns `corrupted length` when `kem_ct` is not [`KEM_CT_LEN`] bytes or the payload
 /// does not fit in `entry_len`.
 #[allow(
     clippy::too_many_arguments,
@@ -188,16 +188,16 @@ pub fn encode_device_entry(
     kem_alg: u16,
     dev_x_pk: [u8; 32],
     eph_x_pk: [u8; 32],
-    ntru_ct: &[u8],
+    kem_ct: &[u8],
     nonce: [u8; 32],
     ct: [u8; 32],
     tag: [u8; 32],
 ) -> anyhow::Result<Vec<u8>> {
-    if ntru_ct.is_empty() {
+    if kem_ct.len() != KEM_CT_LEN {
         return Err(anyhow::anyhow!("corrupted length"));
     }
     let payload = DEVICE_PREFIX_LEN
-        .checked_add(ntru_ct.len())
+        .checked_add(kem_ct.len())
         .and_then(|len| len.checked_add(DEVICE_SUFFIX_LEN))
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let entry_len = u32::try_from(payload).map_err(|_| anyhow::anyhow!("corrupted length"))?;
@@ -212,18 +212,18 @@ pub fn encode_device_entry(
     out.extend_from_slice(&kem_alg.to_le_bytes());
     out.extend_from_slice(&dev_x_pk);
     out.extend_from_slice(&eph_x_pk);
-    out.extend_from_slice(ntru_ct);
+    out.extend_from_slice(kem_ct);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ct);
     out.extend_from_slice(&tag);
     Ok(out)
 }
 
-/// Encode one chip record. `sntrup_ct` is the `ntrulp` ciphertext, any non-empty length.
+/// Encode one chip record. `kem_ct` is the ML-KEM-768 ciphertext.
 ///
 /// # Errors
 ///
-/// Returns `corrupted length` when `sntrup_ct` is empty or the payload
+/// Returns `corrupted length` when `kem_ct` is not [`KEM_CT_LEN`] bytes or the payload
 /// does not fit in `entry_len`.
 #[allow(
     clippy::too_many_arguments,
@@ -234,16 +234,16 @@ pub fn encode_chip_entry(
     chip_pub: [u8; 65],
     eph_pub: [u8; 65],
     pq_pk: [u8; PQ_PK_LEN],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     nonce: [u8; 32],
     ct: [u8; 32],
     tag: [u8; 32],
 ) -> anyhow::Result<Vec<u8>> {
-    if sntrup_ct.is_empty() {
+    if kem_ct.len() != KEM_CT_LEN {
         return Err(anyhow::anyhow!("corrupted length"));
     }
     let payload = CHIP_PREFIX_LEN
-        .checked_add(sntrup_ct.len())
+        .checked_add(kem_ct.len())
         .and_then(|len| len.checked_add(CHIP_SUFFIX_LEN))
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let entry_len = u32::try_from(payload).map_err(|_| anyhow::anyhow!("corrupted length"))?;
@@ -258,7 +258,7 @@ pub fn encode_chip_entry(
     out.extend_from_slice(&chip_pub);
     out.extend_from_slice(&eph_pub);
     out.extend_from_slice(&pq_pk);
-    out.extend_from_slice(sntrup_ct);
+    out.extend_from_slice(kem_ct);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ct);
     out.extend_from_slice(&tag);
@@ -351,7 +351,7 @@ fn parse_device(
     entry_len: u32,
 ) -> anyhow::Result<(WrapEntry<'_>, usize)> {
     let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    if payload_len < DEVICE_PAYLOAD_MIN {
+    if payload_len != DEVICE_PAYLOAD_MIN {
         return Err(anyhow::anyhow!("corrupted length"));
     }
     let end = shift(payload, payload_len)?;
@@ -359,13 +359,12 @@ fn parse_device(
         return Err(anyhow::anyhow!("corrupted length"));
     }
     let kem_alg = read_u16(bytes, shift(payload, DEV_KEM)?)?;
-    if kem_alg != KEM_NTRULP {
+    if kem_alg != KEM_MLKEM768 {
         return Err(anyhow::anyhow!("unsupported kem {kem_alg:#06x}"));
     }
-    let ct_len = payload_len - DEVICE_PREFIX_LEN - DEVICE_SUFFIX_LEN;
     let ct_at = shift(payload, DEVICE_PREFIX_LEN)?;
-    let after_ct = shift(ct_at, ct_len)?;
-    let ntru_ct = bytes
+    let after_ct = shift(ct_at, KEM_CT_LEN)?;
+    let kem_ct = bytes
         .get(ct_at..after_ct)
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     Ok((
@@ -374,7 +373,7 @@ fn parse_device(
             kem_alg,
             dev_x_pk: read_array(bytes, shift(payload, DEV_X_PK)?)?,
             eph_x_pk: read_array(bytes, shift(payload, DEV_EPH_X_PK)?)?,
-            ntru_ct,
+            kem_ct,
             nonce: read_array(bytes, after_ct)?,
             ct: read_array(bytes, shift(after_ct, 32)?)?,
             tag: read_array(bytes, shift(after_ct, 64)?)?,
@@ -389,17 +388,16 @@ fn parse_chip(
     entry_len: u32,
 ) -> anyhow::Result<(WrapEntry<'_>, usize)> {
     let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    if payload_len < CHIP_PAYLOAD_MIN {
+    if payload_len != CHIP_PAYLOAD_MIN {
         return Err(anyhow::anyhow!("corrupted length"));
     }
     let end = shift(payload, payload_len)?;
     if bytes.get(payload..end).is_none() {
         return Err(anyhow::anyhow!("corrupted length"));
     }
-    let ct_len = payload_len - CHIP_PREFIX_LEN - CHIP_SUFFIX_LEN;
     let ct_at = shift(payload, CHIP_PREFIX_LEN)?;
-    let after_ct = shift(ct_at, ct_len)?;
-    let sntrup_ct = bytes
+    let after_ct = shift(ct_at, KEM_CT_LEN)?;
+    let kem_ct = bytes
         .get(ct_at..after_ct)
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     Ok((
@@ -408,7 +406,7 @@ fn parse_chip(
             chip_pub: read_array(bytes, shift(payload, CHIP_CHIP_PUB)?)?,
             eph_pub: read_array(bytes, shift(payload, CHIP_EPH_PUB)?)?,
             pq_pk: read_array(bytes, shift(payload, CHIP_PQ_PK)?)?,
-            sntrup_ct,
+            kem_ct,
             nonce: read_array(bytes, after_ct)?,
             ct: read_array(bytes, shift(after_ct, 32)?)?,
             tag: read_array(bytes, shift(after_ct, 64)?)?,

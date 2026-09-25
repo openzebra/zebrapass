@@ -34,7 +34,7 @@ pub fn device_wad(
     kem_alg: u16,
     dev_x_pk: &[u8; 32],
     eph_x_pk: &[u8; 32],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     nonce: &[u8; 32],
 ) -> Vec<u8> {
     let header_bytes = header.to_bytes();
@@ -47,7 +47,7 @@ pub fn device_wad(
             + kem_le.len()
             + dev_x_pk.len()
             + eph_x_pk.len()
-            + sntrup_ct.len()
+            + kem_ct.len()
             + nonce.len()
             + DOMAIN_WRAP_DEVICE.len(),
     );
@@ -57,7 +57,7 @@ pub fn device_wad(
     wad.extend_from_slice(&kem_le);
     wad.extend_from_slice(dev_x_pk);
     wad.extend_from_slice(eph_x_pk);
-    wad.extend_from_slice(sntrup_ct);
+    wad.extend_from_slice(kem_ct);
     wad.extend_from_slice(nonce);
     wad.extend_from_slice(DOMAIN_WRAP_DEVICE);
     wad
@@ -103,18 +103,18 @@ pub fn device_ikm(
     ss_pq: &[u8; 32],
     dev_x_pk: &[u8; 32],
     eph_pk: &[u8; 32],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    // An empty ciphertext is not an `ntrulp` blob. Do not feed it to HKDF.
-    if sntrup_ct.is_empty() {
+    // An empty ciphertext is not an `ML-KEM-768` blob. Do not feed it to HKDF.
+    if kem_ct.is_empty() {
         return Err(anyhow::anyhow!("kem length"));
     }
-    let mut ikm = Vec::with_capacity(32 + 32 + 32 + 32 + sntrup_ct.len());
+    let mut ikm = Vec::with_capacity(32 + 32 + 32 + 32 + kem_ct.len());
     ikm.extend_from_slice(ss_x);
     ikm.extend_from_slice(ss_pq);
     ikm.extend_from_slice(dev_x_pk);
     ikm.extend_from_slice(eph_pk);
-    ikm.extend_from_slice(sntrup_ct);
+    ikm.extend_from_slice(kem_ct);
     Ok(ikm)
 }
 
@@ -142,9 +142,9 @@ pub fn chip_ikm(
     chip_pub: &[u8; 65],
     eph_pub: &[u8; 65],
     pq_pk: &[u8; PQ_PK_LEN],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    ikm_concat(&[ss_p256, ss_pq, chip_pub, eph_pub, pq_pk, sntrup_ct])
+    ikm_concat(&[ss_p256, ss_pq, chip_pub, eph_pub, pq_pk, kem_ct])
 }
 
 #[allow(
@@ -157,7 +157,7 @@ pub fn chip_wad(
     chip_pub: &[u8; 65],
     eph_pub: &[u8; 65],
     pq_pk: &[u8; PQ_PK_LEN],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     nonce: &[u8; 32],
 ) -> Vec<u8> {
     let header_bytes = header.to_bytes();
@@ -169,7 +169,7 @@ pub fn chip_wad(
             + chip_pub.len()
             + eph_pub.len()
             + pq_pk.len()
-            + sntrup_ct.len()
+            + kem_ct.len()
             + nonce.len()
             + DOMAIN_WRAP_CHIP.len(),
     );
@@ -179,7 +179,7 @@ pub fn chip_wad(
     wad.extend_from_slice(chip_pub);
     wad.extend_from_slice(eph_pub);
     wad.extend_from_slice(pq_pk);
-    wad.extend_from_slice(sntrup_ct);
+    wad.extend_from_slice(kem_ct);
     wad.extend_from_slice(nonce);
     wad.extend_from_slice(DOMAIN_WRAP_CHIP);
     wad

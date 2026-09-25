@@ -1,6 +1,6 @@
-//! Device wrap: X25519 and ntrulp.
+//! Device wrap: X25519 and ML-KEM-768.
 
-use container::{encode_device_entry, DeviceWrap, StaticHeader, KEM_NTRULP};
+use container::{encode_device_entry, DeviceWrap, StaticHeader, KEM_MLKEM768};
 use pq::{decrypt_shared, encrypt_shared, PQ_PK_LEN, PQ_SK_LEN};
 use kdf::{hkdf_sha512, INFO_DEVICE_WRAP};
 use secret::Secret;
@@ -17,7 +17,7 @@ pub struct DevicePublics {
     pub id: [u8; 16],
     /// Long-term X25519 public key.
     pub x_pk: [u8; 32],
-    /// `ntrulp` public key.
+    /// ML-KEM-768 encapsulation key.
     pub pq_pk: [u8; PQ_PK_LEN],
 }
 
@@ -28,14 +28,14 @@ pub struct DeviceKeys {
     pub id: [u8; 16],
     /// Long-term X25519 secret.
     pub x_sk: Secret<[u8; 32]>,
-    /// `ntrulp` secret key.
+    /// ML-KEM-768 seed.
     pub pq_sk: Secret<[u8; PQ_SK_LEN]>,
 }
 
 /// Seal `vk` to `dev`.
 ///
 /// Returns the device record and the grant. The grant is the static header,
-/// device id, KEM id, both X25519 public keys, the sntrup ciphertext, the
+/// device id, KEM id, both X25519 public keys, the ML-KEM ciphertext, the
 /// nonce, and the AEGIS ciphertext and tag. It does not include the record kind.
 ///
 /// # Errors
@@ -43,7 +43,7 @@ pub struct DeviceKeys {
 /// `os entropy failed` when the OS RNG fails.
 /// `zero shared secret` when the X25519 shared secret is 32 zero
 /// bytes. HKDF is not called. The ephemeral scalar is wiped before that return.
-/// `kem length` when the `ntrulp` key or ciphertext has the wrong length.
+/// `kem length` when the ML-KEM-768 key or ciphertext has the wrong length.
 /// `kdf parameters rejected` when HKDF rejects the output length.
 pub fn seal_device(
     header: &StaticHeader,
@@ -69,7 +69,7 @@ pub fn seal_device(
 /// # Errors
 ///
 /// `wrap not found` when `keys.id` is not `wrap.device_id`.
-/// `unsupported kem` when `wrap.kem_alg` is not `0xC001`.
+/// `unsupported kem` when `wrap.kem_alg` is not `0xC002`.
 /// `zero shared secret` when the X25519 shared secret is 32 zero bytes.
 /// `kem length` when decapsulation rejects a length.
 /// `kdf parameters rejected` when HKDF rejects the output length.
@@ -82,7 +82,7 @@ pub fn open_device(
     if keys.id != wrap.device_id {
         return Err(anyhow::anyhow!("wrap not found"));
     }
-    if wrap.kem_alg != KEM_NTRULP {
+    if wrap.kem_alg != KEM_MLKEM768 {
         return Err(anyhow::anyhow!("unsupported kem {:#06x}", wrap.kem_alg));
     }
     let mut scalar = *keys.x_sk.expose();
@@ -104,13 +104,13 @@ fn seal_with_shared(
     eph_pk: &[u8; 32],
     ss_x: &[u8; 32],
 ) -> anyhow::Result<(Vec<u8>, DeviceGrant)> {
-    let (ss_pq, ntru_ct) = encrypt_shared(dev.pq_pk.as_slice())?;
+    let (ss_pq, kem_ct) = encrypt_shared(dev.pq_pk.as_slice())?;
     let k_dev = derive_k_dev(
         ss_x,
         ss_pq.expose(),
         &dev.x_pk,
         eph_pk,
-        &ntru_ct,
+        &kem_ct,
         &header.vault_id,
     )?;
     // HKDF has copied this secret. Wipe it before the record is built.
@@ -119,20 +119,20 @@ fn seal_with_shared(
     let ad = device_wad(
         header,
         &dev.id,
-        KEM_NTRULP,
+        KEM_MLKEM768,
         &dev.x_pk,
         eph_pk,
-        &ntru_ct,
+        &kem_ct,
         &nonce,
     );
     let (ct, tag) = wad::seal_vk(k_dev.expose(), &nonce, &ad, vk);
     drop(k_dev);
     let record = encode_device_entry(
         dev.id,
-        KEM_NTRULP,
+        KEM_MLKEM768,
         dev.x_pk,
         *eph_pk,
-        &ntru_ct,
+        &kem_ct,
         nonce,
         ct,
         tag,
@@ -141,10 +141,10 @@ fn seal_with_shared(
     let grant = grant::assemble(
         header,
         &dev.id,
-        KEM_NTRULP,
+        KEM_MLKEM768,
         &dev.x_pk,
         eph_pk,
-        &ntru_ct,
+        &kem_ct,
         &nonce,
         &ct,
         &tag,
@@ -158,13 +158,13 @@ fn open_with_shared(
     keys: &DeviceKeys,
     ss_x: &[u8; 32],
 ) -> anyhow::Result<Secret<[u8; 32]>> {
-    let ss_pq = decrypt_shared(keys.pq_sk.expose(), wrap.ntru_ct)?;
+    let ss_pq = decrypt_shared(keys.pq_sk.expose(), wrap.kem_ct)?;
     let k_dev = derive_k_dev(
         ss_x,
         ss_pq.expose(),
         &wrap.dev_x_pk,
         &wrap.eph_x_pk,
-        wrap.ntru_ct,
+        wrap.kem_ct,
         &header.vault_id,
     )?;
     drop(ss_pq);
@@ -174,7 +174,7 @@ fn open_with_shared(
         wrap.kem_alg,
         &wrap.dev_x_pk,
         &wrap.eph_x_pk,
-        wrap.ntru_ct,
+        wrap.kem_ct,
         &wrap.nonce,
     );
     let vk = wad::open_vk(k_dev.expose(), &wrap.nonce, &ad, &wrap.ct, &wrap.tag);
@@ -187,10 +187,10 @@ fn derive_k_dev(
     ss_pq: &[u8; 32],
     dev_x_pk: &[u8; 32],
     eph_pk: &[u8; 32],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     vault_id: &[u8; 16],
 ) -> anyhow::Result<Secret<[u8; 32]>> {
-    let mut ikm = wad::device_ikm(ss_x, ss_pq, dev_x_pk, eph_pk, sntrup_ct)?;
+    let mut ikm = wad::device_ikm(ss_x, ss_pq, dev_x_pk, eph_pk, kem_ct)?;
     let derived = hkdf_sha512(&ikm, vault_id, INFO_DEVICE_WRAP);
     ikm.zeroize();
     derived
@@ -208,7 +208,7 @@ fn derive_k_dev(
 mod tests {
     use container::{
         StaticHeader, WrapEntry, BODY_AEGIS256, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MIN,
-        KDF_P_MIN, KDF_T_MIN, KEM_NTRULP, WRAP_AEGIS256,
+        KDF_P_MIN, KDF_T_MIN, KEM_MLKEM768, WRAP_AEGIS256,
     };
     use pq::PQ_PK_LEN;
     use secret::Secret;
@@ -246,8 +246,8 @@ mod tests {
     fn device_wrap_round_trip() {
         let header = floor_header();
         let vk = [0x24u8; 32];
-        let (ntru_bytes, kem_secret) = pq::keypair().unwrap();
-        let ntru_pk: [u8; PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
+        let (kem_bytes, kem_secret) = pq::keypair().unwrap();
+        let kem_pk: [u8; PQ_PK_LEN] = kem_bytes.as_slice().try_into().unwrap();
         let mut raw_scalar = [0u8; 32];
         getrandom::fill(&mut raw_scalar).unwrap();
         let montgomery = x25519(raw_scalar, X25519_BASEPOINT_BYTES);
@@ -257,7 +257,7 @@ mod tests {
         let dev = DevicePublics {
             id,
             x_pk: montgomery,
-            pq_pk: ntru_pk,
+            pq_pk: kem_pk,
         };
         let keys = DeviceKeys {
             id,
@@ -273,15 +273,15 @@ mod tests {
         };
         let grant_bytes = grant.as_bytes();
         let header_bytes = header.to_bytes();
-        let ntru_ct = parsed.ntru_ct;
+        let kem_ct = parsed.kem_ct;
         let ct_at = header_bytes.len() + 16 + 2 + 32 + 32;
-        let after_ct = ct_at + ntru_ct.len();
+        let after_ct = ct_at + kem_ct.len();
         assert!(grant_bytes.len() > HEADER_LEN);
         assert_eq!(
             grant_bytes.get(..header_bytes.len()),
             Some(header_bytes.as_slice())
         );
-        assert_eq!(grant_bytes.get(ct_at..after_ct), Some(ntru_ct));
+        assert_eq!(grant_bytes.get(ct_at..after_ct), Some(kem_ct));
         assert_eq!(
             grant_bytes.get(after_ct..after_ct + 32),
             Some(parsed.nonce.as_slice())
@@ -295,7 +295,7 @@ mod tests {
             Some(parsed.tag.as_slice())
         );
         assert_eq!(grant_bytes.len(), after_ct + 96);
-        assert_eq!(parsed.kem_alg, KEM_NTRULP);
+        assert_eq!(parsed.kem_alg, KEM_MLKEM768);
 
         let opened = open_device(&header, &parsed, &keys).unwrap();
         assert_eq!(opened.expose(), &vk);
@@ -307,10 +307,10 @@ mod tests {
             "wrap not found"
         );
         let mut bad_kem = parsed;
-        bad_kem.kem_alg = 0xC002;
+        bad_kem.kem_alg = 0xC001;
         assert_eq!(
             open_device(&header, &bad_kem, &keys).unwrap_err().to_string(),
-            "unsupported kem 0xc002"
+            "unsupported kem 0xc001"
         );
     }
 }
