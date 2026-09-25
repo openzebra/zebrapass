@@ -127,7 +127,7 @@ fn gee1_wrap_rotation_leaves_body_bytes_untouched() {
         let (a, b) = body_span(&file);
         file.as_bytes()[a..b].to_vec()
     };
-    change_master(&mut session, &mut file, &SEED2).unwrap();
+    change_master(&mut session, &mut file, &SEED2, &[]).unwrap();
     assert_eq!(session.generation(), 2);
     let body_after = {
         let (a, b) = body_span(&file);
@@ -163,7 +163,7 @@ fn correctness_seen_blocks_rollback_to_older_file() {
     // MU-UNLKAG §5: the caller's Seen rejects an older, still-valid blob.
     let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     let old_file = file.clone();
-    change_master(&mut session, &mut file, &SEED2).unwrap();
+    change_master(&mut session, &mut file, &SEED2, &[]).unwrap();
 
     let seen_now = Seen {
         generation: 2,

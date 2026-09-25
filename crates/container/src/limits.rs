@@ -23,6 +23,9 @@ pub const BODY_KUZ_MGM: u16 = 0xA002;
 /// Kuznyechik-CTR + HMAC-SHA256 body (`0xA003`).
 pub const BODY_KUZ_CTR_HMAC: u16 = 0xA003;
 
+/// Body is length-delimited sealed frames, not an outer AEAD.
+pub const BODY_FRAMES: u16 = 0xA004;
+
 /// AEGIS-256 wrap (`0xB001`).
 pub const WRAP_AEGIS256: u16 = 0xB001;
 
@@ -133,7 +136,10 @@ pub const fn kdf_params_ok(m_kib: u32, t: u32, p: u32) -> bool {
 }
 
 pub const fn known_body_alg(alg: u16) -> bool {
-    matches!(alg, BODY_AEGIS256 | BODY_KUZ_MGM | BODY_KUZ_CTR_HMAC)
+    matches!(
+        alg,
+        BODY_AEGIS256 | BODY_KUZ_MGM | BODY_KUZ_CTR_HMAC | BODY_FRAMES
+    )
 }
 
 /// Minimum body length: nonce plus tag, allowing an empty ciphertext.
@@ -142,6 +148,7 @@ pub const fn min_body_len(alg: u16) -> Option<usize> {
         BODY_AEGIS256 => Some(BODY_MIN_AEGIS),
         BODY_KUZ_MGM => Some(BODY_MIN_KUZ_MGM),
         BODY_KUZ_CTR_HMAC => Some(BODY_MIN_KUZ_CTR),
+        BODY_FRAMES => Some(0),
         _ => None,
     }
 }

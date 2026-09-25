@@ -3,15 +3,18 @@
 use aead::{encrypt_body, BodyAlg};
 use container::{
     assemble, encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry,
-    encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC,
-    BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID, WRAP_AEGIS256,
+    encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256, BODY_FRAMES,
+    BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID, WRAP_AEGIS256,
 };
+use frame::encode_frames;
 use hmac::{Hmac, KeyInit, Mac};
 use kdf::{derive_vault_keys, local_meta_key, KdfProfile};
 use secret::Secret;
 use sha2::Sha256;
 use wraps::seal_password;
 use zeroize::Zeroize;
+
+use crate::error::SessionError;
 
 
 type HmacSha256 = Hmac<Sha256>;
@@ -121,7 +124,7 @@ pub fn create(
 }
 
 /// Draw a device id that is never all-zero.
-pub(super) fn draw_device_id() -> anyhow::Result<[u8; 16]> {
+pub fn draw_device_id() -> anyhow::Result<[u8; 16]> {
     for _ in 0..8 {
         let mut id = [0u8; 16];
         fill_random(&mut id)?;
@@ -135,6 +138,7 @@ pub(super) fn draw_device_id() -> anyhow::Result<[u8; 16]> {
 fn body_alg_id(alg: BodyAlg) -> anyhow::Result<u16> {
     match alg {
         BodyAlg::Aegis256 => Ok(BODY_AEGIS256),
+        BodyAlg::Frames => Ok(BODY_FRAMES),
         BodyAlg::KuzCtrHmac => Ok(BODY_KUZ_CTR_HMAC),
         BodyAlg::KuzMgm => Err(anyhow::anyhow!("unsupported body algorithm 0xa002")),
     }
@@ -212,11 +216,16 @@ pub fn encrypt_records(
     records: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     let ad = body_ad(header);
+    if alg == BodyAlg::Frames {
+        return encode_frames(records);
+    }
     let mut nonce = [0u8; 32];
     let nonce_len = match alg {
         BodyAlg::Aegis256 => 32,
         BodyAlg::KuzCtrHmac => 8,
-        BodyAlg::KuzMgm => return Err(anyhow::anyhow!("unsupported body algorithm {BODY_KUZ_MGM:#06x}")),
+        BodyAlg::Frames | BodyAlg::KuzMgm => {
+            return Err(anyhow::anyhow!("unsupported body algorithm {BODY_KUZ_MGM:#06x}"))
+        }
     };
     let slot = nonce
         .get_mut(..nonce_len)
@@ -286,7 +295,7 @@ pub fn verify_commit(
     if secret::ct_eq_32(&actual, expected) {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("commit mismatch"))
+        Err(SessionError::CommitMismatch.into())
     }
 }
 

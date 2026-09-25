@@ -9,8 +9,20 @@
 use std::path::Path;
 
 use frame::{seal, FrameMeta, ALG_AEGIS256, KIND_REVISION};
-use record::{Document, ValueType, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME, TAG_USER_ID};
+use record::{
+    Document, ValueType, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME, TAG_SEEN_COMMIT,
+    TAG_SEEN_GENERATION, TAG_USER_ID,
+};
 use secret::Secret;
+
+/// The last file state this device accepted, for rollback detection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SeenCursor {
+    /// Generation of the last accepted vault file.
+    pub generation: u64,
+    /// Commit tag of that file.
+    pub commit_tag: [u8; 32],
+}
 
 /// This device's metadata for one vault.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +35,9 @@ pub struct LocalMeta {
     pub created_at_ms: u64,
     /// Display name of the vault on this device.
     pub name: String,
+    /// Last accepted generation and commit tag; `None` on files written
+    /// before rollback detection existed.
+    pub seen: Option<SeenCursor>,
 }
 
 /// The document form of the metadata (tags `0x0201..0x0204`).
@@ -33,6 +48,10 @@ pub fn meta_document(meta: &LocalMeta) -> Document {
     doc.set_data(TAG_USER_ID, ValueType::Bytes, &meta.user_id);
     doc.set_data(TAG_CREATED_AT_MS, ValueType::Bytes, &meta.created_at_ms.to_le_bytes());
     doc.set_text(TAG_NAME, &meta.name);
+    if let Some(seen) = meta.seen {
+        doc.set_data(TAG_SEEN_GENERATION, ValueType::Bytes, &seen.generation.to_le_bytes());
+        doc.set_data(TAG_SEEN_COMMIT, ValueType::Bytes, &seen.commit_tag);
+    }
     doc
 }
 
@@ -56,11 +75,29 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
         .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let name = doc.text(TAG_NAME)?.unwrap_or_default().to_owned();
+    let seen = match (
+        doc.data(TAG_SEEN_GENERATION)?,
+        doc.data(TAG_SEEN_COMMIT)?,
+    ) {
+        (None, None) => None,
+        (Some(gen), Some(tag)) => {
+            let generation = <[u8; 8]>::try_from(gen)
+                .map_err(|_| anyhow::anyhow!("corrupted length"))?;
+            let commit_tag = <[u8; 32]>::try_from(tag)
+                .map_err(|_| anyhow::anyhow!("corrupted length"))?;
+            Some(SeenCursor {
+                generation: u64::from_le_bytes(generation),
+                commit_tag,
+            })
+        }
+        _ => anyhow::bail!("corrupted length"),
+    };
     Ok(LocalMeta {
         device_id,
         user_id,
         created_at_ms: u64::from_le_bytes(raw_time),
         name,
+        seen,
     })
 }
 
@@ -136,6 +173,10 @@ mod tests {
 
     fn sample_meta() -> LocalMeta {
         LocalMeta {
+            seen: Some(super::SeenCursor {
+                generation: 9,
+                commit_tag: [3u8; 32],
+            }),
             device_id: [3; 16],
             user_id: [4; 64],
             created_at_ms: 1_700_000_000_123,

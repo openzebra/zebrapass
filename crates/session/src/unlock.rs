@@ -2,19 +2,20 @@
 
 use aead::BodyAlg;
 use container::{ChipWrap, VaultFile, WrapEntry};
+use frame::decode_frames;
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{open_chip, open_device, open_password, ChipKeys, DeviceKeys};
+use wraps::{open_chip, open_device, open_password, open_prf, ChipKeys, DeviceKeys, PrfPublics};
 
 use crate::create::{body_ad, draw_device_id, verify_commit, Session};
-use crate::error::Seen;
+use crate::error::{Seen, SessionError};
 
 /// Factors a caller can present for one unlock.
 ///
 /// Every field is optional and independent: [`unlock`] picks the first factor
-/// that is present both here and in the file, in the order chip → device →
-/// master. A factor listed here but absent from the file is an error, not
-/// a silent fallback.
+/// that is present both here and in the file, in the order chip → prf →
+/// device → master. A factor listed here but absent from the file is an
+/// error, not a silent fallback.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnlockCreds<'a> {
     /// The 64-byte master seed (the BIP39 seed of the seed phrase).
@@ -24,6 +25,9 @@ pub struct UnlockCreds<'a> {
     /// This phone's chip keys and the P-256 shared secret the platform
     /// computes as `ECDH(chip_sk, wrap.eph_pub)`.
     pub chip: Option<(&'a ChipKeys, [u8; 32])>,
+    /// A hardware key's publics and the 32-byte hmac-secret response the
+    /// platform asks it to compute over the wrap's salt.
+    pub prf: Option<(&'a PrfPublics, &'a [u8; 32])>,
 }
 
 impl<'a> UnlockCreds<'a> {
@@ -34,6 +38,7 @@ impl<'a> UnlockCreds<'a> {
             master: Some(master),
             device: None,
             chip: None,
+            prf: None,
         }
     }
 
@@ -51,8 +56,12 @@ impl<'a> UnlockCreds<'a> {
         self
     }
 
-    // !todo!: PRF factor (YubiKey) removed — restore `pub prf` +
-    // `with_prf` together with the `platform::PrfBackend` trait.
+    /// Present a hardware key's publics and its hmac-secret response.
+    #[must_use]
+    pub const fn with_prf(mut self, publics: &'a PrfPublics, prf_out: &'a [u8; 32]) -> Self {
+        self.prf = Some((publics, prf_out));
+        self
+    }
 }
 
 /// Open `file` with the factors in `creds`.
@@ -119,14 +128,22 @@ fn unwrap_vk(
         let wrap = find_chip(entries, &keys.id)?;
         return open_chip(header, wrap, keys, &ss_p256);
     }
-    // !todo!: PRF factor (YubiKey) removed — restore here between chip and
-    // device, together with `UnlockCreds::prf` and `find_prf`.
+    if let Some((publics, prf_out)) = creds.prf {
+        let wrap = wraps::find_prf(entries, &publics.id)?;
+        return open_prf(header, &wrap, prf_out);
+    }
     if let Some(keys) = creds.device {
         let wrap = find_device(entries, &keys.id)?;
         return open_device(header, wrap, keys);
     }
     let Some(master) = creds.master else {
-        return Err(anyhow::anyhow!("no usable wrap"));
+        if entries
+            .iter()
+            .any(|entry| matches!(entry, WrapEntry::Prf(_)))
+        {
+            return Err(SessionError::PrfFactorRequired.into());
+        }
+        return Err(SessionError::NoUsableWrap.into());
     };
     let wrap = find_password(entries)?;
     open_password(header, &wrap, master)
@@ -186,6 +203,9 @@ fn decrypt_body(
     header: &container::StaticHeader,
     body: &[u8],
 ) -> anyhow::Result<Secret<Vec<u8>>> {
+    if alg == BodyAlg::Frames {
+        return Ok(Secret::new(decode_frames(body)?));
+    }
     let ad = body_ad(header);
     Ok(Secret::new(aead::decrypt_body(
         alg, k_body, k_bmac, body, &ad,
@@ -201,10 +221,10 @@ fn accept_seen(
         return Ok(());
     };
     if generation < seen.generation {
-        return Err(anyhow::anyhow!("rollback"));
+        return Err(SessionError::Rollback.into());
     }
     if generation == seen.generation && !secret::ct_eq_32(commit_tag, &seen.commit_tag) {
-        return Err(anyhow::anyhow!("conflict"));
+        return Err(SessionError::Conflict.into());
     }
     Ok(())
 }

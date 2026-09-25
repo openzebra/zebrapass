@@ -190,3 +190,16 @@ Fix: add `prf: Option<(&PrfPublics, &[u8; 32])>` to `UnlockCreds` and thread it 
 6. Persist `Seen` in local meta. Replace `anyhow` at the session boundary with a typed error.
 
 Until 1 and 2 land, do not describe this kernel as quantum-safe. Until 3 and 4 land, do not describe it as ready to sync.
+
+## Status addendum (updated at the same date)
+
+Findings by the order of work above:
+
+1. **Fixed at `d7cb98d`** — `ntrulp` is gone entirely. Device and chip wraps encapsulate with ML-KEM-768 (`ml-kem 0.3.x`, ciphertext exactly 1088 bytes, id `0xC002`); retired `0xC001` is rejected. A wrong-length ciphertext fails in `pq` before the crate runs.
+2. **Fixed at `d7cb98d`** — the PQ leg is now a real KEM, hybridized with X25519 for device wraps. Sync signing is ML-DSA-65 (`crates/pq/src/sign.rs`).
+3. **Fixed in this tree** — `kdf::client_id` (64 bytes, `brby/v2/client-id`) and `kdf::sync_seed` (32-byte `Secret`, `brby/v2/sync-sign`), both HKDF-SHA512 from the seed. `session::sync_sig` signs one record payload with length-prefixed fields; `seed::client_id` is exported beside (not replacing) `user_id`, which remains a P-256 point and is documented as non-authenticating.
+4. **Fixed in this tree** — `BodyAlg::Frames` (`0xA004`): the body is `u32le length || sealed frame` records (`frame/src/log.rs`). New vaults are created as `0xA004`; `0xA001`/`0xA003` still open. The commit HMAC still covers the whole body, so a flipped frame still fails unlock. `session::sync_export::export_record` returns one record's latest frame plus its revision and ML-DSA signature; `newer(local, remote)` is the strict-revision conflict rule.
+5. **Fixed in this tree** — `UnlockCreds::prf` restores the hardware-key factor in the order chip → prf → device → master; `rotate::reencrypt_body` and `change_master` reseal PRF wraps (the latter requires the response, else `prf factor required`); `session::devices::add_prf_unlock` appends a PRF grant. The `physical key support is not built` refusal is gone.
+6. **Fixed in this tree** — `LocalMeta.seen` (`SeenCursor`, tags `0x0205`/`0x0206`) persists the accepted generation + commit tag; `local::mark_seen` records it after every unlock/write; a stale file fails `rollback` even when the caller passes no `Seen` (`crates/local/tests/rollback.rs`). Session-boundary strings are now `SessionError` variants (`rollback`, `conflict`, `commit mismatch`, `prf factor required`, `no usable wrap`) with the old strings as their `Display`.
+
+Current gates: `cargo test --workspace` 127 passed / 0 failed across all suites; `cargo clippy --workspace --all-targets` clean in production code (only the pre-existing transitive `multiple-crate-versions` notice). The "quantum-safe" and "sync-ready" claims from the verdict above are now unblocked, with the caveats that no sync server exists and `BodyAlg::Aegis256` files are not auto-migrated to frames (they still open; a future `rewrap_body` may rewrite them).

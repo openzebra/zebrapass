@@ -21,10 +21,10 @@ fn api_only_master_flow() {
     let mut s = unlock(&restored, &UnlockCreds::master(&SEED), None).unwrap();
 
     write_records(&mut s, &mut file, b"").unwrap();
-    change_master(&mut s, &mut file, &SEED2).unwrap();
+    change_master(&mut s, &mut file, &SEED2, &[]).unwrap();
     assert!(unlock(&file, &UnlockCreds::master(&SEED), None).is_err());
 
-    reencrypt_body(&mut s, &mut file, b"", &SEED3, &[], &[]).unwrap();
+    reencrypt_body(&mut s, &mut file, b"", &SEED3, &[], &[], &[]).unwrap();
     assert!(unlock(&file, &UnlockCreds::master(&SEED2), None).is_err());
     unlock(&file, &UnlockCreds::master(&SEED3), None).unwrap();
 }

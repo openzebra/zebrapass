@@ -1,10 +1,10 @@
 //! `YubiKey` PRF wrap: the hmac-secret output seals the vault key directly.
 //!
-//! !todo!: physical-key support is removed from `session`/`platform` for
-//! now; the wire kind `0x0004` and this module stay so the format slot is
-//! reserved and files stay forward-compatible.
+//! The wrap is a full unlock factor: `session::UnlockCreds::with_prf`
+//! presents the publics plus the 32-byte response, and `session::rotate`
+//! reseals PRF wraps during key rotation.
 
-use container::{encode_prf_entry, PrfWrap, StaticHeader};
+use container::{encode_prf_entry, PrfWrap, StaticHeader, WrapEntry};
 use kdf::{hkdf_sha512, INFO_PRF_WRAP};
 use secret::Secret;
 
@@ -85,6 +85,25 @@ pub fn open_prf(
     let vk = wad::open_vk(k_prf.expose(), &wrap.nonce, &ad, &wrap.ct, &wrap.tag);
     drop(k_prf);
     vk
+}
+
+/// Find the PRF wrap for `id`.
+///
+/// # Errors
+///
+/// `no prf wrap for this grant` when the file has no matching entry.
+pub fn find_prf<'a>(
+    entries: &'a [WrapEntry<'a>],
+    id: &[u8; 16],
+) -> anyhow::Result<PrfWrap<'a>> {
+    for entry in entries {
+        if let WrapEntry::Prf(wrap) = entry {
+            if wrap.id == *id {
+                return Ok(*wrap);
+            }
+        }
+    }
+    anyhow::bail!("no prf wrap for this grant")
 }
 
 #[allow(

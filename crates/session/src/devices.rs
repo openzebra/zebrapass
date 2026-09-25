@@ -1,7 +1,10 @@
 //! Add and remove device and chip wraps. The body bytes stay as they are.
 
 use container::{KIND_CHIP, KIND_DEVICE, VaultFile, WrapEntry};
-use wraps::{seal_chip, seal_device, ChipGrant, ChipPublics, DeviceGrant, DevicePublics};
+use wraps::{
+    seal_chip, seal_device, seal_prf, ChipGrant, ChipPublics, DeviceGrant, DevicePublics, PrfGrant,
+    PrfPublics,
+};
 
 use crate::create::{encode_entry, next_generation, publish, Session};
 
@@ -95,8 +98,54 @@ pub fn add_chip_unlock(
     Ok(grant)
 }
 
-/// Drop the wraps of `kinds` whose id is `id`.
+/// Append a PRF wrap of the session vault key.
 ///
+/// `prf_out` is the 32-byte hmac-secret response the key computes from
+/// `publics.salt`; it stays in memory only for this call. The body is copied
+/// unchanged. Generation increases by one. On error, `file` and `session`
+/// are left as they were.
+///
+/// # Errors
+///
+/// `corrupted length` when `publics.id` is already in the directory.
+/// That check runs before the grant is sealed, so the file is unchanged.
+/// Sealing failures use the same variants as [`crate::create`].
+pub fn add_prf_unlock(
+    session: &mut Session,
+    file: &mut VaultFile,
+    publics: &PrfPublics,
+    prf_out: &[u8; 32],
+) -> anyhow::Result<PrfGrant> {
+    let (header, generation, body, records, grant) = {
+        let parsed = file.parse()?;
+        // A repeated grant id does not parse. Reject it before sealing.
+        if parsed
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, WrapEntry::Prf(wrap) if wrap.id == publics.id))
+        {
+            return Err(anyhow::anyhow!("corrupted length"));
+        }
+        let (record, grant) = seal_prf(&parsed.header, publics, prf_out, session.vk.expose())?;
+        let mut records = Vec::with_capacity(parsed.entries.len().saturating_add(1));
+        for entry in &parsed.entries {
+            records.push(encode_entry(entry)?);
+        }
+        records.push(record);
+        let generation = next_generation(parsed.generation)?;
+        (
+            parsed.header,
+            generation,
+            parsed.body.to_vec(),
+            records,
+            grant,
+        )
+    };
+    publish(session, file, &header, &records, &body, generation)?;
+    Ok(grant)
+}
+
+/// Drop the wraps of `kinds` whose id is `id`.
 /// Password wraps carry no id and are never removed, so the parse-time policy
 /// of at least one password wrap is preserved. The vault key does not change.
 ///

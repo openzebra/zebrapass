@@ -1,8 +1,9 @@
 //! Standard and custom field tags.
 //!
 //! `0x0100..=0x7FFF` is the standard range; `0x8000..=0xFFFF` is the custom
-//! range where the field value carries a UTF-8 name. `0x0205..` is reserved
-//! for future sync-cursor metadata.
+//! range where the field value carries a UTF-8 name. `0x0205..=0x0206`
+//! carry the sync cursor: the seen generation and commit tag used for
+//! rollback detection.
 
 /// Title (`Text`).
 pub const TAG_TITLE: u16 = 0x0101;
@@ -36,6 +37,12 @@ pub const TAG_CREATED_AT_MS: u16 = 0x0203;
 
 /// Vault display name (`Text`).
 pub const TAG_NAME: u16 = 0x0204;
+
+/// Last accepted vault generation, 8 little-endian bytes (`Bytes`).
+pub const TAG_SEEN_GENERATION: u16 = 0x0205;
+
+/// Last accepted vault commit tag, 32 bytes (`Bytes`).
+pub const TAG_SEEN_COMMIT: u16 = 0x0206;
 
 /// First custom tag. Custom values carry `name_len ‖ name ‖ data`.
 pub const TAG_CUSTOM_MIN: u16 = 0x8000;

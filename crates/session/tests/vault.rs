@@ -192,7 +192,7 @@ fn reencrypt_and_check(
     file: &mut VaultFile,
     device: &(DevicePublics, DeviceKeys),
 ) {
-    reencrypt_body(session, file, b"rotated-records", &SEED_ROTATED, &[device.0], &[]).unwrap();
+    reencrypt_body(session, file, b"rotated-records", &SEED_ROTATED, &[device.0], &[], &[]).unwrap();
     assert_eq!(
         unlock(file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap_err().to_string(),
         "wrap authentication failed"
@@ -208,7 +208,7 @@ fn change_master_and_check(session: &mut Session, file: &mut VaultFile) {
     let header_before = header_bytes(file);
     let body_before = body_of(file);
     let old = VaultFile::new(file.as_bytes().to_vec());
-    change_master(session, file, &SEED_NEXT).unwrap();
+    change_master(session, file, &SEED_NEXT, &[]).unwrap();
     assert_eq!(header_bytes(file), header_before);
     assert_eq!(body_of(file), body_before);
     let seen = Seen {

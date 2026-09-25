@@ -15,6 +15,7 @@ frame = { path = "../frame" }
 getrandom.workspace = true
 hmac.workspace = true
 kdf = { path = "../kdf" }
+pq = { path = "../pq" }
 record = { path = "../record" }
 secret = { path = "../secret" }
 sha2.workspace = true
@@ -23,7 +24,6 @@ zeroize.workspace = true
 
 [dev-dependencies]
 local = { path = "../local" }
-pq = { path = "../pq" }
 platform = { path = "../platform" }
 seed = { path = "../seed" }
 x25519-dalek.workspace = true

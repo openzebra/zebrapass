@@ -10,5 +10,8 @@ mod phrase;
 mod rng;
 
 pub use identity::user_id;
+
+/// Opaque 64-byte sync client id. Not [`user_id`]: that value is a P-256 point, not an authenticator.
+pub use kdf::client_id;
 pub use phrase::SeedPhrase;
 pub use rng::OsFill;

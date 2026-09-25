@@ -3,12 +3,15 @@
 use container::{VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{seal_chip, seal_device, seal_password, ChipPublics, DevicePublics};
+use wraps::{
+    seal_chip, seal_device, seal_password, seal_prf, ChipPublics, DevicePublics, PrfPublics,
+};
 
 use crate::create::{
     assemble_committed, dir_bytes, draw_secret, encode_entry, encrypt_records, next_generation,
     publish, Session,
 };
+use crate::error::SessionError;
 
 /// Replace the master wrap: re-seal the same vault key under a new master
 /// seed.
@@ -24,11 +27,24 @@ pub fn change_master(
     session: &mut Session,
     file: &mut VaultFile,
     new_master: &[u8; 64],
+    prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     let (header, generation, body, records) = {
         let parsed = file.parse()?;
-        let records =
+        let mut records =
             replace_password(&parsed.entries, &parsed.header, new_master, session.vk.expose())?;
+        // The password wrap now seals the new vault key; every PRF wrap must
+        // follow or its grant dies with the old key.
+        for entry in &parsed.entries {
+            if let WrapEntry::Prf(wrap) = entry {
+                let (publics, prf_out) = prfs
+                    .iter()
+                    .find(|(item, _)| item.id == wrap.id)
+                    .ok_or(SessionError::PrfFactorRequired)?;
+                let (record, _grant) = seal_prf(&parsed.header, publics, prf_out, session.vk.expose())?;
+                records.push(record);
+            }
+        }
         let generation = next_generation(parsed.generation)?;
         (parsed.header, generation, parsed.body.to_vec(), records)
     };
@@ -94,11 +110,13 @@ pub fn reencrypt_body(
     master: &[u8; 64],
     devices: &[DevicePublics],
     chips: &[(ChipPublics, [u8; 32])],
+    prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     let (header, generation, sealed, body, keys) = {
         let parsed = file.parse()?;
         require_device_publics(&parsed.entries, devices)?;
         require_chip_publics(&parsed.entries, chips)?;
+        require_prf_publics(&parsed.entries, prfs)?;
         let vk = draw_secret()?;
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
         // Fresh seals. The records already in the file wrap the old vault key.
@@ -109,6 +127,7 @@ pub fn reencrypt_body(
             master,
             devices,
             chips,
+            prfs,
         )?;
         let body = encrypt_records(
             session.body_alg,
@@ -219,6 +238,20 @@ fn require_chip_publics(
     Ok(())
 }
 
+fn require_prf_publics(
+    entries: &[WrapEntry<'_>],
+    prfs: &[(PrfPublics, [u8; 32])],
+) -> anyhow::Result<()> {
+    for entry in entries {
+        if let WrapEntry::Prf(wrap) = entry {
+            if !prfs.iter().any(|(publics, _)| publics.id == wrap.id) {
+                return Err(SessionError::PrfFactorRequired.into());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn reseal(
     entries: &[WrapEntry<'_>],
     header: &container::StaticHeader,
@@ -226,6 +259,7 @@ fn reseal(
     master: &[u8; 64],
     devices: &[DevicePublics],
     chips: &[(ChipPublics, [u8; 32])],
+    prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut records = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -247,13 +281,13 @@ fn reseal(
                 let (record, _grant) = seal_chip(header, publics, vk)?;
                 record
             }
-            // !todo!: PRF wraps cannot be re-sealed while physical-key
-            // support is removed; rotation fails loudly instead of silently
-            // dropping the grant.
-            WrapEntry::Prf(_) => {
-                return Err(anyhow::anyhow!(
-                    "prf wrap present but physical key support is not built"
-                ));
+            WrapEntry::Prf(wrap) => {
+                let (publics, prf_out) = prfs
+                    .iter()
+                    .find(|(item, _)| item.id == wrap.id)
+                    .ok_or(SessionError::PrfFactorRequired)?;
+                let (record, _grant) = seal_prf(header, publics, prf_out, vk)?;
+                record
             }
         };
         records.push(record);

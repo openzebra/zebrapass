@@ -291,13 +291,12 @@ fn open_frame(session: &Session, reference: &FrameRef) -> anyhow::Result<Documen
 }
 
 fn next_revision(winner: Option<&FrameRef>) -> anyhow::Result<u64> {
-    match winner {
-        Some(winner) => winner
+    winner.map_or(Ok(1), |winner| {
+        winner
             .revision
             .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("revision overflow")),
-        None => Ok(1),
-    }
+            .ok_or_else(|| anyhow::anyhow!("revision overflow"))
+    })
 }
 
 fn append_frame(

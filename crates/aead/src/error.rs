@@ -6,6 +6,7 @@ use crate::kuz_ctr;
 const AEGIS256_ID: u16 = 0xA001;
 const KUZ_MGM_ID: u16 = 0xA002;
 const KUZ_CTR_HMAC_ID: u16 = 0xA003;
+const FRAMES_ID: u16 = 0xA004;
 
 /// Body encryption algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +17,8 @@ pub enum BodyAlg {
     KuzMgm,
     /// Kuznyechik-CTR with HMAC-SHA256 (`0xA003`).
     KuzCtrHmac,
+    /// Length-delimited sealed frames. Not an AEAD (`0xA004`).
+    Frames,
 }
 
 impl TryFrom<u16> for BodyAlg {
@@ -26,6 +29,7 @@ impl TryFrom<u16> for BodyAlg {
             AEGIS256_ID => Ok(Self::Aegis256),
             KUZ_MGM_ID => Ok(Self::KuzMgm),
             KUZ_CTR_HMAC_ID => Ok(Self::KuzCtrHmac),
+            FRAMES_ID => Ok(Self::Frames),
             other => Err(anyhow::anyhow!("unsupported body algorithm {other:#06x}")),
         }
     }
@@ -84,6 +88,7 @@ pub fn encrypt_body(
     match alg {
         BodyAlg::Aegis256 => aegis::seal(k_body, nonce, ad, pt),
         BodyAlg::KuzMgm => Err(anyhow::anyhow!("unsupported body algorithm {KUZ_MGM_ID:#06x}")),
+        BodyAlg::Frames => Err(anyhow::anyhow!("frames body is not an aead")),
         BodyAlg::KuzCtrHmac => kuz_ctr::seal(k_body, k_bmac, nonce, ad, pt),
     }
 }
@@ -105,6 +110,7 @@ pub fn decrypt_body(
     match alg {
         BodyAlg::Aegis256 => aegis::open(k_body, packed, ad),
         BodyAlg::KuzMgm => Err(anyhow::anyhow!("unsupported body algorithm {KUZ_MGM_ID:#06x}")),
+        BodyAlg::Frames => Err(anyhow::anyhow!("frames body is not an aead")),
         BodyAlg::KuzCtrHmac => kuz_ctr::open(k_body, k_bmac, packed, ad),
     }
 }
@@ -122,7 +128,7 @@ mod tests {
 
     #[test]
     fn body_alg_ids() {
-        assert_eq!(BodyAlg::try_from(0xA001).unwrap(), BodyAlg::Aegis256); assert_eq!(BodyAlg::try_from(0xA002).unwrap(), BodyAlg::KuzMgm); assert_eq!(BodyAlg::try_from(0xA003).unwrap(), BodyAlg::KuzCtrHmac); assert_eq!( BodyAlg::try_from(0xA004).unwrap_err().to_string(), "unsupported body algorithm 0xa004" ); } #[test] fn kuz_mgm_is_unsupported() { let key = [0u8; 32]; assert_eq!( encrypt_body(BodyAlg::KuzMgm, &key, &key, &[0u8; 16], b"", b"") .unwrap_err() .to_string(), "unsupported body algorithm 0xa002" ); assert_eq!( decrypt_body(BodyAlg::KuzMgm, &key, &key, b"", b"") .unwrap_err() .to_string(), "unsupported body algorithm 0xa002" ); } #[test] fn wrong_nonce_length_is_corrupted() { let k_body = [1u8; 32]; let k_bmac = [2u8; 32]; let ad = b"ad"; let pt = b"pt"; assert_eq!( encrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 16], ad, pt).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(BodyAlg::try_from(0xA001).unwrap(), BodyAlg::Aegis256); assert_eq!(BodyAlg::try_from(0xA002).unwrap(), BodyAlg::KuzMgm); assert_eq!(BodyAlg::try_from(0xA003).unwrap(), BodyAlg::KuzCtrHmac); assert_eq!(BodyAlg::try_from(0xA004).unwrap(), BodyAlg::Frames); assert_eq!( BodyAlg::try_from(0xA005).unwrap_err().to_string(), "unsupported body algorithm 0xa005" ); } #[test] fn kuz_mgm_is_unsupported() { let key = [0u8; 32]; assert_eq!( encrypt_body(BodyAlg::KuzMgm, &key, &key, &[0u8; 16], b"", b"") .unwrap_err() .to_string(), "unsupported body algorithm 0xa002" ); assert_eq!( decrypt_body(BodyAlg::KuzMgm, &key, &key, b"", b"") .unwrap_err() .to_string(), "unsupported body algorithm 0xa002" ); } #[test] fn wrong_nonce_length_is_corrupted() { let k_body = [1u8; 32]; let k_bmac = [2u8; 32]; let ad = b"ad"; let pt = b"pt"; assert_eq!( encrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 16], ad, pt).unwrap_err().to_string(), "corrupted length");
         assert_eq!(encrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &[0u8; 32], ad, pt).unwrap_err().to_string(), "corrupted length");
         assert_eq!(decrypt_body(BodyAlg::Aegis256, &k_body, &k_bmac, &[0u8; 63], ad).unwrap_err().to_string(), "corrupted length");
         assert_eq!(decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &[0u8; 39], ad).unwrap_err().to_string(), "corrupted length");

@@ -8,10 +8,12 @@
 mod header;
 mod index;
 mod limits;
+mod log;
 mod seal;
 
 pub use header::{aad, encode_header, parse, FrameMeta, Header, DOMAIN_FRAME, HEADER_LEN};
 pub use index::{frame_at, latest, parse_index, FrameRef};
+pub use log::{decode_frames, encode_frames};
 pub use limits::MAX_FRAME_PLAINTEXT;
 pub use seal::{open, seal};
 

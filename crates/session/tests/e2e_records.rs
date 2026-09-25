@@ -153,7 +153,7 @@ fn seed_vault_storage_and_records_end_to_end() {
     let phrase2 = SeedPhrase::generate_24().unwrap();
     let seed2 = *phrase2.seed();
     let bytes_before = file.as_bytes().to_vec();
-    change_master(&mut session, &mut file, &seed2).unwrap();
+    change_master(&mut session, &mut file, &seed2, &[]).unwrap();
     // The rotated file rejects the old seed and accepts the new one.
     assert_eq!(
         unlock(&file, &UnlockCreds::master(&seed), None)

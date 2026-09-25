@@ -15,7 +15,7 @@ use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
 pub use atomic::write_atomic;
-pub use meta::{load_local_meta, save_local_meta, LocalMeta};
+pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 
 /// Locations of one vault on this device.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,9 +128,31 @@ pub fn create_vault(
         user_id,
         created_at_ms: now_ms(),
         name: String::new(),
+        seen: None,
     };
     save_local_meta(&paths.local_meta, &meta, &session.local_meta_key()?)?;
     Ok((paths, session, file, meta))
+}
+
+/// Record the file state a session holds as the last accepted one.
+///
+/// Call after every successful [`session::unlock`] or write: the cursor is
+/// what makes replacing the vault file with an older copy fail on the next
+/// unlock, without the caller tracking anything.
+///
+/// # Errors
+///
+/// Key-derivation and atomic-write errors as in [`save_local_meta`].
+pub fn mark_seen(
+    paths: &Paths,
+    meta: &mut LocalMeta,
+    session: &session::Session,
+) -> anyhow::Result<()> {
+    meta.seen = Some(meta::SeenCursor {
+        generation: session.generation(),
+        commit_tag: *session.commit_tag(),
+    });
+    save_local_meta(&paths.local_meta, meta, &session.local_meta_key()?)
 }
 
 pub(crate) fn draw_device_id() -> anyhow::Result<[u8; 16]> {

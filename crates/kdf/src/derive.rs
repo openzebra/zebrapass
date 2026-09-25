@@ -22,6 +22,12 @@ pub const INFO_LOCAL_META: &[u8] = b"brby/v2/local-meta";
 /// HKDF info for the identity scalar derived from the master seed.
 pub const INFO_IDENTITY: &[u8] = b"zebrapass/identity/v1";
 
+/// HKDF info for the opaque 64-byte sync client id. Not a public key.
+pub const INFO_CLIENT_ID: &[u8] = b"brby/v2/client-id";
+
+/// HKDF info for the 32-byte ML-DSA signing seed.
+pub const INFO_SYNC_SIGN: &[u8] = b"brby/v2/sync-sign";
+
 const OUTPUT_LEN: usize = 32;
 
 /// Per-record frame key: HKDF-SHA512 with the vault key as `ikm`, the
@@ -71,11 +77,37 @@ pub fn identity_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>
     Ok(Secret::new(okm))
 }
 
+/// Opaque 64-byte sync client id. Not a public key and not [`identity_seed`].
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn client_id(seed: &[u8; 64]) -> anyhow::Result<[u8; 64]> {
+    let hk = Hkdf::<Sha512>::new(None, seed);
+    let mut okm = [0u8; 64];
+    hk.expand(INFO_CLIENT_ID, &mut okm)
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(okm)
+}
+
+/// 32-byte ML-DSA signing seed. Wiped on drop.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn sync_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    let hk = Hkdf::<Sha512>::new(None, seed);
+    let mut okm = [0u8; OUTPUT_LEN];
+    hk.expand(INFO_SYNC_SIGN, &mut okm)
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(Secret::new(okm))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use super::{frame_key, identity_seed, local_meta_key};
+    use super::{client_id, frame_key, identity_seed, local_meta_key, sync_seed};
 
     #[test]
     fn frame_keys_are_record_separated() {
@@ -110,5 +142,20 @@ mod tests {
         assert_eq!(a.expose(), b.expose());
         let other = identity_seed(&[6u8; 64]).unwrap();
         assert_ne!(a.expose(), other.expose());
+    }
+
+    #[test]
+    fn client_id_and_sync_seed_are_seed_separated() {
+        let seed = [5u8; 64];
+        let id = client_id(&seed).unwrap();
+        assert_eq!(id, client_id(&seed).unwrap());
+        assert_ne!(id, client_id(&[6u8; 64]).unwrap());
+        let signing = sync_seed(&seed).unwrap();
+        let again = sync_seed(&seed).unwrap();
+        assert_eq!(signing.expose(), again.expose());
+        assert_ne!(signing.expose(), sync_seed(&[6u8; 64]).unwrap().expose());
+        let ident = identity_seed(&seed).unwrap();
+        assert_ne!(signing.expose(), ident.expose());
+        assert_ne!(&id[..32], ident.expose());
     }
 }
