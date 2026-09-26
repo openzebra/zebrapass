@@ -400,3 +400,82 @@ fn removed_prf_cannot_unlock() {
     let next = [9u8; 64];
     change_master(&mut session, &mut file, &next, &[]).unwrap();
 }
+
+const fn revoke_creds<'a>(
+    master: &'a [u8; 64],
+    devices: &'a [DevicePublics],
+    prfs: &'a [(PrfPublics, [u8; 32])],
+) -> RotateCreds<'a> {
+    RotateCreds { master, devices, chips: &[], prfs }
+}
+
+#[test]
+fn revoked_device_cannot_read_new_frames() {
+    let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    let mut file = file;
+    let device = device_identity(0x71);
+    add_device(&mut session, &mut file, &device.0).unwrap();
+
+    // The attacker copies the file while the device is still enrolled.
+    let stolen = VaultFile::new(file.as_bytes().to_vec());
+    let _attacker =
+        unlock(&stolen, &UnlockCreds::default().with_device(&device.1), None).unwrap();
+
+    let devices = [device.0];
+    let creds = revoke_creds(&SEED_NEXT, &devices, &[]);
+    revoke(&mut session, &mut file, &Revoke::Device(&device.0.id), &creds).unwrap();
+
+    // The stolen device keys open nothing: its wrap is gone and the vault key
+    // underneath has been replaced.
+    assert!(unlock(&file, &UnlockCreds::default().with_device(&device.1), None).is_err());
+    // The owner keeps full access under the new master wrap.
+    let owner = unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).unwrap();
+    assert_eq!(owner.generation(), session.generation());
+    assert_eq!(owner.commit_tag(), session.commit_tag());
+}
+
+#[test]
+fn remaining_factors_still_unlock_after_revoke() {
+    let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    let mut file = file;
+    let gone = device_identity(0x72);
+    let kept = device_identity(0x73);
+    add_device(&mut session, &mut file, &gone.0).unwrap();
+    add_device(&mut session, &mut file, &kept.0).unwrap();
+    let publics = prf_publics();
+    let prf_out = [0x45; 32];
+    add_prf_unlock(&mut session, &mut file, &publics, &prf_out).unwrap();
+
+    let devices = [gone.0, kept.0];
+    let prfs = [(prf_publics(), prf_out)];
+    let creds = revoke_creds(&SEED_NEXT, &devices, &prfs);
+    revoke(&mut session, &mut file, &Revoke::Device(&gone.0.id), &creds).unwrap();
+
+    assert!(unlock(&file, &UnlockCreds::default().with_device(&kept.1), None).is_ok());
+    assert!(unlock(&file, &UnlockCreds::default().with_prf(&publics, &prf_out), None).is_ok());
+    assert!(unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).is_ok());
+    assert!(unlock(&file, &UnlockCreds::default().with_device(&gone.1), None).is_err());
+}
+
+#[test]
+fn revoke_without_prf_output_fails() {
+    let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    let mut file = file;
+    let device = device_identity(0x74);
+    add_device(&mut session, &mut file, &device.0).unwrap();
+    let publics = prf_publics();
+    add_prf_unlock(&mut session, &mut file, &publics, &[0x46; 32]).unwrap();
+
+    // Rotating without the PRF output would brick the hardware factor: refuse
+    // and leave the file exactly as it was.
+    let before = file.as_bytes().to_vec();
+    let devices = [device.0];
+    let creds = revoke_creds(&SEED_NEXT, &devices, &[]);
+    assert_eq!(
+        revoke(&mut session, &mut file, &Revoke::Device(&device.0.id), &creds)
+            .unwrap_err()
+            .to_string(),
+        "prf factor required"
+    );
+    assert_eq!(file.as_bytes(), before.as_slice());
+}

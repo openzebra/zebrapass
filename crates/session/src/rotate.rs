@@ -1,6 +1,6 @@
 //! Master change, record rewrite, and vault-key rotation.
 
-use container::{KIND_PRF, VaultFile, WrapEntry};
+use container::{KIND_CHIP, KIND_DEVICE, KIND_PRF, VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
 use secret::Secret;
 use wraps::{
@@ -91,8 +91,9 @@ pub fn write_records(
 ///
 /// Old wrap ciphertexts are not reused: they seal the previous vault key.
 /// A file wrap id with no matching entry in `devices` or `chips` is
-/// `wrap not found` and does not modify `file` or `session`. A PRF wrap in
-/// the file aborts rotation. Generation increases by one. Sealing a chip
+/// `wrap not found` and does not modify `file` or `session`. A PRF wrap
+/// without a matching output in `prfs` is `prf factor required`. Generation
+/// increases by one. Sealing a chip
 /// wrap draws a fresh ephemeral P-256 key in this process, so the platform
 /// must re-derive its shared secret against the new ephemeral public key
 /// after the call. On success the session's decrypted frame body is
@@ -101,8 +102,7 @@ pub fn write_records(
 /// # Errors
 ///
 /// `wrap not found` when a device or chip wrap has no matching public id.
-/// `prf wrap present but physical key support is not built` when the file
-/// still carries a physical-key wrap.
+/// `prf factor required` when a PRF wrap has no matching output.
 /// `zero shared secret` when a device X25519 public key is zero.
 pub fn reencrypt_body(
     session: &mut Session,
@@ -113,22 +113,117 @@ pub fn reencrypt_body(
     chips: &[(ChipPublics, [u8; 32])],
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
-    let (header, generation, sealed, body, keys) = {
-        let parsed = file.parse()?;
-        require_device_publics(&parsed.entries, devices)?;
-        require_chip_publics(&parsed.entries, chips)?;
-        require_prf_publics(&parsed.entries, prfs)?;
-        let vk = draw_secret()?;
-        let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
-        // Fresh seals. The records already in the file wrap the old vault key.
-        let sealed = reseal(
-            &parsed.entries,
-            &parsed.header,
-            vk.expose(),
+    rotate_all(
+        session,
+        file,
+        records,
+        &RotateCreds {
             master,
             devices,
             chips,
             prfs,
+        },
+        None,
+    )
+}
+
+/// Secret material the remaining wraps are re-sealed from: the recovery
+/// passphrase and the live outputs of every kept human factor.
+///
+/// Device and chip wraps are sealed to public keys, so revoking one of them
+/// needs no secret from the revoked device.
+#[derive(Clone, Copy, Debug)]
+pub struct RotateCreds<'a> {
+    /// Seals the password (recovery) wrap.
+    pub master: &'a [u8; 64],
+    /// Public keys of every kept device wrap.
+    pub devices: &'a [DevicePublics],
+    /// Platform public key plus its P-256 shared secret, per kept chip wrap.
+    pub chips: &'a [(ChipPublics, [u8; 32])],
+    /// hmac-secret output, per kept PRF wrap.
+    pub prfs: &'a [(PrfPublics, [u8; 32])],
+}
+
+/// The wrap a revocation removes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Revoke<'a> {
+    /// The device wrap with this id.
+    Device(&'a [u8; 16]),
+    /// The chip wrap with this id.
+    Chip(&'a [u8; 16]),
+    /// The PRF wrap with this id.
+    Prf(&'a [u8; 16]),
+}
+
+/// Revoke an unlock factor: drop its wrap and rotate the vault key under
+/// every remaining one.
+///
+/// A revoked device keeps its wrap ciphertext and everything it ever
+/// decrypted, so dropping the wrap alone proves nothing. The vault key is
+/// drawn fresh and the body is re-encrypted, so old key material cannot read
+/// records written after this call. Every remaining wrap needs matching
+/// material in `creds`; device and chip wraps need only their public keys.
+/// The session's decrypted frame body becomes empty. On error, `file` and
+/// `session` are left as they were.
+///
+/// # Errors
+///
+/// `wrap not found` when no wrap of the target kind has the id, or a
+/// remaining device or chip wrap has no matching public id in `creds`.
+/// `prf factor required` when a remaining PRF wrap has no matching output.
+/// `zero shared secret` when a remaining device public key is zero.
+pub fn revoke(
+    session: &mut Session,
+    file: &mut VaultFile,
+    target: &Revoke<'_>,
+    creds: &RotateCreds<'_>,
+) -> anyhow::Result<()> {
+    match target {
+        Revoke::Device(id) => rotate_all(session, file, &[], creds, Some((KIND_DEVICE, **id))),
+        Revoke::Chip(id) => rotate_all(session, file, &[], creds, Some((KIND_CHIP, **id))),
+        Revoke::Prf(id) => rotate_all(session, file, &[], creds, Some((KIND_PRF, **id))),
+    }
+}
+
+/// The one vault-key rotation: re-seal the wrap list, re-encrypt `records`,
+/// publish, and swap the session keys. `drop` removes that kind and id first.
+fn rotate_all(
+    session: &mut Session,
+    file: &mut VaultFile,
+    records: &[u8],
+    creds: &RotateCreds<'_>,
+    drop: Option<(u16, [u8; 16])>,
+) -> anyhow::Result<()> {
+    let (header, generation, sealed, body, keys) = {
+        let parsed = file.parse()?;
+        let entries: Vec<WrapEntry<'_>> = match drop {
+            Some((kind, id)) => {
+                let (kept, gone): (Vec<WrapEntry<'_>>, Vec<WrapEntry<'_>>) = parsed
+                    .entries
+                    .iter()
+                    .copied()
+                    .partition(|entry| entry.kind() != kind || entry.wrap_id() != Some(id));
+                if gone.is_empty() {
+                    return Err(anyhow::anyhow!("wrap not found"));
+                }
+                kept
+            }
+            None => parsed.entries.clone(),
+        };
+        require_device_publics(&entries, creds.devices)?;
+        require_chip_publics(&entries, creds.chips)?;
+        require_prf_publics(&entries, creds.prfs)?;
+        let vk = draw_secret()?;
+        let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
+        // Fresh seals. The records already in the file wrap the old vault key.
+        let sealed = reseal(
+            &entries,
+            &parsed.header,
+            vk.expose(),
+            creds.master,
+            creds.devices,
+            creds.chips,
+            creds.prfs,
         )?;
         let body = encrypt_records(
             session.body_alg,
