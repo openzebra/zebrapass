@@ -6,7 +6,9 @@ use frame::encode_frames;
 use secret::Secret;
 use wraps::{seal_prf, ChipPublics, DevicePublics, PrfPublics};
 
-use crate::create::{encrypt_records, fold_tag, next_generation, publish, Session};
+use crate::create::{
+    encrypt_records, fold_log, fold_new_spans, next_generation, publish, Session,
+};
 use crate::error::SessionError;
 use crate::wraps_rot::{replace_password, rotate_all};
 use crate::rewrap::rewrap;
@@ -28,8 +30,6 @@ pub fn change_master(
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     rewrap(session, file, |parsed, vk| {
-        // Every PRF wrap must have a matching output BEFORE any byte changes:
-        // a missing output aborts with the file untouched.
         for entry in &parsed.entries {
             if let WrapEntry::Prf(wrap) = entry {
                 if !prfs.iter().any(|(item, _)| item.id == wrap.id) {
@@ -37,9 +37,6 @@ pub fn change_master(
                 }
             }
         }
-        // The password wrap re-seals (human/device/chip ride along). The old
-        // PRF records are excluded here; the re-sealed ones REPLACE them —
-        // keeping both would duplicate the grant id and grow on rotation.
         let kept: Vec<WrapEntry<'_>> = parsed
             .entries
             .iter()
@@ -61,64 +58,49 @@ pub fn change_master(
     })
 }
 
-/// Encrypt `records` under the same vault key and a fresh body nonce.
+/// Append `records` to the vault log and republish the file.
 ///
-/// Wrap records are copied unchanged. Generation increases by one.
-/// On success the session's decrypted frame body is replaced with
-/// `records`; on error, `file` and `session` are left as they were.
+/// `records` holds new sealed frames (`Frames`) or new plaintext record
+/// bytes (whole-body modes); the previous log always survives. Wrap
+/// records are copied unchanged. Generation increases by one. On error,
+/// `file` and `session` are left as they were.
 ///
 /// # Errors
 ///
-/// `unsupported body algorithm` when the session body algorithm is Kuznyechik-MGM.
-/// `corrupted length` when the OS RNG fails.
+/// `unsupported body algorithm` when the session body algorithm is
+/// Kuznyechik-MGM. `corrupted length` when the log does not parse as
+/// whole frames or the OS RNG fails.
 pub fn write_records(
     session: &mut Session,
     file: &mut VaultFile,
     records: &[u8],
 ) -> anyhow::Result<()> {
-    // O(1) append path for `Frames`: sealed frames are immutable, so the new
-    // bytes extend the log and only the folded commitment changes. The stored
-    // body is the length-prefixed log; `session.records` keeps the raw one.
-    // Whole-body modes re-encrypt everything (existing logic in
-    // `encrypt_records`).
-    let (header, generation, kept, body) = {
+    let (header, generation, kept, body, raw) = {
         let parsed = file.parse()?;
         let kept = crate::create::owned_entries(&parsed.entries)?;
-        let body = if session.body_alg == BodyAlg::Frames {
-            let existing = session.records.expose();
-            let mut raw = Vec::with_capacity(existing.len() + records.len());
-            raw.extend_from_slice(existing);
-            raw.extend_from_slice(records);
-            let mut digest = session.frames_digest;
-            for (start, len) in frame::spans(&raw)? {
-                if start + len > existing.len() {
-                    let span = raw
-                        .get(start..start + len)
-                        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-                    digest = fold_tag(digest, span);
-                }
+        let existing_len = session.records.expose().len();
+        let mut raw = Vec::with_capacity(existing_len + records.len());
+        raw.extend_from_slice(session.records.expose());
+        raw.extend_from_slice(records);
+        let body = match session.body_alg {
+            BodyAlg::Frames => {
+                session.frames_digest =
+                    fold_new_spans(session.frames_digest, existing_len, &raw)?;
+                encode_frames(&raw)?
             }
-            session.frames_digest = digest;
-            encode_frames(&raw)?
-        } else {
-            encrypt_records(
-                session.body_alg,
+            alg => encrypt_records(
+                alg,
                 &parsed.header,
                 session.k_body.expose(),
                 session.k_bmac.expose(),
-                records,
-            )?
+                &raw,
+            )?,
         };
         let generation = next_generation(parsed.generation)?;
-        (parsed.header, generation, kept, body)
+        (parsed.header, generation, kept, body, raw)
     };
     publish(session, file, &header, &kept, &body, generation)?;
-    // Keep the session's raw-log copy in step with the file.
-    session.records = Secret::new({
-        let mut all = session.records.expose().clone();
-        all.extend_from_slice(records);
-        all
-    });
+    session.records = Secret::new(raw);
     Ok(())
 }
 
@@ -137,24 +119,18 @@ pub fn rewrite_body(
     file: &mut VaultFile,
     records: &[u8],
 ) -> anyhow::Result<()> {
-    let body = if session.body_alg == BodyAlg::Frames {
-        let mut digest = [0u8; 32];
-        for (start, len) in frame::spans(records)? {
-            let span = records
-                .get(start..start + len)
-                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-            digest = fold_tag(digest, span);
+    let body = match session.body_alg {
+        BodyAlg::Frames => {
+            session.frames_digest = fold_log(records)?;
+            encode_frames(records)?
         }
-        session.frames_digest = digest;
-        encode_frames(records)?
-    } else {
-        encrypt_records(
-            session.body_alg,
+        alg => encrypt_records(
+            alg,
             &file.parse()?.header,
             session.k_body.expose(),
             session.k_bmac.expose(),
             records,
-        )?
+        )?,
     };
     let (header, generation, kept) = {
         let parsed = file.parse()?;
@@ -167,21 +143,22 @@ pub fn rewrite_body(
     Ok(())
 }
 
-/// Rotate the vault key, re-encrypt `records`, and re-seal every wrap.
+/// Rotate the vault key, keeping the record log as it is.
 ///
 /// Old wrap ciphertexts are not reused: they seal the previous vault key.
 /// A file wrap id with no matching entry in `creds.devices` or `creds.chips`
 /// is `wrap not found` and does not modify `file` or `session`. A PRF wrap
 /// without a matching output in `creds.prfs` is `prf factor required`, and a
 /// human password wrap without `creds.human_password` is
-/// `human factor required`. Generation increases by one. Sealing a chip
+/// `human factor required`. Sealing a chip
 /// wrap draws a fresh ephemeral P-256 key in this process, so the platform
 /// must re-derive its shared secret against the new ephemeral public key
-/// after the call. On success the session's decrypted frame body is
-/// replaced with `records`.
+/// after the call. On success every record survives the rotation. The log
+/// rewrite and the key rotation are two publishes; each is fail-atomic.
 ///
 /// # Errors
 ///
+/// `corrupted length` when the stored log does not parse as whole frames;
 /// `wrap not found` when a device or chip wrap has no matching public id.
 /// `prf factor required` when a PRF wrap has no matching output.
 /// `human factor required` when a human wrap has no password.
@@ -189,16 +166,16 @@ pub fn rewrite_body(
 pub fn reencrypt_body(
     session: &mut Session,
     file: &mut VaultFile,
-    records: &[u8],
     master: &[u8; 64],
     devices: &[DevicePublics],
     chips: &[(ChipPublics, [u8; 32])],
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
+    let log = session.records.expose().clone();
+    rewrite_body(session, file, &log)?;
     rotate_all(
         session,
         file,
-        records,
         &RotateCreds {
             master,
             human_password: None,
@@ -267,9 +244,9 @@ pub fn revoke(
     creds: &RotateCreds<'_>,
 ) -> anyhow::Result<()> {
     match target {
-        Revoke::Device(id) => rotate_all(session, file, &[], creds, Some((KIND_DEVICE, **id))),
-        Revoke::Chip(id) => rotate_all(session, file, &[], creds, Some((KIND_CHIP, **id))),
-        Revoke::Prf(id) => rotate_all(session, file, &[], creds, Some((KIND_PRF, **id))),
+        Revoke::Device(id) => rotate_all(session, file, creds, Some((KIND_DEVICE, **id))),
+        Revoke::Chip(id) => rotate_all(session, file, creds, Some((KIND_CHIP, **id))),
+        Revoke::Prf(id) => rotate_all(session, file, creds, Some((KIND_PRF, **id))),
     }
 }
 

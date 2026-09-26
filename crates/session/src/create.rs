@@ -37,11 +37,9 @@ pub struct Session {
     pub(crate) commit_tag: [u8; 32],
     /// Public vault id: the HKDF salt for frame keys.
     pub(crate) vault_id: [u8; 16],
-    /// Device identity this session stamps into new frames.
-    /// Identity of the device wrap that opened this session, if any.
-    /// Seed/password/human unlocks carry no enrolled wrap and stay `None`;
-    /// their frames use a zero origin (plan M4: the id must be stable, not
-    /// drawn fresh per unlock).
+    /// Device identity this session stamps into new frames: the wrap id of
+    /// the device wrap that opened the session, or `None` for seed, human
+    /// password, and recovery unlocks (their frames use the zero origin).
     pub(crate) origin_device: Option<[u8; 16]>,
     /// Decrypted frame body. A per-record key opens single frames from it.
     pub(crate) records: Secret<Vec<u8>>,
@@ -226,26 +224,29 @@ pub fn encrypt_records(
     k_bmac: &[u8; 32],
     records: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    let ad = body_ad(header);
-    if alg == BodyAlg::Frames {
-        return encode_frames(records);
-    }
-    let mut nonce = [0u8; 32];
-    let nonce_len = match alg {
-        BodyAlg::Aegis256 => 32,
-        BodyAlg::KuzCtrHmac => 16,
-        BodyAlg::Frames | BodyAlg::KuzMgm => {
-            return Err(anyhow::anyhow!("unsupported body algorithm {BODY_KUZ_MGM:#06x}"))
+    match alg {
+        BodyAlg::Frames => encode_frames(records),
+        BodyAlg::KuzMgm => Err(anyhow::anyhow!(
+            "unsupported body algorithm {BODY_KUZ_MGM:#06x}"
+        )),
+        alg => {
+            let ad = body_ad(header);
+            let mut nonce = [0u8; 32];
+            let nonce_len = match alg {
+                BodyAlg::Aegis256 => 32,
+                BodyAlg::KuzCtrHmac => 16,
+                BodyAlg::Frames | BodyAlg::KuzMgm => unreachable!("handled above"),
+            };
+            let slot = nonce
+                .get_mut(..nonce_len)
+                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+            fill_random(slot)?;
+            let used = nonce
+                .get(..nonce_len)
+                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+            encrypt_body(alg, k_body, k_bmac, used, &ad, records)
         }
-    };
-    let slot = nonce
-        .get_mut(..nonce_len)
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    fill_random(slot)?;
-    let used = nonce
-        .get(..nonce_len)
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    encrypt_body(alg, k_body, k_bmac, used, &ad, records)
+    }
 }
 
 /// How the commit tag covers the body.
@@ -296,16 +297,53 @@ pub fn fold_tag(running: [u8; 32], frame: &[u8]) -> [u8; 32] {
 ///
 /// `frame index rejected` when the body does not parse as a frame log.
 pub fn body_digest(body: &[u8]) -> anyhow::Result<[u8; 32]> {
-    // `body` is the stored (length-prefixed) log; fold over the raw frames.
-    let raw = frame::decode_frames(body)?;
-    let mut digest = [0u8; 32];
-    for (start, len) in frame::spans(&raw)? {
-        let span = raw
-            .get(start..start + len)
-            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-        digest = fold_tag(digest, span);
-    }
-    Ok(digest)
+    fold_log(&frame::decode_frames(body)?)
+}
+
+/// Fold a whole raw frame log into one commitment.
+///
+/// # Errors
+///
+/// `corrupted length` when the log does not parse as whole frames or a
+/// span overflows the buffer.
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "shared by sibling rotation modules; the module itself is private"
+)]
+pub(crate) fn fold_log(log: &[u8]) -> anyhow::Result<[u8; 32]> {
+    fold_new_spans([0u8; 32], 0, log)
+}
+
+/// Fold only the frames past `existing_len` into `digest` (the O(1)-append
+/// counterpart of [`fold_log`]).
+///
+/// # Errors
+///
+/// `corrupted length` when the log does not parse as whole frames or a
+/// span overflows the buffer.
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "shared by sibling rotation modules; the module itself is private"
+)]
+pub(crate) fn fold_new_spans(
+    digest: [u8; 32],
+    existing_len: usize,
+    log: &[u8],
+) -> anyhow::Result<[u8; 32]> {
+    frame::spans(log)?
+        .into_iter()
+        .try_fold(digest, |digest, (start, len)| {
+            let Some(end) = start.checked_add(len) else {
+                anyhow::bail!("corrupted length");
+            };
+            if end <= existing_len {
+                return Ok(digest);
+            }
+            let span = log
+                .get(start..end)
+                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+            Ok(fold_tag(digest, span))
+        })
 }
 
 pub fn assemble_committed(

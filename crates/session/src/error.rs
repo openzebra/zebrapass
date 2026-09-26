@@ -36,6 +36,22 @@ pub enum SessionError {
     StaleRevision,
     /// The frame header does not match the signed outer fields.
     HeaderMismatch,
+    /// The frame digest does not match the signed content hash.
+    ContentHashMismatch,
+    /// The record names a different vault.
+    VaultMismatch,
+    /// A wrap needed for the operation is not in the file.
+    WrapNotFound,
+    /// A frame claims the all-zero origin, which device certificates
+    /// must never present.
+    ZeroOrigin,
+    /// The signing device is not in the trusted set.
+    DeviceNotTrusted,
+    /// The device certificate fails verification (unknown root or wrong
+    /// account).
+    CertRejected,
+    /// The device certificate is past its `not_after` time.
+    CertExpired,
 }
 
 impl std::fmt::Display for SessionError {
@@ -51,6 +67,13 @@ impl std::fmt::Display for SessionError {
             Self::SignFailed => "sign failed",
             Self::StaleRevision => "stale revision",
             Self::HeaderMismatch => "header mismatch",
+            Self::ContentHashMismatch => "content hash mismatch",
+            Self::VaultMismatch => "vault id mismatch",
+            Self::WrapNotFound => "wrap not found",
+            Self::ZeroOrigin => "zero origin",
+            Self::DeviceNotTrusted => "device not enrolled",
+            Self::CertRejected => "device cert rejected",
+            Self::CertExpired => "device cert expired",
         })
     }
 }

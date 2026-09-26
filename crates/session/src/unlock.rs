@@ -261,13 +261,15 @@ fn decrypt_body(
     header: &container::StaticHeader,
     body: &[u8],
 ) -> anyhow::Result<Secret<Vec<u8>>> {
-    if alg == BodyAlg::Frames {
-        return Ok(Secret::new(decode_frames(body)?));
+    match alg {
+        BodyAlg::Frames => Ok(Secret::new(decode_frames(body)?)),
+        alg => {
+            let ad = body_ad(header);
+            Ok(Secret::new(aead::decrypt_body(
+                alg, k_body, k_bmac, body, &ad,
+            )?))
+        }
     }
-    let ad = body_ad(header);
-    Ok(Secret::new(aead::decrypt_body(
-        alg, k_body, k_bmac, body, &ad,
-    )?))
 }
 
 fn accept_seen(

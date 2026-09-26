@@ -1,6 +1,7 @@
 //! Wrap-list rewriting for vault-key rotations: password replacement,
 //! public-key presence checks, and the full re-seal pass.
 
+use aead::BodyAlg;
 use container::{VaultFile, WrapEntry};
 use secret::Secret;
 use wraps::{
@@ -14,19 +15,22 @@ use crate::create::{
 };
 use kdf::derive_vault_keys;
 
-use crate::rotate::RotateCreds;
-use crate::error::SessionError;
+use frame::encode_frames;
 
-/// The one vault-key rotation: re-seal the wrap list, re-encrypt `records`,
-/// publish, and swap the session keys. `drop` removes that kind and id first.
+use crate::create::fold_log;
+use crate::error::SessionError;
+use crate::rotate::RotateCreds;
+
+/// The one vault-key rotation: re-seal the wrap list, re-key the record log
+/// under the new vault key, publish, and swap the session keys. `drop`
+/// removes that kind and id first. On error, nothing changes.
 pub fn rotate_all(
     session: &mut Session,
     file: &mut VaultFile,
-    records: &[u8],
     creds: &RotateCreds<'_>,
     drop: Option<(u16, [u8; 16])>,
 ) -> anyhow::Result<()> {
-    let (header, generation, sealed, body, keys) = {
+    let (header, generation, sealed, body, keys, raw, digest) = {
         let parsed = file.parse()?;
         let entries: Vec<WrapEntry<'_>> = match drop {
             Some((kind, id)) => {
@@ -47,16 +51,31 @@ pub fn rotate_all(
         require_prf_publics(&entries, creds.prfs)?;
         let vk = draw_secret()?;
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
-        // Fresh seals. The records already in the file wrap the old vault key.
         let sealed = reseal(&entries, &parsed.header, vk.expose(), creds)?;
-        let body = encrypt_records(
-            session.body_alg,
-            &parsed.header,
-            k_body.expose(),
-            k_bmac.expose(),
-            records,
-        )?;
         let generation = next_generation(parsed.generation)?;
+        let (body, raw, digest) = match session.body_alg {
+            BodyAlg::Frames => {
+                let raw = reseal_frames(
+                    session.vk.expose(),
+                    vk.expose(),
+                    &session.vault_id,
+                    session.records.expose(),
+                )?;
+                let digest = fold_log(&raw)?;
+                (encode_frames(&raw)?, raw, digest)
+            }
+            alg => {
+                let raw = Vec::from(&session.records.expose()[..]);
+                let body = encrypt_records(
+                    alg,
+                    &parsed.header,
+                    k_body.expose(),
+                    k_bmac.expose(),
+                    &raw,
+                )?;
+                (body, raw, [0u8; 32])
+            }
+        };
         (
             parsed.header,
             generation,
@@ -68,11 +87,56 @@ pub fn rotate_all(
                 k_bmac,
                 k_commit,
             },
+            raw,
+            digest,
         )
     };
     publish_rotated(session, file, &header, &sealed, &body, generation, keys)?;
-    session.records = Secret::new(records.to_vec());
+    session.records = Secret::new(raw);
+    session.frames_digest = digest;
     Ok(())
+}
+
+/// Re-key every frame in the raw log: open under `old_vk`, seal under
+/// `new_vk`. Frame metadata (kind, record, revision, origin, timestamp) and
+/// ordering are preserved; only the sealing key and nonce change.
+///
+/// # Errors
+///
+/// `corrupted length` when the log does not parse as whole frames or a span
+/// overflows the buffer; `frame authentication failed` when a frame does not
+/// open under `old_vk`; key-derivation and OS-RNG errors otherwise.
+fn reseal_frames(
+    old_vk: &[u8; 32],
+    new_vk: &[u8; 32],
+    vault_id: &[u8; 16],
+    log: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(log.len());
+    for (start, len) in frame::spans(log)? {
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+        let sealed = log
+            .get(start..end)
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+        let header = frame::parse(sealed)?;
+        let plaintext = frame::open(&kdf::frame_key(old_vk, vault_id, header.record_id)?, sealed)?;
+        let meta = frame::FrameMeta {
+            kind: header.kind,
+            record_id: header.record_id,
+            revision: header.revision,
+            origin_device: header.origin_device,
+            timestamp_ms: header.timestamp_ms,
+            alg: header.alg,
+        };
+        out.extend_from_slice(&frame::seal(
+            &kdf::frame_key(new_vk, vault_id, header.record_id)?,
+            &meta,
+            plaintext.expose(),
+        )?);
+    }
+    Ok(out)
 }
 
 struct RotatedKeys {

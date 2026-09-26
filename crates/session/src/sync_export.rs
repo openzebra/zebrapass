@@ -47,8 +47,10 @@ pub const fn check_fresh(last_seen: Option<u64>, incoming: u64) -> Result<(), Se
 ///
 /// # Errors
 ///
-/// `unknown record` when the session has no frame for that id; frame
-/// indexing, key derivation, and signing errors otherwise.
+/// `unknown record` when the session has no frame for that id;
+/// [`SessionError::ZeroOrigin`] when the frame was written by a seed or
+/// password unlock (no certified sender can attribute it); frame indexing,
+/// key derivation, and signing errors otherwise.
 pub fn export_record(
     session: &Session,
     device: &DeviceSignKey,
@@ -58,6 +60,10 @@ pub fn export_record(
     let reference = frame::latest(&refs, record_id)
         .ok_or_else(|| anyhow::anyhow!("unknown record"))?;
     let frame_bytes = frame::frame_at(session.records.expose(), reference)?.to_vec();
+    let origin = frame::parse(&frame_bytes)?.origin_device;
+    if origin == [0u8; 16] {
+        return Err(SessionError::ZeroOrigin.into());
+    }
     let content_hash: [u8; 32] = Sha256::digest(&frame_bytes).into();
     let generation = u32::try_from(session.generation())
         .map_err(|_| anyhow::anyhow!("ciphertext too large"))?;

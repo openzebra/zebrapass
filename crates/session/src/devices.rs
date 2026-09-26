@@ -181,8 +181,8 @@ pub fn remove_prf_unlock(
     })
 }
 
-/// Drop the seed (recovery) wrap from a local copy — the Phase 6 policy
-/// toggle: after onboarding, the phrase must not open *this* copy.
+/// Drop the seed (recovery) wrap from a local copy: after onboarding, the
+/// phrase must not open this copy.
 ///
 /// Refuses while the copy has no human password and no device/chip/PRF wrap:
 /// a vault with no remaining factor could never be opened again. The vault

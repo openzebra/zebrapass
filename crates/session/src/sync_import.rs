@@ -9,12 +9,13 @@
 use sha2::{Digest, Sha256};
 
 use container::VaultFile;
-use frame::{parse, ALG_AEGIS256, KIND_REVISION, KIND_TOMBSTONE};
+use frame::{parse, Header, ALG_AEGIS256, KIND_REVISION, KIND_TOMBSTONE};
 use kdf::frame_key;
 use pq::SYNC_VK_LEN;
 
 use crate::create::Session;
 use crate::rotate::write_records;
+use crate::error::SessionError;
 use crate::sync_export::{check_fresh, verify_sync_record};
 use crate::sync_sig::{DeviceCert, SyncRecord};
 
@@ -43,18 +44,74 @@ pub struct Accepted {
     pub origin_device: [u8; 16],
 }
 
+/// The record must belong to the vault this session has open.
+///
+/// `key_generation` is signed bookkeeping for the server's epoch table; the
+/// real epoch check for a vault-key change is the AEAD open — a frame sealed
+/// under a key this session does not derive cannot open.
+fn check_vault(session: &Session, rec: &SyncRecord) -> Result<(), SessionError> {
+    if rec.vault_id == *session.vault_id() {
+        Ok(())
+    } else {
+        Err(SessionError::VaultMismatch)
+    }
+}
+
+/// The signed outer fields must describe the frame they cover, the digest
+/// must match, and a certified device must never claim the zero origin
+/// (only seed/password unlocks may stamp it).
+fn check_header_binding(header: &Header, rec: &SyncRecord) -> Result<(), SessionError> {
+    if header.origin_device == [0u8; 16] {
+        return Err(SessionError::ZeroOrigin);
+    }
+    if header.record_id != rec.record_id
+        || header.revision != rec.revision
+        || !matches!(header.kind, KIND_REVISION | KIND_TOMBSTONE)
+        || header.alg != ALG_AEGIS256
+    {
+        return Err(SessionError::HeaderMismatch);
+    }
+    let content_hash: [u8; 32] = Sha256::digest(rec.frame.as_slice()).into();
+    if content_hash == rec.content_hash {
+        Ok(())
+    } else {
+        Err(SessionError::ContentHashMismatch)
+    }
+}
+
 /// The certificate that signs for `origin_device`, re-verified now.
-fn cert_for<'a>(trust: &'a TrustedKeys<'_>, origin_device: &[u8; 16]) -> anyhow::Result<&'a DeviceCert> {
+fn cert_for<'a>(
+    trust: &'a TrustedKeys<'_>,
+    origin_device: &[u8; 16],
+) -> Result<&'a DeviceCert, SessionError> {
     let (_, cert) = trust
         .devices
         .iter()
         .find(|(id, _)| id == origin_device)
-        .ok_or_else(|| anyhow::anyhow!("device not enrolled"))?;
+        .ok_or(SessionError::DeviceNotTrusted)?;
     if cert.client_id != trust.client_id {
-        return Err(anyhow::anyhow!("device cert rejected"));
+        return Err(SessionError::CertRejected);
     }
-    cert.verify(&trust.root_vk, trust.now_ms)?;
+    cert.verify(&trust.root_vk, trust.now_ms)
+        .map_err(|error| {
+            if error.to_string() == "device cert expired" {
+                SessionError::CertExpired
+            } else {
+                SessionError::CertRejected
+            }
+        })?;
     Ok(cert)
+}
+
+/// The highest revision the vault and the server have both seen.
+fn seen_revision(
+    local: Option<u64>,
+    record_id: u32,
+    last_seen: impl Fn(u32) -> Option<u64>,
+) -> Option<u64> {
+    last_seen(record_id).map_or(local, |remote| {
+        Some(local.map_or(remote, |latest| latest.max(remote)))
+    })
 }
 
 /// The highest revision any known frame carries for `record_id` in the
@@ -89,10 +146,12 @@ fn local_latest(session: &Session, record_id: u32) -> anyhow::Result<Option<u64>
 ///
 /// # Errors
 ///
-/// `device not enrolled` or `device cert rejected`/`device cert expired`
-/// from the trust check; `signature does not verify` from ML-DSA;
-/// `vault id mismatch`; `key generation mismatch`; `stale revision`;
-/// `header mismatch`; frame open errors; publish errors.
+/// [`SessionError`]: [`DeviceNotTrusted`], [`CertRejected`],
+/// [`VaultMismatch`], [`StaleRevision`], [`ZeroOrigin`],
+/// [`HeaderMismatch`], [`ContentHashMismatch`]; ML-DSA and frame-open
+/// verification failures; publish errors.
+///
+/// [`SessionError`]: crate::SessionError
 pub fn accept_record(
     session: &mut Session,
     file: &mut VaultFile,
@@ -100,50 +159,20 @@ pub fn accept_record(
     trust: &TrustedKeys<'_>,
     last_seen: impl Fn(u32) -> Option<u64>,
 ) -> anyhow::Result<Accepted> {
-    // 1. Trust: who claims to have sealed this frame, and does their
-    //    certificate check out? The claim is pre-authentication data; the
-    //    signature check below proves it.
     let header = parse(&rec.frame)?;
     let cert = cert_for(trust, &header.origin_device)?;
     verify_sync_record(rec, &cert.device_vk, &rec.vault_id)?;
 
-    // 2. The record belongs to this vault. `key_generation` is signed
-    //    bookkeeping for the server's epoch table; the real epoch check for
-    //    a vault-key change is the AEAD open below — a frame sealed under a
-    //    key this session does not derive cannot open.
-    if rec.vault_id != *session.vault_id() {
-        return Err(anyhow::anyhow!("vault id mismatch"));
-    }
+    check_vault(session, rec)?;
+    let local = local_latest(session, rec.record_id)?;
+    check_fresh(seen_revision(local, rec.record_id, last_seen), rec.revision)?;
+    check_header_binding(&header, rec)?;
 
-    // 3. Freshness: strictly newer than everything seen for the record.
-    let seen = match last_seen(rec.record_id) {
-        Some(remote) => local_latest(session, rec.record_id)?.map_or(remote, |local| local.max(remote)),
-        None => local_latest(session, rec.record_id)?.unwrap_or(0),
-    };
-    check_fresh(Some(seen), rec.revision)?;
-
-    // 4. The signed outer fields must describe the frame they cover.
-    if header.record_id != rec.record_id
-        || header.revision != rec.revision
-        || !matches!(header.kind, KIND_REVISION | KIND_TOMBSTONE)
-        || header.alg != ALG_AEGIS256
-    {
-        return Err(anyhow::anyhow!("header mismatch"));
-    }
-    let content_hash: [u8; 32] = Sha256::digest(rec.frame.as_slice()).into();
-    if content_hash != rec.content_hash {
-        return Err(anyhow::anyhow!("header mismatch"));
-    }
-
-    // 5. The frame authenticates under the key this vault derives.
-    let key = frame_key(session.vk.expose(), &session.vault_id, rec.record_id)?;
-    frame::open(&key, &rec.frame)?;
-
-    // 6. Same publish path as a local append.
-    let mut body = Vec::with_capacity(session.records.expose().len() + rec.frame.len());
-    body.extend_from_slice(session.records.expose());
-    body.extend_from_slice(&rec.frame);
-    write_records(session, file, &body)?;
+    frame::open(
+        &frame_key(session.vk.expose(), &session.vault_id, rec.record_id)?,
+        &rec.frame,
+    )?;
+    write_records(session, file, &rec.frame)?;
 
     Ok(Accepted {
         record_id: rec.record_id,

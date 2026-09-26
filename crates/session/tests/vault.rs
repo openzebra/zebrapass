@@ -20,9 +20,9 @@ use kdf::KdfProfile;
 use pq::keypair;
 use secret::Secret;
 use session::{
-    add_device, add_prf_unlock, change_master, create, reencrypt_body, remove_device,
-    remove_prf_unlock, revoke, unlock, write_records, Revoke, RotateCreds, Seen, Session,
-    UnlockCreds,
+    add_device, add_prf_unlock, change_master, create, list_records, reencrypt_body,
+    remove_device, remove_prf_unlock, revoke, unlock, write_record, Revoke, RotateCreds, Seen,
+    Session, UnlockCreds,
 };
 use wraps::{DeviceKeys, DevicePublics, PrfPublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
@@ -193,13 +193,17 @@ fn reencrypt_and_check(
     file: &mut VaultFile,
     device: &(DevicePublics, DeviceKeys),
 ) {
-    reencrypt_body(session, file, b"rotated-records", &SEED_ROTATED, &[device.0], &[], &[]).unwrap();
+    // One real record so the rotated log is a well-formed frame log
+    // (write_record below indexes the session log).
+    write_record(session, file, None, &doc("pre-rotation")).unwrap();
+    reencrypt_body(session, file, &SEED_ROTATED, &[device.0], &[], &[]).unwrap();
     assert_eq!(
         unlock(file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap_err().to_string(),
         "wrap authentication failed"
     );
     let opened = unlock(file, &UnlockCreds::master(&SEED_ROTATED), None).unwrap();
     assert_eq!(opened.commit_tag(), session.commit_tag());
+    assert_eq!(list_records(&opened).unwrap().len(), 1, "reencrypt keeps records");
     let via_device = unlock(file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
     assert_eq!(via_device.generation(), session.generation());
     assert_eq!(via_device.commit_tag(), session.commit_tag());
@@ -225,15 +229,52 @@ fn change_master_and_check(session: &mut Session, file: &mut VaultFile) {
     unlock(file, &UnlockCreds::master(&SEED_NEXT), None).unwrap();
 }
 
+fn doc(title: &str) -> record::Document {
+    let mut doc = record::Document::new();
+    doc.set_text(record::TAG_TITLE, title);
+    doc
+}
+
+fn reopened_len(file: &VaultFile, master: &[u8; 64]) -> usize {
+    list_records(&unlock(file, &UnlockCreds::master(master), None).unwrap()).unwrap().len()
+}
+
+/// Reopening from disk must show exactly what the live session shows, for
+/// every body algorithm (regression: whole-body vaults used to keep only
+/// the last write; revoke used to drop every record).
+#[test]
+fn mutations_survive_reopen_for_every_body_alg() {
+    for (master, alg) in [
+        (&SEED_AEGIS, BodyAlg::Aegis256),
+        (&SEED_KUZ, BodyAlg::KuzCtrHmac),
+    ] {
+        let (mut file, mut session) = round_trip(master, alg);
+        for title in ["first", "second", "third"] {
+            write_record(&mut session, &mut file, None, &doc(title)).unwrap();
+        }
+        assert_eq!(list_records(&session).unwrap().len(), 3);
+        assert_eq!(reopened_len(&file, master), 3, "{alg:?}: writes");
+
+        // The full rotation path (rotate_all, drop = None) must keep every
+        // record — revoke used to publish an empty log (A2).
+        change_master(&mut session, &mut file, &SEED_ROTATED, &[]).unwrap();
+        assert_eq!(list_records(&session).unwrap().len(), 3, "{alg:?}: rotate live");
+        assert_eq!(reopened_len(&file, &SEED_ROTATED), 3, "{alg:?}: rotate reopen");
+    }
+}
+
+
 fn write_and_check(session: &mut Session, file: &mut VaultFile) {
     let wraps_before = entry_wire(file);
     let generation = session.generation();
-    write_records(session, file, b"record-bytes").unwrap();
+    write_record(session, file, None, &doc("write-and-check")).unwrap();
     assert_eq!(entry_wire(file), wraps_before);
     assert_eq!(session.generation(), generation + 1);
     assert_eq!(file.parse().unwrap().generation, session.generation());
     let opened = unlock(file, &UnlockCreds::master(&SEED_NEXT), None).unwrap();
     assert_eq!(opened.commit_tag(), session.commit_tag());
+    // Reopen regression (audit A5): the written record must survive disk.
+    assert_eq!(reopened_len(file, &SEED_NEXT), 2);
 }
 
 fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8; 16]) {
