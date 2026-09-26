@@ -4,7 +4,8 @@ use container::{KIND_CHIP, KIND_DEVICE, KIND_PRF, VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
 use secret::Secret;
 use wraps::{
-    seal_chip, seal_device, seal_password, seal_prf, ChipPublics, DevicePublics, PrfPublics,
+    seal_chip, seal_device, seal_human_password, seal_password, seal_prf, ChipPublics,
+    DevicePublics, PrfPublics,
 };
 
 use crate::create::{
@@ -119,6 +120,7 @@ pub fn reencrypt_body(
         records,
         &RotateCreds {
             master,
+            human_password: None,
             devices,
             chips,
             prfs,
@@ -142,6 +144,9 @@ pub struct RotateCreds<'a> {
     pub chips: &'a [(ChipPublics, [u8; 32])],
     /// hmac-secret output, per kept PRF wrap.
     pub prfs: &'a [(PrfPublics, [u8; 32])],
+    /// The human password, needed only when a human password wrap must be
+    /// re-sealed. `None` is fine for vaults without one.
+    pub human_password: Option<&'a [u8]>,
 }
 
 /// The wrap a revocation removes.
@@ -171,6 +176,8 @@ pub enum Revoke<'a> {
 /// `wrap not found` when no wrap of the target kind has the id, or a
 /// remaining device or chip wrap has no matching public id in `creds`.
 /// `prf factor required` when a remaining PRF wrap has no matching output.
+/// `human factor required` when a remaining human wrap has no password in
+/// `creds`.
 /// `zero shared secret` when a remaining device public key is zero.
 pub fn revoke(
     session: &mut Session,
@@ -216,15 +223,7 @@ fn rotate_all(
         let vk = draw_secret()?;
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
         // Fresh seals. The records already in the file wrap the old vault key.
-        let sealed = reseal(
-            &entries,
-            &parsed.header,
-            vk.expose(),
-            creds.master,
-            creds.devices,
-            creds.chips,
-            creds.prfs,
-        )?;
+        let sealed = reseal(&entries, &parsed.header, vk.expose(), creds)?;
         let body = encrypt_records(
             session.body_alg,
             &parsed.header,
@@ -289,12 +288,19 @@ fn replace_password(
     let mut replaced = false;
     for entry in entries {
         match entry {
-            WrapEntry::Password(_) if replaced => return Err(anyhow::anyhow!("corrupted length")),
+            WrapEntry::Password(_) | WrapEntry::HumanPassword(_) if replaced => {
+                return Err(anyhow::anyhow!("corrupted length"));
+            }
             WrapEntry::Password(_) => {
                 replaced = true;
                 records.push(seal_password(header, master, vk)?);
             }
-            WrapEntry::Device(_) | WrapEntry::Chip(_) | WrapEntry::Prf(_) => {
+            // A human wrap is carried over unchanged: rotation re-seals the
+            // recovery wrap only, and the human KEK still opens the same vk.
+            WrapEntry::HumanPassword(_)
+            | WrapEntry::Device(_)
+            | WrapEntry::Chip(_)
+            | WrapEntry::Prf(_) => {
                 records.push(encode_entry(entry)?);
             }
         }
@@ -352,17 +358,30 @@ fn reseal(
     entries: &[WrapEntry<'_>],
     header: &container::StaticHeader,
     vk: &[u8; 32],
-    master: &[u8; 64],
-    devices: &[DevicePublics],
-    chips: &[(ChipPublics, [u8; 32])],
-    prfs: &[(PrfPublics, [u8; 32])],
+    creds: &RotateCreds<'_>,
 ) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut records = Vec::with_capacity(entries.len());
     for entry in entries {
         let record = match entry {
-            WrapEntry::Password(_) => seal_password(header, master, vk)?,
+            WrapEntry::Password(_) => seal_password(header, creds.master, vk)?,
+            // A human wrap re-seals under the same human password. The cost
+            // profile is carried over from the stored record, and the stored
+            // values are ≥ floor (parse enforces it).
+            WrapEntry::HumanPassword(human) => {
+                let pw = creds.human_password.ok_or(SessionError::HumanFactorRequired)?;
+                seal_human_password(
+                    header,
+                    human.kid,
+                    pw,
+                    vk,
+                    human.kdf.m_kib,
+                    human.kdf.t,
+                    human.kdf.p,
+                )?
+            }
             WrapEntry::Device(dev) => {
-                let publics = devices
+                let publics = creds
+                    .devices
                     .iter()
                     .find(|item| item.id == dev.device_id)
                     .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
@@ -370,7 +389,7 @@ fn reseal(
                 record
             }
             WrapEntry::Chip(chip) => {
-                let (publics, _) = chips
+                let (publics, _) = creds.chips
                     .iter()
                     .find(|(item, _)| item.id == chip.id)
                     .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
@@ -378,7 +397,7 @@ fn reseal(
                 record
             }
             WrapEntry::Prf(wrap) => {
-                let (publics, prf_out) = prfs
+                let (publics, prf_out) = creds.prfs
                     .iter()
                     .find(|(item, _)| item.id == wrap.id)
                     .ok_or(SessionError::PrfFactorRequired)?;

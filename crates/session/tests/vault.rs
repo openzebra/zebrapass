@@ -407,7 +407,7 @@ const fn revoke_creds<'a>(
     devices: &'a [DevicePublics],
     prfs: &'a [(PrfPublics, [u8; 32])],
 ) -> RotateCreds<'a> {
-    RotateCreds { master, devices, chips: &[], prfs }
+    RotateCreds { master, human_password: None, devices, chips: &[], prfs }
 }
 
 #[test]
@@ -478,5 +478,73 @@ fn revoke_without_prf_output_fails() {
             .to_string(),
         "prf factor required"
     );
+    assert_eq!(file.as_bytes(), before.as_slice());
+}
+
+// ---- Phase 6: human password wrap + recovery-drop policy ------------------
+
+use session::{add_human_password, drop_recovery_wrap};
+use wraps::HumanPasswordPublics;
+
+const HUMAN_PW: &[u8] = b"correct horse battery staple";
+
+fn human_publics() -> HumanPasswordPublics {
+    HumanPasswordPublics {
+        kid: [0x11; 8],
+        password: HUMAN_PW.to_vec(),
+        // Deliberately below the wire floor; the seal path raises it.
+        m_kib: 1,
+        t: 1,
+        p: 1,
+    }
+}
+
+#[test]
+fn human_password_unlocks_and_wrong_password_fails() {
+    let (mut file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    add_human_password(&mut session, &mut file, &human_publics()).unwrap();
+
+    let ok = unlock(&file, &UnlockCreds::default().with_human(HUMAN_PW), None).unwrap();
+    assert_eq!(ok.generation(), session.generation());
+    assert_eq!(ok.commit_tag(), session.commit_tag());
+
+    assert!(unlock(&file, &UnlockCreds::default().with_human(b"wrong"), None).is_err());
+    // The seal path raised the cost to the parse floor.
+    let parsed = file.parse().unwrap();
+    let human = parsed.entries.iter().find_map(|e| match e {
+        WrapEntry::HumanPassword(h) => Some(*h),
+        _ => None,
+    });
+    assert!(human.is_some());
+}
+
+#[test]
+fn seed_cannot_unlock_local_copy_after_drop() {
+    let (mut file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    // The backup keeps everything, including the seed wrap.
+    let backup = VaultFile::new(file.as_bytes().to_vec());
+    add_human_password(&mut session, &mut file, &human_publics()).unwrap();
+
+    drop_recovery_wrap(&mut session, &mut file).unwrap();
+
+    // The local copy no longer opens with the phrase.
+    assert!(unlock(&file, &UnlockCreds::master(&SEED_AEGIS), None).is_err());
+    // It still opens with the human password.
+    unlock(&file, &UnlockCreds::default().with_human(HUMAN_PW), None).unwrap();
+    // A second drop has nothing left to drop.
+    assert!(drop_recovery_wrap(&mut session, &mut file).is_err());
+
+    // The backup copy still restores with the phrase.
+    unlock(&backup, &UnlockCreds::master(&SEED_AEGIS), None).unwrap();
+}
+
+#[test]
+fn drop_refuses_when_no_factor_would_remain() {
+    let (mut file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    // No human wrap, no devices: dropping the seed wrap would brick the copy.
+    let before = file.as_bytes().to_vec();
+    let err = drop_recovery_wrap(&mut session, &mut file).unwrap_err();
+    assert_eq!(err.to_string(), "no usable wrap");
+    // The file is unchanged.
     assert_eq!(file.as_bytes(), before.as_slice());
 }

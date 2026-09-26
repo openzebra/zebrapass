@@ -9,8 +9,9 @@ use pq::{KEM_CT_LEN, PQ_PK_LEN};
 
 use crate::limits::{
     self, read_array, read_u16, read_u32, shift, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
-    DEVICE_SUFFIX_LEN, ENTRY_HEADER_LEN, KEM_MLKEM768, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
-    KIND_PRF, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
+    DEVICE_SUFFIX_LEN, ENTRY_HEADER_LEN, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
+    KIND_PASSWORD_HUMAN, KIND_PRF, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
+    KEM_MLKEM768,
 };
 
 const PW_NONCE: usize = 8;
@@ -128,6 +129,8 @@ pub enum WrapEntry<'a> {
     Chip(ChipWrap<'a>),
     /// Kind `0x0004`.
     Prf(PrfWrap<'a>),
+    /// Kind `0x0005`: a human-chosen password, Argon2id + HKDF + AEGIS.
+    HumanPassword(crate::wrap_human::HumanPasswordWrap<'a>),
 }
 
 impl WrapEntry<'_> {
@@ -135,6 +138,19 @@ impl WrapEntry<'_> {
     #[must_use]
     pub const fn is_password(&self) -> bool {
         matches!(self, Self::Password(_))
+    }
+
+    /// True for the human password wrap.
+    #[must_use]
+    pub const fn is_human_password(&self) -> bool {
+        matches!(self, Self::HumanPassword(_))
+    }
+
+    /// True for any wrap a human can present: the seed recovery wrap or the
+    /// human password wrap. A vault must keep at least one.
+    #[must_use]
+    pub const fn is_human_class(&self) -> bool {
+        matches!(self, Self::Password(_) | Self::HumanPassword(_))
     }
 
     /// Wire kind code of this record.
@@ -145,6 +161,7 @@ impl WrapEntry<'_> {
             Self::Device(_) => KIND_DEVICE,
             Self::Chip(_) => KIND_CHIP,
             Self::Prf(_) => KIND_PRF,
+            Self::HumanPassword(_) => KIND_PASSWORD_HUMAN,
         }
     }
 
@@ -152,7 +169,7 @@ impl WrapEntry<'_> {
     #[must_use]
     pub const fn wrap_id(&self) -> Option<[u8; 16]> {
         match self {
-            Self::Password(_) => None,
+            Self::Password(_) | Self::HumanPassword(_) => None,
             Self::Device(wrap) => Some(wrap.device_id),
             Self::Chip(wrap) => Some(wrap.id),
             Self::Prf(wrap) => Some(wrap.id),
@@ -316,6 +333,7 @@ pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>
         KIND_DEVICE => parse_device(bytes, header_end, entry_len),
         KIND_CHIP => parse_chip(bytes, header_end, entry_len),
         KIND_PRF => parse_prf(bytes, header_end, entry_len),
+        KIND_PASSWORD_HUMAN => crate::wrap_human::parse_human_password(bytes, header_end, entry_len),
         // Unknown kinds are corruption. This version does not skip them.
         _ => Err(anyhow::anyhow!("corrupted length")),
     }

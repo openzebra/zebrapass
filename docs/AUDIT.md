@@ -27,6 +27,16 @@ What is solid: BIP39 seed handling, Argon2id profiles, HKDF domain separation, A
 
 ## How the kernel actually works
 
+> **Update (post-remediation):** the phrase no longer seals the daily unlock.
+> `session::create` still writes the seed wrap, but it is a *recovery* wrap:
+> daily unlock uses a human password wrap (kind `0x0005`, Argon2id ≥ the
+> wire floor parsed in `container`, then HKDF, then AEGIS-256), device/chip/
+> PRF wraps, or the recovery wrap itself. `drop_recovery_wrap` removes the
+> seed wrap from a local copy after onboarding, so a written-down phrase
+> cannot open that copy — it only restores the server/backup copy, which
+> keeps the recovery wrap. `container` refuses a file with *no* human-class
+> wrap (seed or human password), so a vault can never lose both.
+
 1. The BIP39 seed (`[u8; 64]`, via `pqbip39 0.2.0`) is the password-wrap secret. `session::create` seals the random 32-byte vault key under Argon2id(seed). Generation starts at 1.
 2. Unlock tries master, device, or chip credentials, derives `k_body`, `k_bmac`, `k_commit` with HKDF-SHA512, verifies HMAC-SHA256 over `header || wrap directory || body`, then decrypts the whole body into `session.records`.
 3. A record write appends one AEGIS-256 frame, then `write_records` (`session/src/rotate.rs:48`) encrypts the concatenated frame list as one body and rewrites the file. Generation increments. The commit is recomputed.

@@ -5,7 +5,10 @@ use container::{ChipWrap, VaultFile, WrapEntry};
 use frame::decode_frames;
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{open_chip, open_device, open_password, open_prf, ChipKeys, DeviceKeys, PrfPublics};
+use wraps::{
+    open_chip, open_device, open_human_password, open_password, open_prf, ChipKeys, DeviceKeys,
+    PrfPublics,
+};
 
 use crate::create::{body_ad, draw_device_id, verify_commit, Session};
 use crate::error::{Seen, SessionError};
@@ -28,6 +31,8 @@ pub struct UnlockCreds<'a> {
     /// A hardware key's publics and the 32-byte hmac-secret response the
     /// platform asks it to compute over the wrap's salt.
     pub prf: Option<(&'a PrfPublics, &'a [u8; 32])>,
+    /// A human-chosen password (kind `0x0005` wrap).
+    pub human: Option<&'a [u8]>,
 }
 
 impl<'a> UnlockCreds<'a> {
@@ -39,6 +44,7 @@ impl<'a> UnlockCreds<'a> {
             device: None,
             chip: None,
             prf: None,
+            human: None,
         }
     }
 
@@ -62,12 +68,19 @@ impl<'a> UnlockCreds<'a> {
         self.prf = Some((publics, prf_out));
         self
     }
+
+    /// Present a human-chosen password (kind `0x0005` wrap).
+    #[must_use]
+    pub const fn with_human(mut self, password: &'a [u8]) -> Self {
+        self.human = Some(password);
+        self
+    }
 }
 
 /// Open `file` with the factors in `creds`.
 ///
-/// Attempts go chip → device → master: the first factor present in
-/// `creds` is tried against its wrap. The body is decrypted once after the
+/// Attempts go chip → prf → device → human password → master: the first
+/// factor present in `creds` is tried against its wrap. The body is decrypted once after the
 /// commit matches and its plaintext stays on the session: single frames
 /// are opened from it on demand with their per-record key.
 ///
@@ -77,7 +90,8 @@ impl<'a> UnlockCreds<'a> {
 /// `no chip wrap for this device` when the chip factor is present but the
 /// file has no chip wrap with that id; `wrap not found` for a missing device
 /// or master wrap.
-/// `wrap authentication failed` when the wrap tag does not match.
+/// `wrap authentication failed` when the wrap tag does not match (wrong
+/// password included).
 /// `commit mismatch` when the HMAC over every byte except the
 /// last 32 does not match. This is returned before the body is decrypted.
 /// `body authentication failed` when the body tag does not match.
@@ -136,6 +150,10 @@ fn unwrap_vk(
         let wrap = find_device(entries, &keys.id)?;
         return open_device(header, wrap, keys);
     }
+    if let Some(human) = creds.human {
+        let wrap = find_human_password(entries)?;
+        return open_human_password(header, &wrap, human);
+    }
     let Some(master) = creds.master else {
         if entries
             .iter()
@@ -168,6 +186,17 @@ fn find_password<'a>(
 ) -> anyhow::Result<container::PasswordWrap<'a>> {
     for entry in entries {
         if let WrapEntry::Password(wrap) = entry {
+            return Ok(*wrap);
+        }
+    }
+    Err(anyhow::anyhow!("wrap not found"))
+}
+
+fn find_human_password<'a>(
+    entries: &'a [WrapEntry<'a>],
+) -> anyhow::Result<container::HumanPasswordWrap<'a>> {
+    for entry in entries {
+        if let WrapEntry::HumanPassword(wrap) = entry {
             return Ok(*wrap);
         }
     }

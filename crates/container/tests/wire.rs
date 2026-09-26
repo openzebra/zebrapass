@@ -7,8 +7,9 @@
 )]
 
 use container::{
-    assemble, encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry,
-    encode_wrap_dir, StaticHeader, VaultFile, WrapDir, WrapEntry, BODY_AEGIS256,
+    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry, HumanKdf,
+    encode_password_entry, encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapDir,
+    WrapEntry, BODY_AEGIS256,
     BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
     DEVICE_SUFFIX_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, HEADER_LEN,
     KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN,
@@ -554,4 +555,70 @@ impl Lcg {
             *slot = u8::try_from(self.next_u64() & 0xff).unwrap_or(0);
         }
     }
+}
+
+#[test]
+fn human_password_roundtrip_and_floor() {
+    // In-range parameters parse; sub-floor parameters do not.
+    let ok = encode_human_password_entry(
+        [7u8; 8],
+        [8u8; 32],
+        HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MIN, p: KDF_P_MIN },
+        [9u8; 32],
+        [0x66; 32],
+        [0x77; 32],
+    );
+    let file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password_record(), ok.as_slice()],
+        &[0x55; 64],
+        2,
+    );
+    let parsed = file.parse().unwrap();
+    assert_eq!(parsed.entries.len(), 2);
+    let WrapEntry::HumanPassword(human) = parsed.entries.get(1).unwrap() else {
+        panic!("second entry must be the human password wrap");
+    };
+    assert_eq!(human.kid, [7u8; 8]);
+    assert_eq!(human.kdf, HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MIN, p: KDF_P_MIN });
+
+    // Downgrade attempt: memory below the floor.
+    let weak = encode_human_password_entry(
+        [7u8; 8],
+        [8u8; 32],
+        HumanKdf { m_kib: KDF_M_KIB_MIN - 1, t: KDF_T_MIN, p: KDF_P_MIN },
+        [9u8; 32],
+        [0x66; 32],
+        [0x77; 32],
+    );
+    let weak_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password_record(), weak.as_slice()],
+        &[0x55; 64],
+        2,
+    );
+    assert_eq!(
+        weak_file.parse().unwrap_err().to_string(),
+        "kdf parameters rejected"
+    );
+
+    // Time above the ceiling: also refused.
+    let hot = encode_human_password_entry(
+        [7u8; 8],
+        [8u8; 32],
+        HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MAX + 1, p: KDF_P_MIN },
+        [9u8; 32],
+        [0x66; 32],
+        [0x77; 32],
+    );
+    let hot_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password_record(), hot.as_slice()],
+        &[0x55; 64],
+        2,
+    );
+    assert_eq!(
+        hot_file.parse().unwrap_err().to_string(),
+        "kdf parameters rejected"
+    );
 }

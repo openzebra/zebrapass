@@ -24,6 +24,8 @@ pub enum SessionError {
     CommitMismatch,
     /// A PRF wrap needs the platform HMAC response.
     PrfFactorRequired,
+    /// A human password wrap needs the password to re-seal.
+    HumanFactorRequired,
     /// No wrap matched the supplied factors.
     NoUsableWrap,
     /// A record payload longer than `u32::MAX` cannot be signed.
@@ -43,6 +45,7 @@ impl std::fmt::Display for SessionError {
             Self::Conflict => "conflict",
             Self::CommitMismatch => "commit mismatch",
             Self::PrfFactorRequired => "prf factor required",
+            Self::HumanFactorRequired => "human factor required",
             Self::NoUsableWrap => "no usable wrap",
             Self::CiphertextTooLarge => "ciphertext too large",
             Self::SignFailed => "sign failed",

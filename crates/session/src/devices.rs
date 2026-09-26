@@ -1,9 +1,9 @@
 //! Add and remove device, chip, and PRF wraps. The body bytes stay as they are.
 
-use container::{KIND_CHIP, KIND_DEVICE, KIND_PRF, VaultFile, WrapEntry};
+use container::{KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PRF, VaultFile, WrapEntry};
 use wraps::{
-    seal_chip, seal_device, seal_prf, ChipGrant, ChipPublics, DeviceGrant, DevicePublics, PrfGrant,
-    PrfPublics,
+    seal_chip, seal_device, seal_human_password, seal_prf, ChipGrant, ChipPublics, DeviceGrant,
+    DevicePublics, HumanPasswordPublics, PrfGrant, PrfPublics,
 };
 
 use crate::create::{encode_entry, owned_entries, Session};
@@ -96,8 +96,8 @@ pub fn add_prf_unlock(
 }
 
 /// Drop the wraps of `kinds` whose id is `id`.
-/// Password wraps carry no id and are never removed, so the parse-time policy
-/// of at least one password wrap is preserved. The vault key does not change.
+/// Password wraps carry no id; only [`drop_recovery_wrap`] passes their kind.
+/// The vault key does not change.
 ///
 /// # Errors
 ///
@@ -177,6 +177,81 @@ pub fn remove_prf_unlock(
 ) -> anyhow::Result<()> {
     rewrap(session, file, |parsed, _| {
         let records = remove_wrap_of_kind(&parsed.entries, id, &[KIND_PRF])?;
+        Ok((records, ()))
+    })
+}
+
+/// Drop the seed (recovery) wrap from a local copy — the Phase 6 policy
+/// toggle: after onboarding, the phrase must not open *this* copy.
+///
+/// Refuses while the copy has no human password and no device/chip/PRF wrap:
+/// a vault with no remaining factor could never be opened again. The vault
+/// key does not change, so the server/backup copy (which keeps the seed
+/// wrap) stays in sync. Generation increases by one. On error, `file` and
+/// `session` are left as they were.
+///
+/// # Errors
+///
+/// `wrap not found` when the copy has no seed wrap (already dropped).
+/// `no usable wrap` when dropping it would leave no unlock factor.
+pub fn drop_recovery_wrap(session: &mut Session, file: &mut VaultFile) -> anyhow::Result<()> {
+    rewrap(session, file, |parsed, _| {
+        let has_other = parsed.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                WrapEntry::Device(_)
+                    | WrapEntry::Chip(_)
+                    | WrapEntry::Prf(_)
+                    | WrapEntry::HumanPassword(_)
+            )
+        });
+        if !has_other {
+            return Err(anyhow::anyhow!("no usable wrap"));
+        }
+        let mut records = Vec::with_capacity(parsed.entries.len());
+        let mut found = false;
+        for entry in &parsed.entries {
+            if entry.kind() == KIND_PASSWORD {
+                found = true;
+                continue;
+            }
+            records.push(encode_entry(entry)?);
+        }
+        if !found {
+            return Err(anyhow::anyhow!("wrap not found"));
+        }
+        Ok((records, ()))
+    })
+}
+
+/// Append a human password wrap of the session vault key.
+///
+/// The cost profile is raised to the wire floor before sealing, so the
+/// record always parses back. The body is copied unchanged. Generation
+/// increases by one. On error, `file` and `session` are left as they were.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when the floored parameters are out of range;
+/// `os entropy failed` on RNG failure; parse and publish failures mirror
+/// [`crate::create`].
+pub fn add_human_password(
+    session: &mut Session,
+    file: &mut VaultFile,
+    input: &HumanPasswordPublics,
+) -> anyhow::Result<()> {
+    rewrap(session, file, |parsed, vk| {
+        let record = seal_human_password(
+            &parsed.header,
+            input.kid,
+            &input.password,
+            vk,
+            input.m_kib,
+            input.t,
+            input.p,
+        )?;
+        let mut records = owned_entries(&parsed.entries)?;
+        records.push(record);
         Ok((records, ()))
     })
 }

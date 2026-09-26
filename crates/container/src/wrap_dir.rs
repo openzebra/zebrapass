@@ -117,7 +117,7 @@ fn check_entries(entries: &[WrapEntry<'_>]) -> anyhow::Result<()> {
 /// The id an entry is addressed by, if its kind carries one.
 const fn id_of(entry: &WrapEntry<'_>) -> Option<[u8; 16]> {
     match entry {
-        WrapEntry::Password(_) => None,
+        WrapEntry::Password(_) | WrapEntry::HumanPassword(_) => None,
         WrapEntry::Chip(chip) => Some(chip.id),
         WrapEntry::Device(device) => Some(device.device_id),
         WrapEntry::Prf(prf) => Some(prf.id),

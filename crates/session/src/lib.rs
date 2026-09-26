@@ -21,8 +21,8 @@ pub use aead::BodyAlg;
 pub use container::VaultFile;
 pub use create::{create, Session};
 pub use devices::{
-    add_chip_unlock, add_device, add_prf_unlock, remove_chip_unlock, remove_device,
-    remove_prf_unlock,
+    add_chip_unlock, add_device, add_human_password, add_prf_unlock, drop_recovery_wrap,
+    remove_chip_unlock, remove_device, remove_prf_unlock,
 };
 pub use error::Seen;
 pub use kdf::KdfProfile;

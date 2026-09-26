@@ -2,7 +2,8 @@
 
 use aead::{encrypt_body, BodyAlg};
 use container::{
-    assemble, encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry,
+    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry,
+    encode_password_entry, encode_prf_entry,
     encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256, BODY_FRAMES,
     BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID, WRAP_AEGIS256,
 };
@@ -176,6 +177,10 @@ pub fn encode_entry(entry: &WrapEntry<'_>) -> anyhow::Result<Vec<u8>> {
             wrap.ct,
             wrap.tag,
         )?),
+        WrapEntry::HumanPassword(wrap) => Ok(encode_human_password_entry(
+            wrap.kid, wrap.salt, wrap.kdf, wrap.nonce, wrap.ct, wrap.tag,
+        )
+        .to_vec()),
         WrapEntry::Prf(wrap) => Ok(encode_prf_entry(
             wrap.id,
             wrap.cred_id,

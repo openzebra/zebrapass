@@ -41,6 +41,9 @@ pub const KIND_CHIP: u16 = 0x0003;
 /// `YubiKey` PRF wrap kind.
 pub const KIND_PRF: u16 = 0x0004;
 
+/// Human-chosen password wrap kind (the phrase stays the recovery wrap).
+pub const KIND_PASSWORD_HUMAN: u16 = 0x0005;
+
 /// Retired `ntrulp` id. Files that still carry it are rejected.
 pub const KEM_NTRULP: u16 = 0xC001;
 
@@ -83,6 +86,12 @@ pub const PASSWORD_PAYLOAD_LEN: usize = 104;
 /// Password record on the wire, including kind and `entry_len`.
 pub const PASSWORD_RECORD_LEN: usize = ENTRY_HEADER_LEN + PASSWORD_PAYLOAD_LEN;
 
+/// Human password payload: kid(8) salt(32) m(4) t(4) p(4) nonce(32) ct(32) tag(32).
+pub const HUMAN_PASSWORD_PAYLOAD_LEN: usize = 8 + 32 + 12 + 96;
+
+/// One human password record on the wire.
+pub const HUMAN_PASSWORD_RECORD_LEN: usize = ENTRY_HEADER_LEN + HUMAN_PASSWORD_PAYLOAD_LEN;
+
 /// Device fields before the ML-KEM ciphertext: id, kem, two X25519 keys.
 pub const DEVICE_PREFIX_LEN: usize = 82;
 
@@ -117,6 +126,8 @@ pub const KDF_P_MAX: u32 = 16;
 const _: () = {
     assert!(MIN_FILE_LEN == 104);
     assert!(PASSWORD_RECORD_LEN == 110);
+    assert!(HUMAN_PASSWORD_RECORD_LEN == 154);
+    assert!(8 + 32 + 12 + 32 + 32 + 32 == HUMAN_PASSWORD_PAYLOAD_LEN);
     assert!(DEVICE_PREFIX_LEN == 16 + 2 + 32 + 32);
     assert!(DEVICE_SUFFIX_LEN == 32 + 32 + 32);
     assert!(8 + 32 + 32 + 32 == PASSWORD_PAYLOAD_LEN);

@@ -3,7 +3,7 @@
 use aegis::aegis256::Aegis256;
 use container::{
     StaticHeader, DOMAIN_WRAP_CHIP, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, DOMAIN_WRAP_PRF,
-    KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PRF,
+    KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF,
 };
 use pq::PQ_PK_LEN;
 use secret::Secret;
@@ -13,6 +13,27 @@ use zeroize::Zeroize;
 pub fn password_wad(header: &StaticHeader, kid: [u8; 8], nonce: &[u8; 32]) -> Vec<u8> {
     let header_bytes = header.to_bytes();
     let kind_le = KIND_PASSWORD.to_le_bytes();
+    let mut wad = Vec::with_capacity(
+        header_bytes.len() + kind_le.len() + kid.len() + nonce.len() + DOMAIN_WRAP_PASSWORD.len(),
+    );
+    wad.extend_from_slice(&header_bytes);
+    wad.extend_from_slice(&kind_le);
+    wad.extend_from_slice(&kid);
+    wad.extend_from_slice(nonce);
+    wad.extend_from_slice(DOMAIN_WRAP_PASSWORD);
+    wad
+}
+
+/// Associated data for a human password wrap: binds the record to the file,
+/// the kind `0x0005`, the kid, and the nonce.
+#[must_use]
+pub fn human_password_wad(
+    header: &StaticHeader,
+    kid: [u8; 8],
+    nonce: &[u8; 32],
+) -> Vec<u8> {
+    let header_bytes = header.to_bytes();
+    let kind_le = KIND_PASSWORD_HUMAN.to_le_bytes();
     let mut wad = Vec::with_capacity(
         header_bytes.len() + kind_le.len() + kid.len() + nonce.len() + DOMAIN_WRAP_PASSWORD.len(),
     );
