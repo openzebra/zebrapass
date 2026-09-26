@@ -310,6 +310,45 @@ fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
 }
 
 #[test]
+fn duplicate_chip_and_prf_ids_are_rejected() {
+    // Every id-carrying kind must reject a repeat: "remove this id" would
+    // otherwise be ambiguous and could leave a hidden unlock path behind.
+    let password = password_record();
+    let chip_first = chip_record(0xAB, 0x5A);
+    let chip_dupe = chip_record(0xAB, 0x5B);
+    let chip_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, chip_first.as_slice(), chip_dupe.as_slice()],
+        &[0x22; 64],
+        2,
+    );
+    assert_eq!(chip_file.parse().unwrap_err().to_string(), "corrupted length");
+
+    let prf_first = encode_prf_entry([0xB2; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32])
+        .unwrap();
+    let prf_dupe = encode_prf_entry([0xB2; 16], &[0x78; 32], [9; 32], [1; 32], [2; 32], [3; 32])
+        .unwrap();
+    let prf_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, prf_first.as_slice(), prf_dupe.as_slice()],
+        &[0x22; 64],
+        2,
+    );
+    assert_eq!(prf_file.parse().unwrap_err().to_string(), "corrupted length");
+
+    // Distinct ids of the same kind still parse.
+    let prf_other = encode_prf_entry([0xB3; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32])
+        .unwrap();
+    let ok = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, prf_first.as_slice(), prf_other.as_slice()],
+        &[0x22; 64],
+        2,
+    );
+    assert_eq!(ok.parse().unwrap().entries.len(), 3);
+}
+
+#[test]
 fn entry_len_mismatch_does_not_allocate_the_claimed_size() {
     let entry = password_record();
     let mut bytes = file_from(&sample_header(BODY_AEGIS256), &[&entry], &[0x22; 64], 1)

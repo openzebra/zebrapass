@@ -1,6 +1,6 @@
 //! Master change, record rewrite, and vault-key rotation.
 
-use container::{VaultFile, WrapEntry};
+use container::{KIND_PRF, VaultFile, WrapEntry};
 use kdf::derive_vault_keys;
 use secret::Secret;
 use wraps::{
@@ -31,8 +31,11 @@ pub fn change_master(
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     rewrap(session, file, |parsed, vk| {
-        let mut records =
-            replace_password(&parsed.entries, &parsed.header, new_master, vk)?;
+        let mut records = replace_password(&parsed.entries, &parsed.header, new_master, vk)?;
+        // The re-sealed PRF wraps below replace the old ones. Keeping both
+        // copies would duplicate the grant id (and grow on every rotation).
+        let prf_le = KIND_PRF.to_le_bytes();
+        records.retain(|record| record.get(0..2) != Some(&prf_le[..]));
         // The password wrap now seals the new vault key; every PRF wrap must
         // follow or its grant dies with the old key.
         for entry in &parsed.entries {

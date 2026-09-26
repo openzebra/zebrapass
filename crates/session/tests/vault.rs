@@ -20,10 +20,10 @@ use kdf::KdfProfile;
 use pq::keypair;
 use secret::Secret;
 use session::{
-    add_device, change_master, create, reencrypt_body, remove_device, unlock, write_records,
-    Seen, Session, UnlockCreds,
+    add_device, add_prf_unlock, change_master, create, reencrypt_body, remove_device, unlock,
+    write_records, Seen, Session, UnlockCreds,
 };
-use wraps::{DeviceKeys, DevicePublics};
+use wraps::{DeviceKeys, DevicePublics, PrfPublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use zeroize::Zeroize;
 
@@ -347,4 +347,33 @@ fn replace_body(file: &VaultFile, new_body: &[u8]) -> VaultFile {
     out.extend_from_slice(new_body);
     out.extend_from_slice(&bytes[bytes.len() - COMMIT_LEN..]);
     VaultFile::new(out)
+}
+
+fn prf_publics() -> PrfPublics {
+    PrfPublics { id: [0x5A; 16], cred_id: vec![0x51; 32], salt: [0x33; 32] }
+}
+
+fn count_prf_id(file: &VaultFile, id: [u8; 16]) -> usize {
+    file.parse().unwrap().entries.iter().filter(|entry| {
+        matches!(entry, WrapEntry::Prf(wrap) if wrap.id == id)
+    }).count()
+}
+
+#[test]
+fn change_master_keeps_single_prf_wrap() {
+    let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    let mut file = file;
+    let publics = prf_publics();
+    add_prf_unlock(&mut session, &mut file, &publics, &[0x44; 32]).unwrap();
+    assert_eq!(count_prf_id(&file, publics.id), 1);
+
+    change_master(&mut session, &mut file, &SEED_NEXT, &[(prf_publics(), [0x44; 32])])
+        .unwrap();
+    // The re-sealed wrap replaces the old one: the grant id stays unique and
+    // the directory does not grow on every master change.
+    assert_eq!(count_prf_id(&file, [0x5A; 16]), 1);
+
+    // The re-sealed grant still authenticates with the same PRF output.
+    let prf_out = [0x44; 32];
+    unlock(&file, &UnlockCreds::default().with_prf(&prf_publics(), &prf_out), None).unwrap();
 }
