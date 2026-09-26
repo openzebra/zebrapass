@@ -7,7 +7,11 @@ use subtle::ConstantTimeEq;
 
 use crate::error::{copy_array, split_packed};
 
-const IV_LEN: usize = 8;
+/// Full-block initial counter (NIST SP 800-38A CTR). The random IV is the
+/// whole 128-bit block, so keystream reuse needs a 128-bit collision —
+/// the GOST R 34.13-2015 §5.2 `IV ‖ 0^64` split caps the IV at 64 bits and
+/// would collide around 2³² writes.
+const IV_LEN: usize = 16;
 const TAG_LEN: usize = 32;
 const BLOCK_LEN: usize = 16;
 
@@ -45,14 +49,20 @@ pub fn open(
     Ok(pt)
 }
 
-/// `kuznechik_rs::modes::ctr` increments only the low 32 bits (NIST SP 800-38A).
-/// GOST R 34.13-2015 §5.2 adds one to the whole 128-bit big-endian block.
-fn apply_ctr(key: &[u8; 32], iv: [u8; IV_LEN], data: &mut [u8]) {
+/// CTR with the first `IV_W` counter bytes set to `iv[..IV_W]` and the rest
+/// zero, incrementing the whole 128-bit big-endian block (GOST R
+/// 34.13-2015 §5.2). Production seals use `IV_W = 16`; the annex vector
+/// uses 8 with the same generator.
+fn ctr_width<const IV_W: usize>(key: &[u8; 32], iv: &[u8], data: &mut [u8]) {
     let cipher = Kuznechik::new(&Key::new(*key));
     let mut counter = [0u8; BLOCK_LEN];
-    // `CTR_1 = IV ‖ 0^64`. The remaining eight bytes stay zero.
-    for (dst, src) in counter.iter_mut().zip(iv.iter()) {
-        *dst = *src;
+    let slot = counter
+        .get_mut(..IV_W)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"));
+    if let Ok(slot) = slot {
+        for (dst, src) in slot.iter_mut().zip(iv.iter()) {
+            *dst = *src;
+        }
     }
     for chunk in data.chunks_mut(BLOCK_LEN) {
         let mut block = Block128::from_bytes(counter);
@@ -63,6 +73,10 @@ fn apply_ctr(key: &[u8; 32], iv: [u8; IV_LEN], data: &mut [u8]) {
         }
         increment_be(&mut counter);
     }
+}
+
+fn apply_ctr(key: &[u8; 32], iv: [u8; IV_LEN], data: &mut [u8]) {
+    ctr_width::<IV_LEN>(key, &iv, data);
 }
 
 /// Adds one to a 16-byte big-endian integer. The last byte is the least significant.
@@ -106,7 +120,7 @@ fn pack(iv: &[u8], ct: &[u8], tag: &[u8]) -> Vec<u8> {
     clippy::unwrap_in_result
 )]
 mod tests {
-    use super::{apply_ctr, increment_be};
+    use super::{ctr_width, increment_be};
 
     const KEY: &str = "8899aabbccddeeff0011223344556677fedcba98765432100123456789abcdef";
     const IV: &str = "1234567890abcef0";
@@ -141,26 +155,27 @@ mod tests {
         let pt = unhex(PT);
         let expected = unhex(CT);
 
+        let gost = |data: &mut [u8]| ctr_width::<8>(&key, &iv, data);
         let mut ct = pt.clone();
-        apply_ctr(&key, iv, &mut ct);
+        gost(&mut ct);
         assert_eq!(ct, expected);
-        apply_ctr(&key, iv, &mut ct);
+        gost(&mut ct);
         assert_eq!(ct, pt);
 
         let mut longer = pt;
         longer.push(0x5a);
         let mut gamma = longer.clone();
-        apply_ctr(&key, iv, &mut gamma);
+        gost(&mut gamma);
         assert_eq!(&gamma[..expected.len()], &expected[..]);
 
         let mut tail_ff = longer.clone();
         tail_ff[64] = 0xff;
         let mut gamma_ff = tail_ff.clone();
-        apply_ctr(&key, iv, &mut gamma_ff);
+        gost(&mut gamma_ff);
         assert_eq!(&gamma_ff[..64], &gamma[..64]);
         assert_eq!(gamma_ff[64] ^ 0xff, gamma[64] ^ 0x5a);
 
-        apply_ctr(&key, iv, &mut gamma);
+        gost(&mut gamma);
         assert_eq!(gamma, longer);
     }
 

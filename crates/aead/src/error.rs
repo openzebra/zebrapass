@@ -156,7 +156,7 @@ mod tests {
     fn kuz_ctr_hmac_rejects_a_different_iv() {
         let k_body = [0x11u8; 32];
         let k_bmac = [0x22u8; 32];
-        let iv = [0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xce, 0xf0];
+        let iv = [0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xce, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
         let ad = b"brby/v2/body";
         let pt = b"same-ct-different-iv";
 
@@ -181,9 +181,9 @@ mod tests {
             b""
         );
 
-        let iv = [4u8; 8];
+        let iv = [4u8; 16];
         let kuz = encrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &iv, ad, b"").unwrap();
-        assert_eq!(kuz.len(), 40);
+        assert_eq!(kuz.len(), 48);
         assert_eq!(
             decrypt_body(BodyAlg::KuzCtrHmac, &k_body, &k_bmac, &kuz, ad).unwrap(),
             b""

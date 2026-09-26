@@ -23,3 +23,30 @@ path = "fuzz_targets/parse_container.rs"
 test = false
 doc = false
 bench = false
+
+[dependencies.frame]
+path = "../crates/frame"
+
+[dependencies.session]
+path = "../crates/session"
+
+[[bin]]
+name = "accept_record"
+path = "fuzz_targets/accept_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_entry"
+path = "fuzz_targets/parse_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_index"
+path = "fuzz_targets/frame_index.rs"
+test = false
+doc = false
+bench = false

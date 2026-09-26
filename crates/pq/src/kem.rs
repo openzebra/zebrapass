@@ -3,6 +3,7 @@
 use anyhow::anyhow;
 use ml_kem::kem::{Decapsulate, DecapsulationKey, EncapsulationKey};
 use ml_kem::{KeyExport, MlKem768, Seed, TryKeyInit};
+use zeroize::Zeroizing;
 use secret::Secret;
 
 /// ML-KEM-768 encapsulation key length (FIPS 203).
@@ -61,12 +62,14 @@ pub fn kem_encapsulate(ek: &[u8]) -> anyhow::Result<(Secret<[u8; 32]>, Vec<u8>)>
 ///
 /// Returns an error when the seed or ciphertext has the wrong length.
 pub fn kem_decapsulate(dk: &[u8], ciphertext: &[u8]) -> anyhow::Result<Secret<[u8; 32]>> {
-    let seed = <[u8; KEM_DK_LEN]>::try_from(dk)
-        .map_err(|_| anyhow!("ml-kem seed must be {KEM_DK_LEN} bytes"))?;
+    let seed: Zeroizing<[u8; KEM_DK_LEN]> = Zeroizing::new(
+        <[u8; KEM_DK_LEN]>::try_from(dk)
+            .map_err(|_| anyhow!("ml-kem seed must be {KEM_DK_LEN} bytes"))?,
+    );
     if ciphertext.len() != KEM_CT_LEN {
         return Err(anyhow!("ml-kem ciphertext must be {KEM_CT_LEN} bytes"));
     }
-    let key = DecapsulationKey::<MlKem768>::from_seed(Seed::from(seed));
+    let key = DecapsulationKey::<MlKem768>::from_seed(Seed::from(*seed));
     let ss = key
         .decapsulate_slice(ciphertext)
         .map_err(|_| anyhow!("ml-kem ciphertext must be {KEM_CT_LEN} bytes"))?;

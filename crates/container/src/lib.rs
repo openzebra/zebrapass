@@ -20,6 +20,6 @@ pub use limits::{
 pub use wrap_dir::{encode_wrap_dir, WrapDir};
 pub use wrap_human::{encode_human_password_entry, HumanKdf, HumanPasswordWrap};
 pub use wrap_entry::{
-    encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry, ChipWrap,
-    DeviceWrap, PasswordWrap, PrfWrap, WrapEntry,
+    encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry, parse_entry,
+    ChipWrap, DeviceWrap, PasswordWrap, PrfWrap, WrapEntry,
 };

@@ -233,7 +233,7 @@ pub fn encrypt_records(
     let mut nonce = [0u8; 32];
     let nonce_len = match alg {
         BodyAlg::Aegis256 => 32,
-        BodyAlg::KuzCtrHmac => 8,
+        BodyAlg::KuzCtrHmac => 16,
         BodyAlg::Frames | BodyAlg::KuzMgm => {
             return Err(anyhow::anyhow!("unsupported body algorithm {BODY_KUZ_MGM:#06x}"))
         }

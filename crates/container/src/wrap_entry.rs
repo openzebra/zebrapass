@@ -319,6 +319,14 @@ pub fn encode_prf_entry(
     Ok(out)
 }
 
+/// Parse one wrap record starting at `offset`.
+///
+/// # Errors
+///
+/// `corrupted length` when the header or payload does not fit the buffer or
+/// the entry length names a different payload size; `kdf parameters
+/// rejected` for a human password wrap below the wire floor; `corrupted
+/// length` for an unknown kind.
 pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>, usize)> {
     let header_end = shift(offset, ENTRY_HEADER_LEN)?;
     // Kind and entry_len are read only when those 6 bytes sit inside the buffer

@@ -164,10 +164,11 @@ pub fn rewrite_body(
 /// Rotate the vault key, re-encrypt `records`, and re-seal every wrap.
 ///
 /// Old wrap ciphertexts are not reused: they seal the previous vault key.
-/// A file wrap id with no matching entry in `devices` or `chips` is
-/// `wrap not found` and does not modify `file` or `session`. A PRF wrap
-/// without a matching output in `prfs` is `prf factor required`. Generation
-/// increases by one. Sealing a chip
+/// A file wrap id with no matching entry in `creds.devices` or `creds.chips`
+/// is `wrap not found` and does not modify `file` or `session`. A PRF wrap
+/// without a matching output in `creds.prfs` is `prf factor required`, and a
+/// human password wrap without `creds.human_password` is
+/// `human factor required`. Generation increases by one. Sealing a chip
 /// wrap draws a fresh ephemeral P-256 key in this process, so the platform
 /// must re-derive its shared secret against the new ephemeral public key
 /// after the call. On success the session's decrypted frame body is
@@ -177,6 +178,7 @@ pub fn rewrite_body(
 ///
 /// `wrap not found` when a device or chip wrap has no matching public id.
 /// `prf factor required` when a PRF wrap has no matching output.
+/// `human factor required` when a human wrap has no password.
 /// `zero shared secret` when a device X25519 public key is zero.
 pub fn reencrypt_body(
     session: &mut Session,

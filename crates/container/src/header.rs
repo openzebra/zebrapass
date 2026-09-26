@@ -138,3 +138,9 @@ pub fn check_magic(bytes: &[u8]) -> anyhow::Result<()> {
         _ => Err(anyhow::anyhow!("bad magic")),
     }
 }
+
+impl From<&StaticHeader> for [u8; HEADER_LEN] {
+    fn from(header: &StaticHeader) -> Self {
+        header.to_bytes()
+    }
+}

@@ -10,6 +10,7 @@
 use anyhow::anyhow;
 use ml_dsa::{Keypair, MlDsa65, Signature, SigningKey};
 use signature::{Signer, Verifier};
+use zeroize::Zeroizing;
 
 /// Sync record writes: `record_message` payloads sign under this context.
 pub const SYNC_CTX: &[u8] = b"zebrapass/sync/record/v1";
@@ -23,9 +24,11 @@ pub const SYNC_VK_LEN: usize = 1952;
 pub const SYNC_SIG_LEN: usize = 3309;
 
 fn signing_key(seed: &[u8]) -> anyhow::Result<SigningKey<MlDsa65>> {
-    let bytes = <[u8; SYNC_SEED_LEN]>::try_from(seed)
-        .map_err(|_| anyhow!("ml-dsa seed must be {SYNC_SEED_LEN} bytes"))?;
-    Ok(SigningKey::<MlDsa65>::from_seed(&bytes.into()))
+    let bytes: Zeroizing<[u8; SYNC_SEED_LEN]> = Zeroizing::new(
+        <[u8; SYNC_SEED_LEN]>::try_from(seed)
+            .map_err(|_| anyhow!("ml-dsa seed must be {SYNC_SEED_LEN} bytes"))?,
+    );
+    Ok(SigningKey::<MlDsa65>::from_seed(&(*bytes).into()))
 }
 
 /// The bytes actually signed: `[u16 be ctx_len][ctx][message]`.
