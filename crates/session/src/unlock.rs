@@ -10,7 +10,7 @@ use wraps::{
     PrfPublics,
 };
 
-use crate::create::{body_ad, draw_device_id, verify_commit, Session};
+use crate::create::{body_ad, verify_commit, Session};
 use crate::error::{Seen, SessionError};
 
 /// Factors a caller can present for one unlock.
@@ -104,7 +104,7 @@ pub fn unlock(
     seen: Option<Seen>,
 ) -> anyhow::Result<Session> {
     let parsed = file.parse()?;
-    let vk = unwrap_vk(&parsed.header, &parsed.entries, creds)?;
+    let (vk, origin_device) = unwrap_vk(&parsed.header, &parsed.entries, creds)?;
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
     // A flipped body byte must surface as CommitMismatch, not BodyAuthFailed.
     verify_commit(file.as_bytes(), k_commit.expose(), &parsed.commit)?;
@@ -118,7 +118,6 @@ pub fn unlock(
     )?;
     // An older blob is still cryptographically valid. `seen` rejects it after auth.
     accept_seen(seen, parsed.generation, &parsed.commit)?;
-    let device_id = draw_device_id()?;
     Ok(Session {
         vk,
         k_body,
@@ -128,31 +127,35 @@ pub fn unlock(
         generation: parsed.generation,
         commit_tag: parsed.commit,
         vault_id: parsed.header.vault_id,
-        device_id,
+        origin_device,
         records,
     })
 }
+
+/// The vault key plus the device wrap id that produced it.
+type UnwrappedKey = (Secret<[u8; 32]>, Option<[u8; 16]>);
 
 fn unwrap_vk(
     header: &container::StaticHeader,
     entries: &[WrapEntry<'_>],
     creds: &UnlockCreds<'_>,
-) -> anyhow::Result<Secret<[u8; 32]>> {
+) -> anyhow::Result<UnwrappedKey> {
     if let Some((keys, ss_p256)) = creds.chip {
         let wrap = find_chip(entries, &keys.id)?;
-        return open_chip(header, wrap, keys, &ss_p256);
+        return open_chip(header, wrap, keys, &ss_p256).map(|vk| (vk, Some(wrap.id)));
     }
     if let Some((publics, prf_out)) = creds.prf {
         let wrap = wraps::find_prf(entries, &publics.id)?;
-        return open_prf(header, &wrap, prf_out);
+        return open_prf(header, &wrap, prf_out).map(|vk| (vk, Some(wrap.id)));
     }
     if let Some(keys) = creds.device {
         let wrap = find_device(entries, &keys.id)?;
-        return open_device(header, wrap, keys);
+        return open_device(header, wrap, keys).map(|vk| (vk, Some(keys.id)));
     }
     if let Some(human) = creds.human {
         let wrap = find_human_password(entries)?;
-        return open_human_password(header, &wrap, human);
+        // The human wrap carries no device id; the origin stays `None`.
+        return open_human_password(header, &wrap, human).map(|vk| (vk, None));
     }
     let Some(master) = creds.master else {
         if entries
@@ -164,7 +167,8 @@ fn unwrap_vk(
         return Err(SessionError::NoUsableWrap.into());
     };
     let wrap = find_password(entries)?;
-    open_password(header, &wrap, master)
+    // The recovery wrap does not identify a device.
+    open_password(header, &wrap, master).map(|vk| (vk, None))
 }
 
 fn find_chip<'a>(

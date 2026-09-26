@@ -38,7 +38,11 @@ pub struct Session {
     /// Public vault id: the HKDF salt for frame keys.
     pub(crate) vault_id: [u8; 16],
     /// Device identity this session stamps into new frames.
-    pub(crate) device_id: [u8; 16],
+    /// Identity of the device wrap that opened this session, if any.
+    /// Seed/password/human unlocks carry no enrolled wrap and stay `None`;
+    /// their frames use a zero origin (plan M4: the id must be stable, not
+    /// drawn fresh per unlock).
+    pub(crate) origin_device: Option<[u8; 16]>,
     /// Decrypted frame body. A per-record key opens single frames from it.
     pub(crate) records: Secret<Vec<u8>>,
 }
@@ -62,10 +66,10 @@ impl Session {
         &self.vault_id
     }
 
-    /// Device identity this session stamps into new frames.
+    /// The device wrap id this session unlocked with, if any.
     #[must_use]
-    pub const fn device_id(&self) -> &[u8; 16] {
-        &self.device_id
+    pub const fn origin_device(&self) -> Option<[u8; 16]> {
+        self.origin_device
     }
 
     /// Key for this vault's on-device local-metadata file.
@@ -106,7 +110,7 @@ pub fn create(
     let records = [password];
     let wrap_dir = dir_bytes(1, &records)?;
     let (file, commit_tag) = assemble_committed(k_commit.expose(), &header, &wrap_dir, &body)?;
-    let device_id = draw_device_id()?;
+    let origin_device = None;
     Ok((
         file,
         Session {
@@ -118,22 +122,10 @@ pub fn create(
             generation: 1,
             commit_tag,
             vault_id: header.vault_id,
-            device_id,
+            origin_device,
             records: Secret::new(Vec::new()),
         },
     ))
-}
-
-/// Draw a device id that is never all-zero.
-pub fn draw_device_id() -> anyhow::Result<[u8; 16]> {
-    for _ in 0..8 {
-        let mut id = [0u8; 16];
-        fill_random(&mut id)?;
-        if id != [0u8; 16] {
-            return Ok(id);
-        }
-    }
-    Err(anyhow::anyhow!("os entropy failed"))
 }
 
 fn body_alg_id(alg: BodyAlg) -> anyhow::Result<u16> {

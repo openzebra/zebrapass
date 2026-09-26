@@ -311,7 +311,7 @@ fn append_frame(
         kind,
         record_id,
         revision,
-        origin_device: session.device_id,
+        origin_device: session.origin_device.unwrap_or([0u8; 16]),
         timestamp_ms: now_ms(),
         alg: ALG_AEGIS256,
     };

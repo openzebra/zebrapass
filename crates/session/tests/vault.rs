@@ -548,3 +548,21 @@ fn drop_refuses_when_no_factor_would_remain() {
     // The file is unchanged.
     assert_eq!(file.as_bytes(), before.as_slice());
 }
+
+#[test]
+fn origin_device_is_stable_across_unlocks() {
+    let (mut file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    let device = device_identity(0x75);
+    add_device(&mut session, &mut file, &device.0).unwrap();
+
+    // Two unlocks with the same wrap: the stamped origin must be identical
+    // (plan M4 — no random id drawn per unlock).
+    let first = unlock(&file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
+    let second = unlock(&file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
+    assert_eq!(first.origin_device(), second.origin_device());
+    assert_eq!(first.origin_device(), Some(device.0.id));
+
+    // A seed unlock carries no enrolled wrap: no origin.
+    let master = unlock(&file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap();
+    assert_eq!(master.origin_device(), None);
+}

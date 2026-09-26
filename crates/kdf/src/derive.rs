@@ -90,6 +90,26 @@ pub fn client_id(seed: &[u8; 64]) -> anyhow::Result<[u8; 64]> {
     Ok(okm)
 }
 
+/// Account id for one server: the per-server HKDF variant.
+///
+/// `HKDF(seed, INFO_CLIENT_ID || server_origin)` — the same origin always
+/// yields the same id; different origins yield unlinkable ids, so a server
+/// cannot correlate one account across other servers.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn client_id_for(seed: &[u8; 64], server_origin: &[u8]) -> anyhow::Result<[u8; 64]> {
+    let mut info = Vec::with_capacity(INFO_CLIENT_ID.len() + server_origin.len());
+    info.extend_from_slice(INFO_CLIENT_ID);
+    info.extend_from_slice(server_origin);
+    let hk = Hkdf::<Sha512>::new(None, seed);
+    let mut okm = [0u8; 64];
+    hk.expand(&info, &mut okm)
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(okm)
+}
+
 /// 32-byte ML-DSA signing seed. Wiped on drop.
 ///
 /// # Errors
@@ -107,7 +127,7 @@ pub fn sync_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use super::{client_id, frame_key, identity_seed, local_meta_key, sync_seed};
+    use super::{client_id, client_id_for, frame_key, identity_seed, local_meta_key, sync_seed};
 
     #[test]
     fn frame_keys_are_record_separated() {
@@ -157,5 +177,17 @@ mod tests {
         let ident = identity_seed(&seed).unwrap();
         assert_ne!(signing.expose(), ident.expose());
         assert_ne!(&id[..32], ident.expose());
+    }
+
+    #[test]
+    fn per_server_client_ids_are_stable_and_unlinkable() {
+        let seed = [0x24u8; 64];
+        let a = client_id_for(&seed, b"https://vaults.example").unwrap();
+        let b = client_id_for(&seed, b"https://vaults.example").unwrap();
+        assert_eq!(a, b, "same origin always gives the same id");
+        let other = client_id_for(&seed, b"https://other.example").unwrap();
+        assert_ne!(a, other, "different origins give unlinkable ids");
+        // The plain client id stays a distinct derivation.
+        assert_ne!(a, client_id(&seed).unwrap());
     }
 }
