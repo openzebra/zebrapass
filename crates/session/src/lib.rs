@@ -11,6 +11,7 @@ mod devices;
 mod error;
 mod records;
 mod rewrap;
+mod sync_import;
 mod rotate;
 mod sync_export;
 mod sync_sig;
@@ -32,6 +33,7 @@ pub use records::{
 pub use rotate::{change_master, reencrypt_body, revoke, write_records, Revoke, RotateCreds};
 pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN};
 pub use sync_export::{check_fresh, export_record, newer, verify_sync_record};
+pub use sync_import::{accept_record, Accepted, TrustedKeys};
 pub use sync_sig::{
     ct_len_prefix, issue_device_cert, record_message, sign_record, sync_verifying_key,
     verify_record, DeviceCert, DeviceSignKey, SyncRecord, MSG_VERSION,
