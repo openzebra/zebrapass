@@ -10,6 +10,7 @@ mod create;
 mod devices;
 mod error;
 mod records;
+mod rewrap;
 mod rotate;
 mod sync_export;
 mod sync_sig;

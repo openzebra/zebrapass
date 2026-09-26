@@ -1,12 +1,13 @@
-//! Add and remove device and chip wraps. The body bytes stay as they are.
+//! Add and remove device, chip, and PRF wraps. The body bytes stay as they are.
 
-use container::{KIND_CHIP, KIND_DEVICE, VaultFile, WrapEntry};
+use container::{KIND_CHIP, KIND_DEVICE, KIND_PRF, VaultFile, WrapEntry};
 use wraps::{
     seal_chip, seal_device, seal_prf, ChipGrant, ChipPublics, DeviceGrant, DevicePublics, PrfGrant,
     PrfPublics,
 };
 
-use crate::create::{encode_entry, next_generation, publish, Session};
+use crate::create::{encode_entry, owned_entries, Session};
+use crate::rewrap::{id_in_use, rewrap};
 
 /// Append a device wrap of the session vault key.
 ///
@@ -24,33 +25,16 @@ pub fn add_device(
     file: &mut VaultFile,
     dev_pks: &DevicePublics,
 ) -> anyhow::Result<DeviceGrant> {
-    let (header, generation, body, records, grant) = {
-        let parsed = file.parse()?;
+    rewrap(session, file, |parsed, vk| {
         // A repeated device id does not parse. Reject it before sealing.
-        if parsed
-            .entries
-            .iter()
-            .any(|entry| matches!(entry, WrapEntry::Device(dev) if dev.device_id == dev_pks.id))
-        {
+        if id_in_use(&parsed.entries, KIND_DEVICE, &dev_pks.id) {
             return Err(anyhow::anyhow!("corrupted length"));
         }
-        let (record, grant) = seal_device(&parsed.header, dev_pks, session.vk.expose())?;
-        let mut records = Vec::with_capacity(parsed.entries.len().saturating_add(1));
-        for entry in &parsed.entries {
-            records.push(encode_entry(entry)?);
-        }
+        let (record, grant) = seal_device(&parsed.header, dev_pks, vk)?;
+        let mut records = owned_entries(&parsed.entries)?;
         records.push(record);
-        let generation = next_generation(parsed.generation)?;
-        (
-            parsed.header,
-            generation,
-            parsed.body.to_vec(),
-            records,
-            grant,
-        )
-    };
-    publish(session, file, &header, &records, &body, generation)?;
-    Ok(grant)
+        Ok((records, grant))
+    })
 }
 
 /// Append a chip wrap of the session vault key.
@@ -69,33 +53,16 @@ pub fn add_chip_unlock(
     file: &mut VaultFile,
     chip: &ChipPublics,
 ) -> anyhow::Result<ChipGrant> {
-    let (header, generation, body, records, grant) = {
-        let parsed = file.parse()?;
+    rewrap(session, file, |parsed, vk| {
         // A repeated chip id does not parse. Reject it before sealing.
-        if parsed
-            .entries
-            .iter()
-            .any(|entry| matches!(entry, WrapEntry::Chip(wrap) if wrap.id == chip.id))
-        {
+        if id_in_use(&parsed.entries, KIND_CHIP, &chip.id) {
             return Err(anyhow::anyhow!("corrupted length"));
         }
-        let (record, grant) = seal_chip(&parsed.header, chip, session.vk.expose())?;
-        let mut records = Vec::with_capacity(parsed.entries.len().saturating_add(1));
-        for entry in &parsed.entries {
-            records.push(encode_entry(entry)?);
-        }
+        let (record, grant) = seal_chip(&parsed.header, chip, vk)?;
+        let mut records = owned_entries(&parsed.entries)?;
         records.push(record);
-        let generation = next_generation(parsed.generation)?;
-        (
-            parsed.header,
-            generation,
-            parsed.body.to_vec(),
-            records,
-            grant,
-        )
-    };
-    publish(session, file, &header, &records, &body, generation)?;
-    Ok(grant)
+        Ok((records, grant))
+    })
 }
 
 /// Append a PRF wrap of the session vault key.
@@ -116,33 +83,16 @@ pub fn add_prf_unlock(
     publics: &PrfPublics,
     prf_out: &[u8; 32],
 ) -> anyhow::Result<PrfGrant> {
-    let (header, generation, body, records, grant) = {
-        let parsed = file.parse()?;
+    rewrap(session, file, |parsed, vk| {
         // A repeated grant id does not parse. Reject it before sealing.
-        if parsed
-            .entries
-            .iter()
-            .any(|entry| matches!(entry, WrapEntry::Prf(wrap) if wrap.id == publics.id))
-        {
+        if id_in_use(&parsed.entries, KIND_PRF, &publics.id) {
             return Err(anyhow::anyhow!("corrupted length"));
         }
-        let (record, grant) = seal_prf(&parsed.header, publics, prf_out, session.vk.expose())?;
-        let mut records = Vec::with_capacity(parsed.entries.len().saturating_add(1));
-        for entry in &parsed.entries {
-            records.push(encode_entry(entry)?);
-        }
+        let (record, grant) = seal_prf(&parsed.header, publics, prf_out, vk)?;
+        let mut records = owned_entries(&parsed.entries)?;
         records.push(record);
-        let generation = next_generation(parsed.generation)?;
-        (
-            parsed.header,
-            generation,
-            parsed.body.to_vec(),
-            records,
-            grant,
-        )
-    };
-    publish(session, file, &header, &records, &body, generation)?;
-    Ok(grant)
+        Ok((records, grant))
+    })
 }
 
 /// Drop the wraps of `kinds` whose id is `id`.
@@ -185,13 +135,10 @@ pub fn remove_device(
     file: &mut VaultFile,
     device_id: &[u8; 16],
 ) -> anyhow::Result<()> {
-    let (header, generation, body, records) = {
-        let parsed = file.parse()?;
+    rewrap(session, file, |parsed, _| {
         let records = remove_wrap_of_kind(&parsed.entries, device_id, &[KIND_DEVICE])?;
-        let generation = next_generation(parsed.generation)?;
-        (parsed.header, generation, parsed.body.to_vec(), records)
-    };
-    publish(session, file, &header, &records, &body, generation)
+        Ok((records, ()))
+    })
 }
 
 /// Drop the chip wrap with `id` — the settings toggle for chip unlock.
@@ -207,11 +154,8 @@ pub fn remove_chip_unlock(
     file: &mut VaultFile,
     id: &[u8; 16],
 ) -> anyhow::Result<()> {
-    let (header, generation, body, records) = {
-        let parsed = file.parse()?;
+    rewrap(session, file, |parsed, _| {
         let records = remove_wrap_of_kind(&parsed.entries, id, &[KIND_CHIP])?;
-        let generation = next_generation(parsed.generation)?;
-        (parsed.header, generation, parsed.body.to_vec(), records)
-    };
-    publish(session, file, &header, &records, &body, generation)
+        Ok((records, ()))
+    })
 }

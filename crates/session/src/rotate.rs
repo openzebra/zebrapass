@@ -12,6 +12,7 @@ use crate::create::{
     publish, Session,
 };
 use crate::error::SessionError;
+use crate::rewrap::rewrap;
 
 /// Replace the master wrap: re-seal the same vault key under a new master
 /// seed.
@@ -29,10 +30,9 @@ pub fn change_master(
     new_master: &[u8; 64],
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
-    let (header, generation, body, records) = {
-        let parsed = file.parse()?;
+    rewrap(session, file, |parsed, vk| {
         let mut records =
-            replace_password(&parsed.entries, &parsed.header, new_master, session.vk.expose())?;
+            replace_password(&parsed.entries, &parsed.header, new_master, vk)?;
         // The password wrap now seals the new vault key; every PRF wrap must
         // follow or its grant dies with the old key.
         for entry in &parsed.entries {
@@ -41,14 +41,12 @@ pub fn change_master(
                     .iter()
                     .find(|(item, _)| item.id == wrap.id)
                     .ok_or(SessionError::PrfFactorRequired)?;
-                let (record, _grant) = seal_prf(&parsed.header, publics, prf_out, session.vk.expose())?;
+                let (record, _grant) = seal_prf(&parsed.header, publics, prf_out, vk)?;
                 records.push(record);
             }
         }
-        let generation = next_generation(parsed.generation)?;
-        (parsed.header, generation, parsed.body.to_vec(), records)
-    };
-    publish(session, file, &header, &records, &body, generation)
+        Ok((records, ()))
+    })
 }
 
 /// Encrypt `records` under the same vault key and a fresh body nonce.
