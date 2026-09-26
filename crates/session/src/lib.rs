@@ -12,6 +12,7 @@ mod error;
 mod records;
 mod rewrap;
 mod sync_import;
+mod wraps_rot;
 mod rotate;
 mod sync_export;
 mod sync_sig;
