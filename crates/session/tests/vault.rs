@@ -20,8 +20,8 @@ use kdf::KdfProfile;
 use pq::keypair;
 use secret::Secret;
 use session::{
-    add_device, add_prf_unlock, change_master, create, reencrypt_body, remove_device, unlock,
-    write_records, Seen, Session, UnlockCreds,
+    add_device, add_prf_unlock, change_master, create, reencrypt_body, remove_device,
+    remove_prf_unlock, unlock, write_records, Seen, Session, UnlockCreds,
 };
 use wraps::{DeviceKeys, DevicePublics, PrfPublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
@@ -376,4 +376,27 @@ fn change_master_keeps_single_prf_wrap() {
     // The re-sealed grant still authenticates with the same PRF output.
     let prf_out = [0x44; 32];
     unlock(&file, &UnlockCreds::default().with_prf(&prf_publics(), &prf_out), None).unwrap();
+}
+
+#[test]
+fn removed_prf_cannot_unlock() {
+    let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
+    let mut file = file;
+    let publics = prf_publics();
+    let prf_out = [0x44; 32];
+    add_prf_unlock(&mut session, &mut file, &publics, &prf_out).unwrap();
+
+    remove_prf_unlock(&mut session, &mut file, &publics.id).unwrap();
+    assert_eq!(count_prf_id(&file, publics.id), 0);
+
+    // The stolen hardware key no longer opens anything.
+    let creds = UnlockCreds::default().with_prf(&publics, &prf_out);
+    assert!(unlock(&file, &creds, None).is_err());
+
+    // A second removal has nothing left to remove.
+    assert!(remove_prf_unlock(&mut session, &mut file, &publics.id).is_err());
+
+    // The removal did not touch the password wrap: the vault stays openable.
+    let next = [9u8; 64];
+    change_master(&mut session, &mut file, &next, &[]).unwrap();
 }

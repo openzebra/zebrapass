@@ -159,3 +159,24 @@ pub fn remove_chip_unlock(
         Ok((records, ()))
     })
 }
+
+/// Drop the PRF wrap with `id` — a lost hardware key leaves the vault.
+///
+/// The password wrap is never removed, so the vault stays openable. The vault
+/// key does not change: grant the rotation to [`crate::rotate`] when the key
+/// itself must die. The body is copied unchanged. Generation increases by one.
+/// On error, `file` and `session` are left as they were.
+///
+/// # Errors
+///
+/// `wrap not found` when no PRF entry has `id`.
+pub fn remove_prf_unlock(
+    session: &mut Session,
+    file: &mut VaultFile,
+    id: &[u8; 16],
+) -> anyhow::Result<()> {
+    rewrap(session, file, |parsed, _| {
+        let records = remove_wrap_of_kind(&parsed.entries, id, &[KIND_PRF])?;
+        Ok((records, ()))
+    })
+}
