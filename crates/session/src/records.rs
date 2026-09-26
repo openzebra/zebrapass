@@ -237,7 +237,7 @@ pub fn clear_history(session: &mut Session, file: &mut VaultFile) -> anyhow::Res
     if next.len() == old.len() {
         return Ok(());
     }
-    write_records(session, file, &next)
+    crate::rewrite_body(session, file, &next)
 }
 
 /// The vault metadata document (`record_id` 0), or an empty document when
@@ -317,10 +317,8 @@ fn append_frame(
     };
     let key = frame_key_for(session, record_id)?;
     let frame_bytes = frame::seal(&key, &meta, plaintext)?;
-    let mut body = Vec::with_capacity(session.records.expose().len() + frame_bytes.len());
-    body.extend_from_slice(session.records.expose());
-    body.extend_from_slice(&frame_bytes);
-    write_records(session, file, &body)
+    // write_records appends: it owns the old bytes and the commit update.
+    write_records(session, file, &frame_bytes)
 }
 
 fn now_ms() -> u64 {

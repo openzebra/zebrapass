@@ -566,3 +566,40 @@ fn origin_device_is_stable_across_unlocks() {
     let master = unlock(&file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap();
     assert_eq!(master.origin_device(), None);
 }
+
+
+
+#[test]
+fn append_is_constant_time_vs_vault_size() {
+    use aead::BodyAlg;
+    use kdf::KdfProfile;
+    use record::Document;
+    use std::time::Instant;
+
+    let fill = |count: usize| -> (VaultFile, session::Session) {
+        let (mut file, mut s) =
+            session::create(&[0x2Au8; 64], KdfProfile::Desktop, BodyAlg::Frames).unwrap();
+        for _ in 0..count {
+            session::write_record(&mut s, &mut file, None, &Document::new()).unwrap();
+        }
+        (file, s)
+    };
+
+    let (mut file10, mut s10) = fill(10);
+    let (mut file5k, mut s5k) = fill(5_000);
+
+    let t10 = Instant::now();
+    session::write_record(&mut s10, &mut file10, None, &Document::new()).unwrap();
+    let d10 = t10.elapsed();
+
+    let t5k = Instant::now();
+    session::write_record(&mut s5k, &mut file5k, None, &Document::new()).unwrap();
+    let d5k = t5k.elapsed();
+
+    // 500x more records, same order of magnitude of append cost. Generous
+    // bound: the append must not scale with vault size.
+    assert!(
+        d5k.as_millis() < d10.as_millis().max(1) * 50,
+        "append at 5k records ({d5k:?}) must be O(1) vs 10 records ({d10:?})"
+    );
+}

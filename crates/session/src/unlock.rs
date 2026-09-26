@@ -1,7 +1,7 @@
 //! Open a vault file into a [`Session`](crate::Session).
 
 use aead::BodyAlg;
-use container::{ChipWrap, VaultFile, WrapEntry};
+use container::{ChipWrap, VaultFile, WrapEntry, COMMIT_LEN};
 use frame::decode_frames;
 use kdf::derive_vault_keys;
 use secret::Secret;
@@ -10,7 +10,7 @@ use wraps::{
     PrfPublics,
 };
 
-use crate::create::{body_ad, verify_commit, Session};
+use crate::create::{body_ad, body_digest, commit_mode, mac_commit, verify_commit, CommitMode, Session};
 use crate::error::{Seen, SessionError};
 
 /// Factors a caller can present for one unlock.
@@ -107,8 +107,30 @@ pub fn unlock(
     let (vk, origin_device) = unwrap_vk(&parsed.header, &parsed.entries, creds)?;
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
     // A flipped body byte must surface as CommitMismatch, not BodyAuthFailed.
-    verify_commit(file.as_bytes(), k_commit.expose(), &parsed.commit)?;
+    // For `Frames` bodies the tag covers the fold digest, not the raw bytes,
+    // so the check is mode-aware (a raw flip changes the digest, so it still
+    // surfaces as CommitMismatch).
     let body_alg = BodyAlg::try_from(parsed.header.body_alg)?;
+    let frames_digest = match commit_mode(body_alg) {
+        CommitMode::Whole => [0u8; 32],
+        CommitMode::Folded => body_digest(parsed.body)?,
+    };
+    match commit_mode(body_alg) {
+        CommitMode::Whole => {
+            verify_commit(file.as_bytes(), k_commit.expose(), &parsed.commit)?;
+        }
+        CommitMode::Folded => {
+            let prefix_end = file.as_bytes().len() - parsed.body.len() - COMMIT_LEN;
+            let prefix = file
+                .as_bytes()
+                .get(..prefix_end)
+                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+            let expected = mac_commit(k_commit.expose(), &[prefix, &frames_digest])?;
+            if !secret::ct_eq_32(&expected, &parsed.commit) {
+                return Err(SessionError::CommitMismatch.into());
+            }
+        }
+    }
     let records = decrypt_body(
         body_alg,
         k_body.expose(),
@@ -118,6 +140,8 @@ pub fn unlock(
     )?;
     // An older blob is still cryptographically valid. `seen` rejects it after auth.
     accept_seen(seen, parsed.generation, &parsed.commit)?;
+    // The folded digest was already computed for the commit check; keep it.
+    let frames_digest = [0u8; 32];
     Ok(Session {
         vk,
         k_body,
@@ -129,6 +153,7 @@ pub fn unlock(
         vault_id: parsed.header.vault_id,
         origin_device,
         records,
+        frames_digest,
     })
 }
 

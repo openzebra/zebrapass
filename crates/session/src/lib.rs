@@ -30,7 +30,7 @@ pub use records::{
     clear_history, delete_record, history, list_records, open_record, open_revision,
     restore_revision, vault_meta, write_record, write_vault_meta, RecordSummary, RevisionInfo,
 };
-pub use rotate::{change_master, reencrypt_body, revoke, write_records, Revoke, RotateCreds};
+pub use rotate::{change_master, reencrypt_body, rewrite_body, revoke, write_records, Revoke, RotateCreds};
 pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN};
 pub use sync_export::{check_fresh, export_record, newer, verify_sync_record};
 pub use sync_import::{accept_record, Accepted, TrustedKeys};

@@ -67,7 +67,12 @@ pub fn decode_frames(body: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-fn spans(records: &[u8]) -> anyhow::Result<Vec<(usize, usize)>> {
+/// The `(start, len)` span of every raw frame in `records`.
+///
+/// # Errors
+///
+/// `corrupted length` when the log does not decode to whole frames.
+pub fn spans(records: &[u8]) -> anyhow::Result<Vec<(usize, usize)>> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     while pos < records.len() {

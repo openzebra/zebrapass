@@ -11,7 +11,7 @@ use frame::encode_frames;
 use hmac::{Hmac, KeyInit, Mac};
 use kdf::{derive_vault_keys, local_meta_key, KdfProfile};
 use secret::Secret;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use wraps::seal_password;
 use zeroize::Zeroize;
 
@@ -45,6 +45,8 @@ pub struct Session {
     pub(crate) origin_device: Option<[u8; 16]>,
     /// Decrypted frame body. A per-record key opens single frames from it.
     pub(crate) records: Secret<Vec<u8>>,
+    /// Running `Frames` body commitment. Zero for whole-body modes.
+    pub(crate) frames_digest: [u8; 32],
 }
 
 impl Session {
@@ -64,6 +66,12 @@ impl Session {
     #[must_use]
     pub const fn vault_id(&self) -> &[u8; 16] {
         &self.vault_id
+    }
+
+    /// The running `Frames` body commitment; zero for whole-body modes.
+    #[must_use]
+    pub const fn frames_digest(&self) -> [u8; 32] {
+        self.frames_digest
     }
 
     /// The device wrap id this session unlocked with, if any.
@@ -107,9 +115,14 @@ pub fn create(
     let password = seal_password(&header, master, vk.expose())?;
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &header.vault_id)?;
     let body = encrypt_records(body_alg, &header, k_body.expose(), k_bmac.expose(), &[])?;
+    let mode = commit_mode(body_alg);
     let records = [password];
     let wrap_dir = dir_bytes(1, &records)?;
-    let (file, commit_tag) = assemble_committed(k_commit.expose(), &header, &wrap_dir, &body)?;
+    let (file, commit_tag) = assemble_committed(k_commit.expose(), &header, &wrap_dir, &body, mode)?;
+    let frames_digest = match mode {
+        CommitMode::Folded => body_digest(&body)?,
+        CommitMode::Whole => [0u8; 32],
+    };
     let origin_device = None;
     Ok((
         file,
@@ -123,6 +136,7 @@ pub fn create(
             commit_tag,
             vault_id: header.vault_id,
             origin_device,
+            frames_digest,
             records: Secret::new(Vec::new()),
         },
     ))
@@ -234,14 +248,83 @@ pub fn encrypt_records(
     encrypt_body(alg, k_body, k_bmac, used, &ad, records)
 }
 
+/// How the commit tag covers the body.
+///
+/// Whole-body algorithms re-encrypt on every write, so the tag must cover the
+/// whole ciphertext. `Frames` appends sealed frames without touching the old
+/// bytes; the tag covers a fold (chained SHA-256) of the per-frame digests,
+/// so appending updates the commitment in O(1) instead of O(body size) and a
+/// server can check which frame belongs to which vault version.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommitMode {
+    /// HMAC over the whole body ciphertext.
+    Whole,
+    /// HMAC over `SHA256(body)` — the body commitment fold.
+    Folded,
+}
+
+/// The commit mode a body algorithm dictates.
+#[must_use]
+pub const fn commit_mode(alg: BodyAlg) -> CommitMode {
+    match alg {
+        BodyAlg::Frames => CommitMode::Folded,
+        BodyAlg::Aegis256 | BodyAlg::KuzCtrHmac | BodyAlg::KuzMgm => CommitMode::Whole,
+    }
+}
+
+/// SHA-256 over `bytes`. The fold's per-step compression.
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+/// Fold one frame into the running body commitment:
+/// `SHA256(running || SHA256(frame))`. Chaining the running value makes the
+/// commitment order-sensitive, so frames cannot be reordered without a
+/// different final digest.
+#[must_use]
+pub fn fold_tag(running: [u8; 32], frame: &[u8]) -> [u8; 32] {
+    let step = sha256(frame);
+    let mut input = [0u8; 64];
+    input[..32].copy_from_slice(&running);
+    input[32..].copy_from_slice(&step);
+    sha256(&input)
+}
+
+/// The body commitment for a `Frames` body: `fold` over every frame.
+///
+/// # Errors
+///
+/// `frame index rejected` when the body does not parse as a frame log.
+pub fn body_digest(body: &[u8]) -> anyhow::Result<[u8; 32]> {
+    // `body` is the stored (length-prefixed) log; fold over the raw frames.
+    let raw = frame::decode_frames(body)?;
+    let mut digest = [0u8; 32];
+    for (start, len) in frame::spans(&raw)? {
+        let span = raw
+            .get(start..start + len)
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+        digest = fold_tag(digest, span);
+    }
+    Ok(digest)
+}
+
 pub fn assemble_committed(
     k_commit: &[u8; 32],
     header: &StaticHeader,
     wrap_dir: &[u8],
     body: &[u8],
+    mode: CommitMode,
 ) -> anyhow::Result<(VaultFile, [u8; 32])> {
     let header_bytes = header.to_bytes();
-    let tag = mac_commit(k_commit, &[&header_bytes, wrap_dir, body])?;
+    let tag = match mode {
+        CommitMode::Whole => mac_commit(k_commit, &[&header_bytes, wrap_dir, body])?,
+        // Only the commitment rides into the MAC: appending a frame changes
+        // the digest, not the whole body, so the O(1) append is possible.
+        CommitMode::Folded => {
+            let commitment = body_digest(body)?;
+            mac_commit(k_commit, &[&header_bytes, wrap_dir, &commitment])?
+        }
+    };
     Ok((assemble(header, wrap_dir, body, &tag), tag))
 }
 
@@ -255,14 +338,15 @@ pub fn publish(
     generation: u64,
 ) -> anyhow::Result<()> {
     let wrap_dir = dir_bytes(generation, records)?;
-    let (updated, tag) = assemble_committed(session.k_commit.expose(), header, &wrap_dir, body)?;
+    let mode = commit_mode(session.body_alg);
+    let (updated, tag) = assemble_committed(session.k_commit.expose(), header, &wrap_dir, body, mode)?;
     *file = updated;
     session.generation = generation;
     session.commit_tag = tag;
     Ok(())
 }
 
-fn mac_commit(key: &[u8; 32], parts: &[&[u8]]) -> anyhow::Result<[u8; 32]> {
+pub fn mac_commit(key: &[u8; 32], parts: &[&[u8]]) -> anyhow::Result<[u8; 32]> {
     // A 32-byte key is a legal HMAC key. The constructor still returns `Result`.
     let Ok(mut mac) = HmacSha256::new_from_slice(key) else {
         return Err(anyhow::anyhow!("corrupted length"));

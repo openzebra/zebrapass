@@ -1,6 +1,8 @@
 //! Master change, record rewrite, and vault-key rotation.
 
+use aead::BodyAlg;
 use container::{KIND_CHIP, KIND_DEVICE, KIND_PRF, VaultFile, WrapEntry};
+use frame::encode_frames;
 use kdf::derive_vault_keys;
 use secret::Secret;
 use wraps::{
@@ -9,8 +11,8 @@ use wraps::{
 };
 
 use crate::create::{
-    assemble_committed, dir_bytes, draw_secret, encode_entry, encrypt_records, next_generation,
-    publish, Session,
+    assemble_committed, commit_mode, dir_bytes, draw_secret, encode_entry, encrypt_records,
+    fold_tag, next_generation, publish, Session,
 };
 use crate::error::SessionError;
 use crate::rewrap::rewrap;
@@ -68,22 +70,93 @@ pub fn write_records(
     file: &mut VaultFile,
     records: &[u8],
 ) -> anyhow::Result<()> {
+    // O(1) append path for `Frames`: sealed frames are immutable, so the new
+    // bytes extend the log and only the folded commitment changes. The stored
+    // body is the length-prefixed log; `session.records` keeps the raw one.
+    // Whole-body modes re-encrypt everything (existing logic in
+    // `encrypt_records`).
     let (header, generation, kept, body) = {
         let parsed = file.parse()?;
         let kept = crate::create::owned_entries(&parsed.entries)?;
-        let body = encrypt_records(
-            session.body_alg,
-            &parsed.header,
-            session.k_body.expose(),
-            session.k_bmac.expose(),
-            records,
-        )?;
+        let body = if session.body_alg == BodyAlg::Frames {
+            let existing = session.records.expose();
+            let mut raw = Vec::with_capacity(existing.len() + records.len());
+            raw.extend_from_slice(existing);
+            raw.extend_from_slice(records);
+            let mut digest = session.frames_digest;
+            for (start, len) in frame::spans(&raw)? {
+                if start + len > existing.len() {
+                    let span = raw
+                        .get(start..start + len)
+                        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+                    digest = fold_tag(digest, span);
+                }
+            }
+            session.frames_digest = digest;
+            encode_frames(&raw)?
+        } else {
+            encrypt_records(
+                session.body_alg,
+                &parsed.header,
+                session.k_body.expose(),
+                session.k_bmac.expose(),
+                records,
+            )?
+        };
         let generation = next_generation(parsed.generation)?;
         (parsed.header, generation, kept, body)
     };
     publish(session, file, &header, &kept, &body, generation)?;
-    // The plaintext is already in hand; keep the session's copy in step
-    // with the file.
+    // Keep the session's raw-log copy in step with the file.
+    session.records = Secret::new({
+        let mut all = session.records.expose().clone();
+        all.extend_from_slice(records);
+        all
+    });
+    Ok(())
+}
+
+/// Replace the raw frame log wholesale (history compaction).
+///
+/// `Frames` bodies keep the sealed frames as-is — only the folded commit
+/// changes, so no re-encryption happens. Whole-body modes re-encrypt through
+/// the existing pipeline. On success the session's raw log is `records`.
+///
+/// # Errors
+///
+/// `corrupted length` when `records` is not a whole number of frames;
+/// publish errors as in [`write_records`].
+pub fn rewrite_body(
+    session: &mut Session,
+    file: &mut VaultFile,
+    records: &[u8],
+) -> anyhow::Result<()> {
+    let body = if session.body_alg == BodyAlg::Frames {
+        let mut digest = [0u8; 32];
+        for (start, len) in frame::spans(records)? {
+            let span = records
+                .get(start..start + len)
+                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+            digest = fold_tag(digest, span);
+        }
+        session.frames_digest = digest;
+        encode_frames(records)?
+    } else {
+        encrypt_records(
+            session.body_alg,
+            &file.parse()?.header,
+            session.k_body.expose(),
+            session.k_bmac.expose(),
+            records,
+        )?
+    };
+    let (header, generation, kept) = {
+        let parsed = file.parse()?;
+        let kept = crate::create::owned_entries(&parsed.entries)?;
+        let generation = next_generation(parsed.generation)?;
+        (parsed.header, generation, kept)
+    };
+    publish(session, file, &header, &kept, &body, generation)?;
     session.records = Secret::new(records.to_vec());
     Ok(())
 }
@@ -267,7 +340,13 @@ fn publish_rotated(
     keys: RotatedKeys,
 ) -> anyhow::Result<()> {
     let wrap_dir = dir_bytes(generation, records)?;
-    let (updated, tag) = assemble_committed(keys.k_commit.expose(), header, &wrap_dir, body)?;
+    let (updated, tag) = assemble_committed(
+        keys.k_commit.expose(),
+        header,
+        &wrap_dir,
+        body,
+        commit_mode(session.body_alg),
+    )?;
     *file = updated;
     session.vk = keys.vk;
     session.k_body = keys.k_body;

@@ -7,7 +7,7 @@
 
 use container::{Parsed, VaultFile, WrapEntry};
 
-use crate::create::{assemble_committed, dir_bytes, next_generation, Session};
+use crate::create::{assemble_committed, commit_mode, dir_bytes, next_generation, Session};
 
 /// Rebuild the wrap directory in one place.
 ///
@@ -32,8 +32,13 @@ pub fn rewrap<T>(
         let (records, out) = edit(&parsed, session.vk.expose())?;
         let generation = next_generation(parsed.generation)?;
         let wrap_dir = dir_bytes(generation, &records)?;
-        let (updated, tag) =
-            assemble_committed(session.k_commit.expose(), &parsed.header, &wrap_dir, parsed.body)?;
+        let (updated, tag) = assemble_committed(
+            session.k_commit.expose(),
+            &parsed.header,
+            &wrap_dir,
+            parsed.body,
+            commit_mode(session.body_alg),
+        )?;
         (updated, generation, tag, out)
     };
     *file = updated;
