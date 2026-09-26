@@ -30,7 +30,11 @@ pub use records::{
     restore_revision, vault_meta, write_record, write_vault_meta, RecordSummary, RevisionInfo,
 };
 pub use rotate::{change_master, reencrypt_body, revoke, write_records, Revoke, RotateCreds};
-pub use sync_export::{export_record, newer, verify_sync_record, SyncRecord};
-pub use sync_sig::{record_message, sign_record, sync_verifying_key, verify_record};
+pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN};
+pub use sync_export::{check_fresh, export_record, newer, verify_sync_record};
+pub use sync_sig::{
+    ct_len_prefix, issue_device_cert, record_message, sign_record, sync_verifying_key,
+    verify_record, DeviceCert, DeviceSignKey, SyncRecord, MSG_VERSION,
+};
 pub use unlock::{unlock, UnlockCreds};
 pub use wraps::{ChipGrant, ChipKeys, ChipPublics, DeviceGrant, DeviceKeys, DevicePublics};

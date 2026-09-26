@@ -21,7 +21,8 @@ use pq::keypair;
 use secret::Secret;
 use session::{
     add_device, add_prf_unlock, change_master, create, reencrypt_body, remove_device,
-    remove_prf_unlock, unlock, write_records, Seen, Session, UnlockCreds,
+    remove_prf_unlock, revoke, unlock, write_records, Revoke, RotateCreds, Seen, Session,
+    UnlockCreds,
 };
 use wraps::{DeviceKeys, DevicePublics, PrfPublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};

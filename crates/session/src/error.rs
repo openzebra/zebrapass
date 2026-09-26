@@ -26,6 +26,14 @@ pub enum SessionError {
     PrfFactorRequired,
     /// No wrap matched the supplied factors.
     NoUsableWrap,
+    /// A record payload longer than `u32::MAX` cannot be signed.
+    CiphertextTooLarge,
+    /// ML-DSA signing failed.
+    SignFailed,
+    /// The record is not strictly newer than the stored revision.
+    StaleRevision,
+    /// The frame header does not match the signed outer fields.
+    HeaderMismatch,
 }
 
 impl std::fmt::Display for SessionError {
@@ -36,6 +44,10 @@ impl std::fmt::Display for SessionError {
             Self::CommitMismatch => "commit mismatch",
             Self::PrfFactorRequired => "prf factor required",
             Self::NoUsableWrap => "no usable wrap",
+            Self::CiphertextTooLarge => "ciphertext too large",
+            Self::SignFailed => "sign failed",
+            Self::StaleRevision => "stale revision",
+            Self::HeaderMismatch => "header mismatch",
         })
     }
 }
