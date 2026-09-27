@@ -7,16 +7,16 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// [`Debug`] prints `[REDACTED]` and never the wrapped bytes.
 pub struct Secret<T: Zeroize>(T);
 
-impl<const N: usize> Secret<[u8; N]> {
+impl<T: Zeroize> Secret<T> {
     /// Wraps `value`. Dropping the result wipes this copy.
     #[must_use]
-    pub const fn new(value: [u8; N]) -> Self {
+    pub const fn new(value: T) -> Self {
         Self(value)
     }
 
     /// Borrows the secret bytes.
     #[must_use]
-    pub const fn expose(&self) -> &[u8; N] {
+    pub const fn expose(&self) -> &T {
         &self.0
     }
 }

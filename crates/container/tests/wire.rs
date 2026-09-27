@@ -7,15 +7,16 @@
 )]
 
 use container::{
-    assemble, encode_chip_entry, encode_device_entry, encode_password_entry, encode_prf_entry,
-    encode_wrap_dir, StaticHeader, VaultFile, WrapDir, WrapEntry, BODY_AEGIS256,
+    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry, HumanKdf,
+    encode_password_entry, encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapDir,
+    WrapEntry, BODY_AEGIS256,
     BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
     DEVICE_SUFFIX_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, HEADER_LEN,
     KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN,
-    KEM_NTRULP, KIND_CHIP, KIND_PASSWORD, KIND_PRF, MAGIC, PASSWORD_PAYLOAD_LEN,
+    KEM_MLKEM768, KEM_NTRULP, KIND_CHIP, KIND_PASSWORD, KIND_PRF, MAGIC, PASSWORD_PAYLOAD_LEN,
     PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
 };
-use pq::PQ_PK_LEN;
+use pq::{KEM_CT_LEN, PQ_PK_LEN};
 
 const fn header_with(body_alg: u16, m_kib: u32, t: u32, p: u32) -> StaticHeader {
     StaticHeader {
@@ -41,7 +42,7 @@ fn password_record() -> [u8; PASSWORD_RECORD_LEN] {
     encode_password_entry([9; 8], [1; 32], [2; 32], [3; 32])
 }
 
-const DUMMY_NTRU_CT: usize = 16;
+const DUMMY_KEM_CT: usize = KEM_CT_LEN;
 
 fn device_record(id_byte: u8, kem_alg: u16, ct_byte: u8) -> Vec<u8> {
     encode_device_entry(
@@ -49,7 +50,7 @@ fn device_record(id_byte: u8, kem_alg: u16, ct_byte: u8) -> Vec<u8> {
         kem_alg,
         [0x21; 32],
         [0x43; 32],
-        &[ct_byte; DUMMY_NTRU_CT],
+        &[ct_byte; DUMMY_KEM_CT],
         [0x55; 32],
         [0x66; 32],
         [0x77; 32],
@@ -63,7 +64,7 @@ fn chip_record(id_byte: u8, ct_byte: u8) -> Vec<u8> {
         [0x41; 65],
         [0x43; 65],
         [0x42; PQ_PK_LEN],
-        &[0x5A; 16],
+        &[0x5A; KEM_CT_LEN],
         [1; 32],
         [ct_byte; 32],
         [3; 32],
@@ -103,6 +104,7 @@ fn constants_match_the_spec() {
     assert_eq!(KIND_PASSWORD, 0x0001);
     assert_eq!(KIND_CHIP, 0x0003);
     assert_eq!(KIND_PRF, 0x0004);
+    assert_eq!(KEM_MLKEM768, 0xC002);
     assert_eq!(KEM_NTRULP, 0xC001);
     assert_eq!(DOMAIN_BODY, b"brby/v2/body");
     assert_eq!(DOMAIN_WRAP_PASSWORD, b"brby/v2/wrap-password");
@@ -113,7 +115,7 @@ fn constants_match_the_spec() {
     assert_eq!(PASSWORD_RECORD_LEN, 110);
     assert_eq!(DEVICE_PREFIX_LEN, 82);
     assert_eq!(DEVICE_SUFFIX_LEN, 96);
-    assert_eq!(DEVICE_PAYLOAD_MIN, 82 + 1 + 96);
+    assert_eq!(DEVICE_PAYLOAD_MIN, 82 + KEM_CT_LEN + 96);
 }
 
 #[test]
@@ -215,7 +217,7 @@ fn two_password_entries_are_allowed() {
 
 #[test]
 fn file_without_password_wrap_is_rejected() {
-    let device = device_record(0xAB, KEM_NTRULP, 0x5A);
+    let device = device_record(0xAB, KEM_MLKEM768, 0x5A);
     let file = file_from(&sample_header(BODY_AEGIS256), &[&device], &[0x22; 64], 1);
     assert_eq!(file.parse().unwrap_err().to_string(), "no password wrap");
 }
@@ -231,7 +233,7 @@ fn chip_entry_roundtrip() {
     assert_eq!(chip.chip_pub, [0x41; 65]);
     assert_eq!(chip.eph_pub, [0x43; 65]);
     assert_eq!(chip.pq_pk, [0x42; PQ_PK_LEN]);
-    assert_eq!(chip.sntrup_ct, &[0x5A; 16]);
+    assert_eq!(chip.kem_ct, &[0x5A; KEM_CT_LEN]);
     assert_eq!(chip.nonce, [1; 32]);
     assert_eq!(chip.ct, [0x5A; 32]);
     assert_eq!(chip.tag, [3; 32]);
@@ -270,8 +272,8 @@ fn prf_entry_roundtrip() {
 #[test]
 fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
     let password = password_record();
-    let first = device_record(0xAB, KEM_NTRULP, 0x5A);
-    let duplicate = device_record(0xAB, KEM_NTRULP, 0x5B);
+    let first = device_record(0xAB, KEM_MLKEM768, 0x5A);
+    let duplicate = device_record(0xAB, KEM_MLKEM768, 0x5B);
     let duplicated = file_from(
         &sample_header(BODY_AEGIS256),
         &[&password, first.as_slice(), duplicate.as_slice()],
@@ -283,8 +285,8 @@ fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
         "corrupted length"
     );
 
-    let second = device_record(0xCD, KEM_NTRULP, 0x5C);
-    let expected_len = 2 + 4 + DEVICE_PREFIX_LEN + DUMMY_NTRU_CT + DEVICE_SUFFIX_LEN;
+    let second = device_record(0xCD, KEM_MLKEM768, 0x5C);
+    let expected_len = 2 + 4 + DEVICE_PREFIX_LEN + DUMMY_KEM_CT + DEVICE_SUFFIX_LEN;
     assert_eq!(second.len(), expected_len);
     let file = file_from(
         &sample_header(BODY_AEGIS256),
@@ -299,13 +301,52 @@ fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
         panic!("expected device");
     };
     assert_eq!(device.device_id, [0xCD; 16]);
-    assert_eq!(device.kem_alg, KEM_NTRULP);
-    assert_eq!(device.ntru_ct, &[0x5C; DUMMY_NTRU_CT]);
+    assert_eq!(device.kem_alg, KEM_MLKEM768);
+    assert_eq!(device.kem_ct, &[0x5C; DUMMY_KEM_CT]);
     let bytes = file.as_bytes();
-    assert!(bytes.as_ptr_range().contains(&device.ntru_ct.as_ptr()));
+    assert!(bytes.as_ptr_range().contains(&device.kem_ct.as_ptr()));
     assert!(bytes
-        .windows(DUMMY_NTRU_CT)
-        .any(|window| window == device.ntru_ct));
+        .windows(DUMMY_KEM_CT)
+        .any(|window| window == device.kem_ct));
+}
+
+#[test]
+fn duplicate_chip_and_prf_ids_are_rejected() {
+    // Every id-carrying kind must reject a repeat: "remove this id" would
+    // otherwise be ambiguous and could leave a hidden unlock path behind.
+    let password = password_record();
+    let chip_first = chip_record(0xAB, 0x5A);
+    let chip_dupe = chip_record(0xAB, 0x5B);
+    let chip_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, chip_first.as_slice(), chip_dupe.as_slice()],
+        &[0x22; 64],
+        2,
+    );
+    assert_eq!(chip_file.parse().unwrap_err().to_string(), "corrupted length");
+
+    let prf_first = encode_prf_entry([0xB2; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32])
+        .unwrap();
+    let prf_dupe = encode_prf_entry([0xB2; 16], &[0x78; 32], [9; 32], [1; 32], [2; 32], [3; 32])
+        .unwrap();
+    let prf_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, prf_first.as_slice(), prf_dupe.as_slice()],
+        &[0x22; 64],
+        2,
+    );
+    assert_eq!(prf_file.parse().unwrap_err().to_string(), "corrupted length");
+
+    // Distinct ids of the same kind still parse.
+    let prf_other = encode_prf_entry([0xB3; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32])
+        .unwrap();
+    let ok = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password, prf_first.as_slice(), prf_other.as_slice()],
+        &[0x22; 64],
+        2,
+    );
+    assert_eq!(ok.parse().unwrap().entries.len(), 3);
 }
 
 #[test]
@@ -514,4 +555,70 @@ impl Lcg {
             *slot = u8::try_from(self.next_u64() & 0xff).unwrap_or(0);
         }
     }
+}
+
+#[test]
+fn human_password_roundtrip_and_floor() {
+    // In-range parameters parse; sub-floor parameters do not.
+    let ok = encode_human_password_entry(
+        [7u8; 8],
+        [8u8; 32],
+        HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MIN, p: KDF_P_MIN },
+        [9u8; 32],
+        [0x66; 32],
+        [0x77; 32],
+    );
+    let file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password_record(), ok.as_slice()],
+        &[0x55; 64],
+        2,
+    );
+    let parsed = file.parse().unwrap();
+    assert_eq!(parsed.entries.len(), 2);
+    let WrapEntry::HumanPassword(human) = parsed.entries.get(1).unwrap() else {
+        panic!("second entry must be the human password wrap");
+    };
+    assert_eq!(human.kid, [7u8; 8]);
+    assert_eq!(human.kdf, HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MIN, p: KDF_P_MIN });
+
+    // Downgrade attempt: memory below the floor.
+    let weak = encode_human_password_entry(
+        [7u8; 8],
+        [8u8; 32],
+        HumanKdf { m_kib: KDF_M_KIB_MIN - 1, t: KDF_T_MIN, p: KDF_P_MIN },
+        [9u8; 32],
+        [0x66; 32],
+        [0x77; 32],
+    );
+    let weak_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password_record(), weak.as_slice()],
+        &[0x55; 64],
+        2,
+    );
+    assert_eq!(
+        weak_file.parse().unwrap_err().to_string(),
+        "kdf parameters rejected"
+    );
+
+    // Time above the ceiling: also refused.
+    let hot = encode_human_password_entry(
+        [7u8; 8],
+        [8u8; 32],
+        HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MAX + 1, p: KDF_P_MIN },
+        [9u8; 32],
+        [0x66; 32],
+        [0x77; 32],
+    );
+    let hot_file = file_from(
+        &sample_header(BODY_AEGIS256),
+        &[&password_record(), hot.as_slice()],
+        &[0x55; 64],
+        2,
+    );
+    assert_eq!(
+        hot_file.parse().unwrap_err().to_string(),
+        "kdf parameters rejected"
+    );
 }

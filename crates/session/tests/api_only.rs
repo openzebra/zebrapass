@@ -4,27 +4,27 @@
 #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
 use session::{
-    change_password, create, reencrypt_body, unlock, write_records, BodyAlg, KdfProfile, UnlockCreds,
+    change_master, create, reencrypt_body, unlock, write_records, BodyAlg, KdfProfile, UnlockCreds,
     VaultFile,
 };
 
-const PW: &str = "correct horse battery staple";
-const PW2: &str = "reencrypted body staple";
-const PW3: &str = "third rotation staple";
+const SEED: [u8; 64] = [0x11; 64];
+const SEED2: [u8; 64] = [0x22; 64];
+const SEED3: [u8; 64] = [0x33; 64];
 
 #[test]
-fn api_only_password_flow() {
+fn api_only_master_flow() {
     // bytes on disk: consumer only ever calls as_bytes()/VaultFile::new()
-    let (mut file, _s) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     let restored = VaultFile::new(file.as_bytes().to_vec());
 
-    let mut s = unlock(&restored, &UnlockCreds::password(PW), None).unwrap();
+    let mut s = unlock(&restored, &UnlockCreds::master(&SEED), None).unwrap();
 
-    write_records(&mut s, &mut file, b"{}").unwrap();
-    change_password(&mut s, &mut file, PW2).unwrap();
-    assert!(unlock(&file, &UnlockCreds::password(PW), None).is_err());
+    write_records(&mut s, &mut file, b"").unwrap();
+    change_master(&mut s, &mut file, &SEED2, &[]).unwrap();
+    assert!(unlock(&file, &UnlockCreds::master(&SEED), None).is_err());
 
-    reencrypt_body(&mut s, &mut file, b"{}", PW3, &[], &[]).unwrap();
-    assert!(unlock(&file, &UnlockCreds::password(PW2), None).is_err());
-    unlock(&file, &UnlockCreds::password(PW3), None).unwrap();
+    reencrypt_body(&mut s, &mut file, &SEED3, &[], &[], &[]).unwrap();
+    assert!(unlock(&file, &UnlockCreds::master(&SEED2), None).is_err());
+    unlock(&file, &UnlockCreds::master(&SEED3), None).unwrap();
 }

@@ -11,9 +11,10 @@ const T_FLOOR: u32 = 2;
 const P_FLOOR: u32 = 1;
 
 /// Header fields are untrusted `u32`s. Past this, Argon2 would allocate.
-const M_KIB_CEILING: u32 = 1_048_576;
-const T_CEILING: u32 = 16;
-const P_CEILING: u32 = 16;
+/// The ceilings match the largest built-in profile (`KdfProfile::Desktop`).
+const M_KIB_CEILING: u32 = 262_144;
+const T_CEILING: u32 = 8;
+const P_CEILING: u32 = 4;
 
 const OUTPUT_LEN: usize = 32;
 
@@ -26,7 +27,7 @@ const OUTPUT_LEN: usize = 32;
 ///
 /// `kdf parameters rejected` when `m_kib`, `t`, or `p` is outside the
 /// floor (`m_kib >= 19456`, `t >= 2`, `p >= 1`) or the ceiling
-/// (`m_kib <= 1048576`, `t <= 16`, `p <= 16`). Those inputs are rejected
+/// (`m_kib <= 262144`, `t <= 8`, `p <= 4`). Those inputs are rejected
 /// before Argon2 runs. The same error is returned when Argon2 itself rejects
 /// the inputs.
 /// `empty password` when `password` is empty. Argon2 is not called.
@@ -72,15 +73,18 @@ mod tests {
         let salt = [0xA5u8; 32];
         let password = b"vault-password";
         let rejected = [
+            (262_145, 2, 1),
             (1_048_577, 2, 1),
+            (19_456, 9, 1),
             (19_456, 17, 1),
             (19_456, 2, 0),
+            (19_456, 2, 5),
+            (19_456, 2, 17),
             (19_455, 2, 1),
             (u32::MAX, 2, 1),
             (19_456, u32::MAX, 1),
             (19_456, 2, u32::MAX),
             (19_456, 1, 1),
-            (19_456, 2, 17),
         ];
         for (m_kib, t, p) in rejected {
             let err = argon2id(password, &salt, m_kib, t, p).unwrap_err();

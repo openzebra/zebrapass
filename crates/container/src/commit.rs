@@ -32,7 +32,7 @@ impl VaultFile {
     /// header plus the commit is `corrupted length` before version
     /// or KDF parameters are interpreted. Argon2 floor and ceiling are rejected
     /// before the wrap directory is read. A wrap directory without a password
-    /// record is `no password wrap`.
+    /// record is `no password wrap` (no seed *and* no human password wrap).
     pub fn parse(&self) -> anyhow::Result<Parsed<'_>> {
         let bytes = self.as_bytes();
         check_magic(bytes)?;
@@ -53,8 +53,10 @@ impl VaultFile {
             .get(HEADER_LEN..)
             .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let (dir, body) = WrapDir::parse_prefix(dir_and_body)?;
-        // A vault must keep at least one password wrap; several are tolerated.
-        if !dir.entries.iter().any(WrapEntry::is_password) {
+        // A vault must keep at least one human-class wrap (seed recovery or
+        // human password); several are tolerated. A local copy that dropped
+        // the recovery wrap still parses when a human wrap remains.
+        if !dir.entries.iter().any(WrapEntry::is_human_class) {
             return Err(anyhow::anyhow!("no password wrap"));
         }
         let min_body = limits::min_body_len(header.body_alg)

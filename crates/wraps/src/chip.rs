@@ -16,7 +16,7 @@ pub struct ChipPublics {
     pub id: [u8; 16],
     /// Uncompressed P-256 public key of the secure chip (65 bytes).
     pub chip_pub: [u8; 65],
-    /// `ntrulp` public key of this phone for the PQ half.
+    /// `ML-KEM-768` public key of this phone for the PQ half.
     pub pq_pk: [u8; PQ_PK_LEN],
 }
 
@@ -28,7 +28,7 @@ pub struct ChipPublics {
 pub struct ChipKeys {
     /// Wrap id. Compared with the wrap record before any KEM.
     pub id: [u8; 16],
-    /// `ntrulp` secret key of this phone.
+    /// `ML-KEM-768` secret key of this phone.
     pub pq_sk: Secret<[u8; PQ_SK_LEN]>,
 }
 
@@ -51,18 +51,18 @@ impl ChipGrant {
 /// A fresh software P-256 key pair is drawn for every seal. The first shared
 /// secret is `ECDH(ephemeral, chip.chip_pub)`; the ephemeral public half is
 /// stored in the record. The PQ half encrypts a second shared secret to
-/// `chip.pq_pk`, the same `ntrulp` key the device wrap uses. The wrap key is
-/// `HKDF(ss_p256 ‖ ss_pq ‖ chip_pub ‖ eph_pub ‖ pq_pk ‖ sntrup_ct, vault_id)`.
+/// `chip.pq_pk`, the same `ML-KEM-768` key the device wrap uses. The wrap key is
+/// `HKDF(ss_p256 ‖ ss_pq ‖ chip_pub ‖ eph_pub ‖ pq_pk ‖ kem_ct, vault_id)`.
 ///
 /// Returns the chip record and the grant. The grant is the static header, the
-/// id, both P-256 public keys, the `ntrulp` public key, the `ntrulp`
+/// id, both P-256 public keys, the `ML-KEM-768` public key, the `ML-KEM-768`
 /// ciphertext, the nonce, and the AEGIS ciphertext and tag. It does not
 /// include the record kind.
 ///
 /// # Errors
 ///
 /// `os entropy failed` when the OS RNG fails or no valid P-256 scalar is
-/// drawn. `kem length` when the `ntrulp` key has the wrong length or a
+/// drawn. `kem length` when the `ML-KEM-768` key has the wrong length or a
 /// public key does not decode. `kdf parameters rejected` when HKDF rejects
 /// the output length.
 pub fn seal_chip(
@@ -99,14 +99,14 @@ pub fn open_chip(
     if keys.id != wrap.id {
         return Err(anyhow::anyhow!("wrap not found"));
     }
-    let ss_pq = decrypt_shared(keys.pq_sk.expose(), wrap.sntrup_ct)?;
+    let ss_pq = decrypt_shared(keys.pq_sk.expose(), wrap.kem_ct)?;
     let k_chip = derive_k_chip(
         ss_p256,
         ss_pq.expose(),
         &wrap.chip_pub,
         &wrap.eph_pub,
         &wrap.pq_pk,
-        wrap.sntrup_ct,
+        wrap.kem_ct,
         &header.vault_id,
     )?;
     drop(ss_pq);
@@ -116,7 +116,7 @@ pub fn open_chip(
         &wrap.chip_pub,
         &wrap.eph_pub,
         &wrap.pq_pk,
-        wrap.sntrup_ct,
+        wrap.kem_ct,
         &wrap.nonce,
     );
     let vk = wad::open_vk(k_chip.expose(), &wrap.nonce, &ad, &wrap.ct, &wrap.tag);
@@ -131,14 +131,14 @@ fn seal_with_shared(
     eph_pub: &[u8; 65],
     ss_p256: &[u8; 32],
 ) -> anyhow::Result<(Vec<u8>, ChipGrant)> {
-    let (ss_pq, sntrup_ct) = encrypt_shared(chip.pq_pk.as_slice())?;
+    let (ss_pq, kem_ct) = encrypt_shared(chip.pq_pk.as_slice())?;
     let k_chip = derive_k_chip(
         ss_p256,
         ss_pq.expose(),
         &chip.chip_pub,
         eph_pub,
         &chip.pq_pk,
-        &sntrup_ct,
+        &kem_ct,
         &header.vault_id,
     )?;
     // HKDF has copied this secret. Wipe it before the record is built.
@@ -150,7 +150,7 @@ fn seal_with_shared(
         &chip.chip_pub,
         eph_pub,
         &chip.pq_pk,
-        &sntrup_ct,
+        &kem_ct,
         &nonce,
     );
     let (ct, tag) = wad::seal_vk(k_chip.expose(), &nonce, &ad, vk);
@@ -160,7 +160,7 @@ fn seal_with_shared(
         chip.chip_pub,
         *eph_pub,
         chip.pq_pk,
-        &sntrup_ct,
+        &kem_ct,
         nonce,
         ct,
         tag,
@@ -172,7 +172,7 @@ fn seal_with_shared(
         &chip.chip_pub,
         eph_pub,
         &chip.pq_pk,
-        &sntrup_ct,
+        &kem_ct,
         &nonce,
         &ct,
         &tag,
@@ -186,10 +186,10 @@ fn derive_k_chip(
     chip_pub: &[u8; 65],
     eph_pub: &[u8; 65],
     pq_pk: &[u8; PQ_PK_LEN],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     vault_id: &[u8; 16],
 ) -> anyhow::Result<Secret<[u8; 32]>> {
-    let mut ikm = wad::chip_ikm(ss_p256, ss_pq, chip_pub, eph_pub, pq_pk, sntrup_ct)?;
+    let mut ikm = wad::chip_ikm(ss_p256, ss_pq, chip_pub, eph_pub, pq_pk, kem_ct)?;
     let derived = hkdf_sha512(&ikm, vault_id, INFO_CHIP_WRAP);
     ikm.zeroize();
     derived
@@ -205,7 +205,7 @@ fn assemble_chip(
     chip_pub: &[u8; 65],
     eph_pub: &[u8; 65],
     pq_pk: &[u8; PQ_PK_LEN],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     nonce: &[u8; 32],
     ct: &[u8; 32],
     tag: &[u8; 32],
@@ -217,7 +217,7 @@ fn assemble_chip(
             + chip_pub.len()
             + eph_pub.len()
             + pq_pk.len()
-            + sntrup_ct.len()
+            + kem_ct.len()
             + nonce.len()
             + ct.len()
             + tag.len(),
@@ -227,7 +227,7 @@ fn assemble_chip(
     bytes.extend_from_slice(chip_pub);
     bytes.extend_from_slice(eph_pub);
     bytes.extend_from_slice(pq_pk);
-    bytes.extend_from_slice(sntrup_ct);
+    bytes.extend_from_slice(kem_ct);
     bytes.extend_from_slice(nonce);
     bytes.extend_from_slice(ct);
     bytes.extend_from_slice(tag);
@@ -271,13 +271,13 @@ mod tests {
     fn chip_wrap_round_trip() {
         let header = floor_header();
         let vk = [0x24u8; 32];
-        let (ntru_bytes, kem_secret) = keypair().unwrap();
-        let ntru_pk: [u8; PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
+        let (kem_bytes, kem_secret) = keypair().unwrap();
+        let kem_pk: [u8; PQ_PK_LEN] = kem_bytes.as_slice().try_into().unwrap();
         let (chip_secret, chip_pub_key) = fresh_pair().unwrap();
         let chip = ChipPublics {
             id: [0x11; 16],
             chip_pub: encode_pub(&chip_pub_key).unwrap(),
-            pq_pk: ntru_pk,
+            pq_pk: kem_pk,
         };
         let keys = ChipKeys {
             id: chip.id,

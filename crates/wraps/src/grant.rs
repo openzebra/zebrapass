@@ -26,7 +26,7 @@ pub fn assemble(
     kem_alg: u16,
     dev_x_pk: &[u8; 32],
     eph_x_pk: &[u8; 32],
-    sntrup_ct: &[u8],
+    kem_ct: &[u8],
     nonce: &[u8; 32],
     ct: &[u8; 32],
     tag: &[u8; 32],
@@ -39,7 +39,7 @@ pub fn assemble(
             + kem_le.len()
             + dev_x_pk.len()
             + eph_x_pk.len()
-            + sntrup_ct.len()
+            + kem_ct.len()
             + nonce.len()
             + ct.len()
             + tag.len(),
@@ -49,7 +49,7 @@ pub fn assemble(
     bytes.extend_from_slice(&kem_le);
     bytes.extend_from_slice(dev_x_pk);
     bytes.extend_from_slice(eph_x_pk);
-    bytes.extend_from_slice(sntrup_ct);
+    bytes.extend_from_slice(kem_ct);
     bytes.extend_from_slice(nonce);
     bytes.extend_from_slice(ct);
     bytes.extend_from_slice(tag);

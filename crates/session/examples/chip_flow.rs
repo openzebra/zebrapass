@@ -14,11 +14,11 @@ use session::{
     UnlockCreds,
 };
 
-const PW: &str = "correct horse battery staple";
+const SEED: [u8; 64] = [0x7F; 64];
 
 fn main() -> anyhow::Result<()> {
     // 1. A vault that only the password can open.
-    let (mut file, mut session) = create(PW, KdfProfile::Mobile, BodyAlg::Aegis256)?;
+    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256)?;
 
     // 2. A chip key under the platform alias for this vault. `SoftwareChip`
     //    stands in for Secure Enclave / StrongBox; the secret never leaves it.
@@ -69,7 +69,7 @@ fn main() -> anyhow::Result<()> {
     {
         return Err(anyhow::anyhow!("wrap not found"));
     }
-    unlock(&file, &UnlockCreds::password(PW), None)?;
+    unlock(&file, &UnlockCreds::master(&SEED), None)?;
     println!("password unlock ok");
     Ok(())
 }

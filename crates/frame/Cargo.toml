@@ -1,0 +1,20 @@
+[package]
+name = "frame"
+version = "0.1.0"
+description = "Revision frames: the unit of record history inside the vault body."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aegis.workspace = true
+anyhow.workspace = true
+getrandom.workspace = true
+secret = { path = "../secret" }
+
+[dev-dependencies]
+kdf = { path = "../kdf" }
+
+[lints]
+workspace = true

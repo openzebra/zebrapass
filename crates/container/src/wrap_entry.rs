@@ -3,41 +3,28 @@
 //! `entry_len` is taken from the file only to compare it with the size the kind
 //! requires. It is never used as an allocation length.
 
+use pq::PQ_PK_LEN;
 use std::marker::PhantomData;
 
-use pq::PQ_PK_LEN;
-
 use crate::limits::{
-    self, read_array, read_u16, read_u32, shift, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
-    DEVICE_SUFFIX_LEN, ENTRY_HEADER_LEN, KEM_NTRULP, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
-    KIND_PRF, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
+    read_u16, read_u32, shift, ENTRY_HEADER_LEN, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
+    KIND_PASSWORD_HUMAN, KIND_PRF,
 };
 
-const PW_NONCE: usize = 8;
-const PW_CT: usize = 40;
-const PW_TAG: usize = 72;
+mod chip;
+mod device;
+mod password;
+mod prf;
 
-const DEV_KEM: usize = 16;
-const DEV_X_PK: usize = 18;
-const DEV_EPH_X_PK: usize = 50;
+use chip::parse_chip;
+use device::parse_device;
+use password::parse_password;
+use prf::parse_prf;
 
-const CHIP_CHIP_PUB: usize = 16;
-const CHIP_EPH_PUB: usize = 81;
-const CHIP_PQ_PK: usize = 146;
-const CHIP_PREFIX_LEN: usize = 16 + 65 + 65 + PQ_PK_LEN;
-const CHIP_SUFFIX_LEN: usize = 96;
-const CHIP_PAYLOAD_MIN: usize = CHIP_PREFIX_LEN + 1 + CHIP_SUFFIX_LEN;
-
-const PRF_CRED_ID_MIN: usize = 16;
-const PRF_CRED_ID_MAX: usize = 64;
-const PRF_FIXED_LEN: usize = 16 + 32 + 32 + 32 + 32;
-const PRF_PAYLOAD_MIN: usize = PRF_FIXED_LEN + PRF_CRED_ID_MIN;
-const PRF_PAYLOAD_MAX: usize = PRF_FIXED_LEN + PRF_CRED_ID_MAX;
-
-const _: () = {
-    assert!(PW_TAG + 32 == PASSWORD_PAYLOAD_LEN);
-    assert!(DEV_EPH_X_PK + 32 == DEVICE_PREFIX_LEN);
-};
+pub use chip::encode_chip_entry;
+pub use device::encode_device_entry;
+pub use password::encode_password_entry;
+pub use prf::encode_prf_entry;
 
 /// Password wrap. Fixed fields are copies; the lifetime ties the entry to the file
 /// the way [`DeviceWrap`] does.
@@ -59,14 +46,14 @@ pub struct PasswordWrap<'a> {
 pub struct DeviceWrap<'a> {
     /// Device id.
     pub device_id: [u8; 16],
-    /// KEM id. Parsed entries hold [`KEM_NTRULP`].
+    /// KEM id. Parsed entries hold [`KEM_MLKEM768`].
     pub kem_alg: u16,
     /// Long-term X25519 public key of the device.
     pub dev_x_pk: [u8; 32],
     /// Ephemeral X25519 public key of the vault owner.
     pub eph_x_pk: [u8; 32],
     /// `ntrulp` ciphertext borrowed from the file, not a `Vec` copy.
-    pub ntru_ct: &'a [u8],
+    pub kem_ct: &'a [u8],
     /// AEGIS-256 nonce.
     pub nonce: [u8; 32],
     /// Wrapped vault key ciphertext.
@@ -87,7 +74,7 @@ pub struct ChipWrap<'a> {
     /// `ntrulp` public key the ephemeral PQ secret is encrypted to.
     pub pq_pk: [u8; PQ_PK_LEN],
     /// `ntrulp` ciphertext borrowed from the file, not a `Vec` copy.
-    pub sntrup_ct: &'a [u8],
+    pub kem_ct: &'a [u8],
     /// AEGIS-256 nonce.
     pub nonce: [u8; 32],
     /// Wrapped vault key ciphertext.
@@ -128,6 +115,8 @@ pub enum WrapEntry<'a> {
     Chip(ChipWrap<'a>),
     /// Kind `0x0004`.
     Prf(PrfWrap<'a>),
+    /// Kind `0x0005`: a human-chosen password, Argon2id + HKDF + AEGIS.
+    HumanPassword(crate::wrap_human::HumanPasswordWrap<'a>),
 }
 
 impl WrapEntry<'_> {
@@ -135,6 +124,19 @@ impl WrapEntry<'_> {
     #[must_use]
     pub const fn is_password(&self) -> bool {
         matches!(self, Self::Password(_))
+    }
+
+    /// True for the human password wrap.
+    #[must_use]
+    pub const fn is_human_password(&self) -> bool {
+        matches!(self, Self::HumanPassword(_))
+    }
+
+    /// True for any wrap a human can present: the seed recovery wrap or the
+    /// human password wrap. A vault must keep at least one.
+    #[must_use]
+    pub const fn is_human_class(&self) -> bool {
+        matches!(self, Self::Password(_) | Self::HumanPassword(_))
     }
 
     /// Wire kind code of this record.
@@ -145,6 +147,7 @@ impl WrapEntry<'_> {
             Self::Device(_) => KIND_DEVICE,
             Self::Chip(_) => KIND_CHIP,
             Self::Prf(_) => KIND_PRF,
+            Self::HumanPassword(_) => KIND_PASSWORD_HUMAN,
         }
     }
 
@@ -152,7 +155,7 @@ impl WrapEntry<'_> {
     #[must_use]
     pub const fn wrap_id(&self) -> Option<[u8; 16]> {
         match self {
-            Self::Password(_) => None,
+            Self::Password(_) | Self::HumanPassword(_) => None,
             Self::Device(wrap) => Some(wrap.device_id),
             Self::Chip(wrap) => Some(wrap.id),
             Self::Prf(wrap) => Some(wrap.id),
@@ -160,148 +163,27 @@ impl WrapEntry<'_> {
     }
 }
 
-/// Encode one password record (`110` bytes).
-#[must_use]
-pub fn encode_password_entry(
-    kid: [u8; 8],
-    nonce: [u8; 32],
-    ct: [u8; 32],
-    tag: [u8; 32],
-) -> [u8; PASSWORD_RECORD_LEN] {
-    let record_kind = KIND_PASSWORD.to_le_bytes();
-    let entry_len = limits::wire_len(PASSWORD_PAYLOAD_LEN);
-    limits::concat_array(&[&record_kind, &entry_len, &kid, &nonce, &ct, &tag])
-}
 
-/// Encode one device record. `ntru_ct` is the `ntrulp` ciphertext, any non-empty length.
+/// Encode one device record. `kem_ct` is the ML-KEM-768 ciphertext.
 ///
 /// # Errors
 ///
-/// Returns `corrupted length` when `ntru_ct` is empty or the payload
+/// Returns `corrupted length` when `kem_ct` is not [`KEM_CT_LEN`] bytes or the payload
 /// does not fit in `entry_len`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "each argument is one device-wrap wire field"
-)]
-pub fn encode_device_entry(
-    device_id: [u8; 16],
-    kem_alg: u16,
-    dev_x_pk: [u8; 32],
-    eph_x_pk: [u8; 32],
-    ntru_ct: &[u8],
-    nonce: [u8; 32],
-    ct: [u8; 32],
-    tag: [u8; 32],
-) -> anyhow::Result<Vec<u8>> {
-    if ntru_ct.is_empty() {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let payload = DEVICE_PREFIX_LEN
-        .checked_add(ntru_ct.len())
-        .and_then(|len| len.checked_add(DEVICE_SUFFIX_LEN))
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let entry_len = u32::try_from(payload).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    let mut out = Vec::with_capacity(
-        ENTRY_HEADER_LEN
-            .checked_add(payload)
-            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?,
-    );
-    out.extend_from_slice(&KIND_DEVICE.to_le_bytes());
-    out.extend_from_slice(&entry_len.to_le_bytes());
-    out.extend_from_slice(&device_id);
-    out.extend_from_slice(&kem_alg.to_le_bytes());
-    out.extend_from_slice(&dev_x_pk);
-    out.extend_from_slice(&eph_x_pk);
-    out.extend_from_slice(ntru_ct);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&ct);
-    out.extend_from_slice(&tag);
-    Ok(out)
-}
-
-/// Encode one chip record. `sntrup_ct` is the `ntrulp` ciphertext, any non-empty length.
+/// Encode one chip record. `kem_ct` is the ML-KEM-768 ciphertext.
 ///
 /// # Errors
 ///
-/// Returns `corrupted length` when `sntrup_ct` is empty or the payload
+/// Returns `corrupted length` when `kem_ct` is not [`KEM_CT_LEN`] bytes or the payload
 /// does not fit in `entry_len`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "each argument is one chip-wrap wire field"
-)]
-pub fn encode_chip_entry(
-    id: [u8; 16],
-    chip_pub: [u8; 65],
-    eph_pub: [u8; 65],
-    pq_pk: [u8; PQ_PK_LEN],
-    sntrup_ct: &[u8],
-    nonce: [u8; 32],
-    ct: [u8; 32],
-    tag: [u8; 32],
-) -> anyhow::Result<Vec<u8>> {
-    if sntrup_ct.is_empty() {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let payload = CHIP_PREFIX_LEN
-        .checked_add(sntrup_ct.len())
-        .and_then(|len| len.checked_add(CHIP_SUFFIX_LEN))
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let entry_len = u32::try_from(payload).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    let mut out = Vec::with_capacity(
-        ENTRY_HEADER_LEN
-            .checked_add(payload)
-            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?,
-    );
-    out.extend_from_slice(&KIND_CHIP.to_le_bytes());
-    out.extend_from_slice(&entry_len.to_le_bytes());
-    out.extend_from_slice(&id);
-    out.extend_from_slice(&chip_pub);
-    out.extend_from_slice(&eph_pub);
-    out.extend_from_slice(&pq_pk);
-    out.extend_from_slice(sntrup_ct);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&ct);
-    out.extend_from_slice(&tag);
-    Ok(out)
-}
-
-/// Encode one PRF record. `cred_id` is the CTAP credential id, `16..=64` bytes.
+/// Parse one wrap record starting at `offset`.
 ///
 /// # Errors
 ///
-/// Returns `corrupted length` when `cred_id` is outside `16..=64` bytes
-/// or the payload does not fit in `entry_len`.
-pub fn encode_prf_entry(
-    id: [u8; 16],
-    cred_id: &[u8],
-    salt: [u8; 32],
-    nonce: [u8; 32],
-    ct: [u8; 32],
-    tag: [u8; 32],
-) -> anyhow::Result<Vec<u8>> {
-    if !matches!(cred_id.len(), PRF_CRED_ID_MIN..=PRF_CRED_ID_MAX) {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let payload = PRF_FIXED_LEN
-        .checked_add(cred_id.len())
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let entry_len = u32::try_from(payload).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    let mut out = Vec::with_capacity(
-        ENTRY_HEADER_LEN
-            .checked_add(payload)
-            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?,
-    );
-    out.extend_from_slice(&KIND_PRF.to_le_bytes());
-    out.extend_from_slice(&entry_len.to_le_bytes());
-    out.extend_from_slice(&id);
-    out.extend_from_slice(cred_id);
-    out.extend_from_slice(&salt);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&ct);
-    out.extend_from_slice(&tag);
-    Ok(out)
-}
-
+/// `corrupted length` when the header or payload does not fit the buffer or
+/// the entry length names a different payload size; `kdf parameters
+/// rejected` for a human password wrap below the wire floor; `corrupted
+/// length` for an unknown kind.
 pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>, usize)> {
     let header_end = shift(offset, ENTRY_HEADER_LEN)?;
     // Kind and entry_len are read only when those 6 bytes sit inside the buffer
@@ -316,138 +198,15 @@ pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>
         KIND_DEVICE => parse_device(bytes, header_end, entry_len),
         KIND_CHIP => parse_chip(bytes, header_end, entry_len),
         KIND_PRF => parse_prf(bytes, header_end, entry_len),
+        KIND_PASSWORD_HUMAN => crate::wrap_human::parse_human_password(bytes, header_end, entry_len),
         // Unknown kinds are corruption. This version does not skip them.
         _ => Err(anyhow::anyhow!("corrupted length")),
     }
 }
 
-fn parse_password(
-    bytes: &[u8],
-    payload: usize,
-    entry_len: u32,
-) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    if u32::try_from(PASSWORD_PAYLOAD_LEN) != Ok(entry_len) {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let end = shift(payload, PASSWORD_PAYLOAD_LEN)?;
-    if bytes.get(payload..end).is_none() {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    Ok((
-        WrapEntry::Password(PasswordWrap {
-            kid: read_array(bytes, payload)?,
-            nonce: read_array(bytes, shift(payload, PW_NONCE)?)?,
-            ct: read_array(bytes, shift(payload, PW_CT)?)?,
-            tag: read_array(bytes, shift(payload, PW_TAG)?)?,
-            _file: PhantomData,
-        }),
-        end,
-    ))
-}
 
-fn parse_device(
-    bytes: &[u8],
-    payload: usize,
-    entry_len: u32,
-) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    if payload_len < DEVICE_PAYLOAD_MIN {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let end = shift(payload, payload_len)?;
-    if bytes.get(payload..end).is_none() {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let kem_alg = read_u16(bytes, shift(payload, DEV_KEM)?)?;
-    if kem_alg != KEM_NTRULP {
-        return Err(anyhow::anyhow!("unsupported kem {kem_alg:#06x}"));
-    }
-    let ct_len = payload_len - DEVICE_PREFIX_LEN - DEVICE_SUFFIX_LEN;
-    let ct_at = shift(payload, DEVICE_PREFIX_LEN)?;
-    let after_ct = shift(ct_at, ct_len)?;
-    let ntru_ct = bytes
-        .get(ct_at..after_ct)
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    Ok((
-        WrapEntry::Device(DeviceWrap {
-            device_id: read_array(bytes, payload)?,
-            kem_alg,
-            dev_x_pk: read_array(bytes, shift(payload, DEV_X_PK)?)?,
-            eph_x_pk: read_array(bytes, shift(payload, DEV_EPH_X_PK)?)?,
-            ntru_ct,
-            nonce: read_array(bytes, after_ct)?,
-            ct: read_array(bytes, shift(after_ct, 32)?)?,
-            tag: read_array(bytes, shift(after_ct, 64)?)?,
-        }),
-        end,
-    ))
-}
 
-fn parse_chip(
-    bytes: &[u8],
-    payload: usize,
-    entry_len: u32,
-) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    if payload_len < CHIP_PAYLOAD_MIN {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let end = shift(payload, payload_len)?;
-    if bytes.get(payload..end).is_none() {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let ct_len = payload_len - CHIP_PREFIX_LEN - CHIP_SUFFIX_LEN;
-    let ct_at = shift(payload, CHIP_PREFIX_LEN)?;
-    let after_ct = shift(ct_at, ct_len)?;
-    let sntrup_ct = bytes
-        .get(ct_at..after_ct)
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    Ok((
-        WrapEntry::Chip(ChipWrap {
-            id: read_array(bytes, payload)?,
-            chip_pub: read_array(bytes, shift(payload, CHIP_CHIP_PUB)?)?,
-            eph_pub: read_array(bytes, shift(payload, CHIP_EPH_PUB)?)?,
-            pq_pk: read_array(bytes, shift(payload, CHIP_PQ_PK)?)?,
-            sntrup_ct,
-            nonce: read_array(bytes, after_ct)?,
-            ct: read_array(bytes, shift(after_ct, 32)?)?,
-            tag: read_array(bytes, shift(after_ct, 64)?)?,
-        }),
-        end,
-    ))
-}
 
-fn parse_prf(
-    bytes: &[u8],
-    payload: usize,
-    entry_len: u32,
-) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
-    if !matches!(payload_len, PRF_PAYLOAD_MIN..=PRF_PAYLOAD_MAX) {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let end = shift(payload, payload_len)?;
-    if bytes.get(payload..end).is_none() {
-        return Err(anyhow::anyhow!("corrupted length"));
-    }
-    let cred_len = payload_len - PRF_FIXED_LEN;
-    let cred_at = shift(payload, 16)?;
-    let salt_at = shift(cred_at, cred_len)?;
-    let cred_id = bytes
-        .get(cred_at..salt_at)
-        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    Ok((
-        WrapEntry::Prf(PrfWrap {
-            id: read_array(bytes, payload)?,
-            cred_id,
-            salt: read_array(bytes, salt_at)?,
-            nonce: read_array(bytes, shift(salt_at, 32)?)?,
-            ct: read_array(bytes, shift(salt_at, 64)?)?,
-            tag: read_array(bytes, shift(salt_at, 96)?)?,
-        }),
-        end,
-    ))
-}
 
 impl<'a> TryFrom<&'a [u8]> for WrapEntry<'a> {
     type Error = anyhow::Error;

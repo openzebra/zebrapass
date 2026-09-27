@@ -40,7 +40,7 @@ impl<'a> WrapDir<'a> {
     ///
     /// Returns `corrupted length` when the prefix is shorter than
     /// `wrap_count` and `generation`, an entry is truncated or the wrong size,
-    /// the kind is unknown, or a `device_id` repeats. Returns `unsupported kem`
+    /// the kind is unknown, the wrong size, or a wrap id repeats. Returns `unsupported kem`
     /// for a device KEM other than sntrup1277.
     pub(crate) fn parse_prefix(bytes: &'a [u8]) -> anyhow::Result<(Self, &'a [u8])> {
         // Do not read wrap_count or generation until both fields fit.
@@ -101,18 +101,25 @@ pub fn encode_wrap_dir(generation: u64, entries: &[&[u8]]) -> anyhow::Result<Vec
 }
 
 fn check_entries(entries: &[WrapEntry<'_>]) -> anyhow::Result<()> {
-    // Ids are public labels, not MAC tags, so ordinary equality is enough.
-    let mut device_ids = Vec::with_capacity(entries.len());
-    for entry in entries {
-        match entry {
-            WrapEntry::Password(_) | WrapEntry::Chip(_) | WrapEntry::Prf(_) => {}
-            WrapEntry::Device(device) => {
-                if device_ids.contains(&device.device_id) {
-                    return Err(anyhow::anyhow!("corrupted length"));
-                }
-                device_ids.push(device.device_id);
-            }
-        }
+    // Ids are public labels, not MAC tags, so ordinary equality is enough. A
+    // repeated id would make "remove this id" ambiguous and could leave a
+    // hidden unlock path behind, so a file that carries one does not parse.
+    let mut ids: Vec<[u8; 16]> = entries.iter().filter_map(id_of).collect();
+    let submitted = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.len() != submitted {
+        return Err(anyhow::anyhow!("corrupted length"));
     }
     Ok(())
+}
+
+/// The id an entry is addressed by, if its kind carries one.
+const fn id_of(entry: &WrapEntry<'_>) -> Option<[u8; 16]> {
+    match entry {
+        WrapEntry::Password(_) | WrapEntry::HumanPassword(_) => None,
+        WrapEntry::Chip(chip) => Some(chip.id),
+        WrapEntry::Device(device) => Some(device.device_id),
+        WrapEntry::Prf(prf) => Some(prf.id),
+    }
 }
