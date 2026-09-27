@@ -37,6 +37,10 @@ impl SeedPhrase {
     /// Parse a phrase: 12 to 24 words from the wordlist with a valid
     /// checksum, normalized, then derive its seed with `passphrase`.
     ///
+    /// Restore stays permissive so vaults created before the 24-word
+    /// policy remain recoverable; every new vault comes from
+    /// [`SeedPhrase::generate_24`] (256-bit entropy).
+    ///
     /// # Errors
     ///
     /// `invalid seed phrase` for a wrong word count, a word outside the
@@ -70,8 +74,8 @@ impl SeedPhrase {
 
     /// The normalized phrase: NFKD, lowercase, single-spaced.
     #[must_use]
-    pub fn phrase_normalized(&self) -> SecretString {
-        self.phrase.clone()
+    pub fn phrase_normalized(&self) -> &str {
+        self.phrase.expose_secret()
     }
 }
 
@@ -126,7 +130,7 @@ mod tests {
         let messy = SeedPhrase::parse(&secret(messy), &secret("")).unwrap();
         let canonical = SeedPhrase::parse(&secret(ABANDON_12), &secret("")).unwrap();
         assert_eq!(messy.seed(), canonical.seed());
-        assert_eq!(messy.phrase_normalized().expose_secret(), ABANDON_12);
+        assert_eq!(messy.phrase_normalized(), ABANDON_12);
         // Uppercase input is not a valid canonical phrase.
         let upper = ABANDON_12.to_uppercase();
         assert!(SeedPhrase::parse(&secret(&upper), &secret("")).is_err());
@@ -162,8 +166,7 @@ mod tests {
         let a = SeedPhrase::generate_24().unwrap();
         let b = SeedPhrase::generate_24().unwrap();
         for phrase in [&a, &b] {
-            let normalized = phrase.phrase_normalized();
-            let words: Vec<&str> = normalized.expose_secret().split(' ').collect();
+            let words: Vec<&str> = phrase.phrase_normalized().split(' ').collect();
             assert_eq!(words.len(), 24);
             assert!(words.iter().all(|word| crate::en_words::EN.contains(word)));
         }
