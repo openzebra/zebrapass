@@ -108,7 +108,7 @@ pub fn paths_for(base: &Path, vault_id: &[u8; 16]) -> Paths {
 ///
 /// # Errors
 ///
-/// Errors from [`session::create`], [`seed::user_id`], and the storage
+/// Errors from [`session::create`], [`kdf::client_id`], and the storage
 /// layer (`os entropy failed`, `write failed`, `rename failed`,
 /// `sync failed`).
 pub fn create_vault(
@@ -117,15 +117,15 @@ pub fn create_vault(
     profile: KdfProfile,
     body_alg: BodyAlg,
 ) -> anyhow::Result<(Paths, Session, VaultFile, LocalMeta)> {
-    let device_id = draw_device_id()?;
-    let user_id = seed::user_id(seed)?;
+    let client_id = kdf::client_id(seed)?;
     let (file, session) = create(seed, profile, body_alg)?;
+    let device_id = session.origin_device();
     let vault_id = file.parse()?.header.vault_id;
     let paths = paths_for(base, &vault_id);
     write_atomic(&paths.vault_file, file.as_bytes())?;
     let meta = LocalMeta {
         device_id,
-        user_id,
+        client_id,
         created_at_ms: now_ms(),
         name: String::new(),
         seen: None,
@@ -153,17 +153,6 @@ pub fn mark_seen(
         commit_tag: *session.commit_tag(),
     });
     save_local_meta(&paths.local_meta, meta, &session.local_meta_key()?)
-}
-
-pub(crate) fn draw_device_id() -> anyhow::Result<[u8; 16]> {
-    for _ in 0..8 {
-        let mut id = [0u8; 16];
-        getrandom::fill(&mut id).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
-        if id != [0u8; 16] {
-            return Ok(id);
-        }
-    }
-    Err(anyhow::anyhow!("os entropy failed"))
 }
 
 pub(crate) fn now_ms() -> u64 {

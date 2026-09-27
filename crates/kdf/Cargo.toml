@@ -13,6 +13,7 @@ argon2 = { workspace = true, features = ["alloc"] }
 hkdf.workspace = true
 secret = { path = "../secret" }
 sha2.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

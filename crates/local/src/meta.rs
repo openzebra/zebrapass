@@ -4,14 +4,14 @@
 //! The frame is sealed with `kdf::local_meta_key(vk, vault_id)` and lives
 //! outside the container — it is a plain frame file, not part of the
 //! AE1-wrapped body. Its payload is a document with the device id, the
-//! identity point, the creation time, and a display name.
+//! client id, the creation time, and a display name.
 
 use std::path::Path;
 
 use frame::{seal, FrameMeta, ALG_AEGIS256, KIND_REVISION};
 use record::{
-    Document, ValueType, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME, TAG_SEEN_COMMIT,
-    TAG_SEEN_GENERATION, TAG_USER_ID,
+    Document, ValueType, TAG_CLIENT_ID, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME,
+    TAG_SEEN_COMMIT, TAG_SEEN_GENERATION,
 };
 use secret::Secret;
 
@@ -29,8 +29,9 @@ pub struct SeenCursor {
 pub struct LocalMeta {
     /// The device that created the vault on this machine.
     pub device_id: [u8; 16],
-    /// Identity point derived from the master seed (`x ‖ y`, 64 bytes).
-    pub user_id: [u8; 64],
+    /// Uniform client id derived from the master seed ([`kdf::client_id`],
+    /// 64 bytes). The P-256 identity point never enters local metadata.
+    pub client_id: [u8; 64],
     /// Creation time in unix milliseconds.
     pub created_at_ms: u64,
     /// Display name of the vault on this device.
@@ -45,7 +46,7 @@ pub struct LocalMeta {
 pub fn meta_document(meta: &LocalMeta) -> Document {
     let mut doc = Document::new();
     doc.set_data(TAG_DEVICE_ID, ValueType::Bytes, &meta.device_id);
-    doc.set_data(TAG_USER_ID, ValueType::Bytes, &meta.user_id);
+    doc.set_data(TAG_CLIENT_ID, ValueType::Bytes, &meta.client_id);
     doc.set_data(TAG_CREATED_AT_MS, ValueType::Bytes, &meta.created_at_ms.to_le_bytes());
     doc.set_text(TAG_NAME, &meta.name);
     if let Some(seen) = meta.seen {
@@ -66,8 +67,8 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
         .data(TAG_DEVICE_ID)?
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let user_id: [u8; 64] = doc
-        .data(TAG_USER_ID)?
+    let client_id: [u8; 64] = doc
+        .data(TAG_CLIENT_ID)?
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let raw_time = doc
@@ -94,7 +95,7 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
     };
     Ok(LocalMeta {
         device_id,
-        user_id,
+        client_id,
         created_at_ms: u64::from_le_bytes(raw_time),
         name,
         seen,
@@ -178,7 +179,7 @@ mod tests {
                 commit_tag: [3u8; 32],
             }),
             device_id: [3; 16],
-            user_id: [4; 64],
+            client_id: [4; 64],
             created_at_ms: 1_700_000_000_123,
             name: String::from("Personal"),
         }

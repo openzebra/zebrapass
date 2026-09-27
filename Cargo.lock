@@ -358,6 +358,7 @@ dependencies = [
  "hkdf",
  "secret",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ extern crate hkdf as hkdf_impl;
 use hkdf_impl::Hkdf;
 use secret::Secret;
 use sha2::Sha512;
+use zeroize::Zeroizing;
 
 use crate::hkdf::hkdf_sha512;
 
@@ -71,10 +72,10 @@ pub fn local_meta_key(
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn identity_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
     let hk = Hkdf::<Sha512>::new(None, seed);
-    let mut okm = [0u8; OUTPUT_LEN];
-    hk.expand(INFO_IDENTITY, &mut okm)
+    let mut okm = Zeroizing::new([0u8; OUTPUT_LEN]);
+    hk.expand(INFO_IDENTITY, okm.as_mut())
         .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
-    Ok(Secret::new(okm))
+    Ok(Secret::new(*okm))
 }
 
 /// Opaque 64-byte sync client id. Not a public key and not [`identity_seed`].
@@ -84,10 +85,10 @@ pub fn identity_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn client_id(seed: &[u8; 64]) -> anyhow::Result<[u8; 64]> {
     let hk = Hkdf::<Sha512>::new(None, seed);
-    let mut okm = [0u8; 64];
-    hk.expand(INFO_CLIENT_ID, &mut okm)
+    let mut okm = Zeroizing::new([0u8; 64]);
+    hk.expand(INFO_CLIENT_ID, okm.as_mut())
         .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
-    Ok(okm)
+    Ok(*okm)
 }
 
 /// Account id for one server: the per-server HKDF variant.
@@ -100,14 +101,15 @@ pub fn client_id(seed: &[u8; 64]) -> anyhow::Result<[u8; 64]> {
 ///
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn client_id_for(seed: &[u8; 64], server_origin: &[u8]) -> anyhow::Result<[u8; 64]> {
-    let mut info = Vec::with_capacity(INFO_CLIENT_ID.len() + server_origin.len());
-    info.extend_from_slice(INFO_CLIENT_ID);
-    info.extend_from_slice(server_origin);
+    if server_origin.is_empty() {
+        return Err(anyhow::anyhow!("empty server origin"));
+    }
+    let info = framed_info(INFO_CLIENT_ID, &[server_origin])?;
     let hk = Hkdf::<Sha512>::new(None, seed);
-    let mut okm = [0u8; 64];
-    hk.expand(&info, &mut okm)
+    let mut okm = Zeroizing::new([0u8; 64]);
+    hk.expand(&info, okm.as_mut())
         .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
-    Ok(okm)
+    Ok(*okm)
 }
 
 /// 32-byte ML-DSA signing seed. Wiped on drop.
@@ -117,10 +119,24 @@ pub fn client_id_for(seed: &[u8; 64], server_origin: &[u8]) -> anyhow::Result<[u
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn sync_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
     let hk = Hkdf::<Sha512>::new(None, seed);
-    let mut okm = [0u8; OUTPUT_LEN];
-    hk.expand(INFO_SYNC_SIGN, &mut okm)
+    let mut okm = Zeroizing::new([0u8; OUTPUT_LEN]);
+    hk.expand(INFO_SYNC_SIGN, okm.as_mut())
         .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
-    Ok(Secret::new(okm))
+    Ok(Secret::new(*okm))
+}
+
+/// Builds `label || u16 len || part` per part, so variable parts can never
+/// alias a shorter label or a sibling part.
+fn framed_info(label: &[u8], parts: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
+    let cap = label.len() + parts.iter().map(|part| 2 + part.len()).sum::<usize>();
+    let mut info = Vec::with_capacity(cap);
+    info.extend_from_slice(label);
+    for part in parts {
+        let len = u16::try_from(part.len()).map_err(|_| anyhow::anyhow!("info part too long"))?;
+        info.extend_from_slice(&len.to_be_bytes());
+        info.extend_from_slice(part);
+    }
+    Ok(info)
 }
 
 #[cfg(test)]
@@ -189,5 +205,20 @@ mod tests {
         assert_ne!(a, other, "different origins give unlinkable ids");
         // The plain client id stays a distinct derivation.
         assert_ne!(a, client_id(&seed).unwrap());
+    }
+
+    #[test]
+    fn empty_server_origin_is_rejected() {
+        let seed = [0x24u8; 64];
+        assert!(client_id_for(&seed, b"").is_err());
+    }
+
+    #[test]
+    fn framed_origins_cannot_alias_their_prefixes() {
+        let seed = [0x11u8; 64];
+        let ab = client_id_for(&seed, b"ab").unwrap();
+        assert_ne!(ab, client_id(&seed).unwrap());
+        assert_ne!(ab, client_id_for(&seed, b"a").unwrap());
+        assert_ne!(ab, client_id_for(&seed, b"abc").unwrap());
     }
 }

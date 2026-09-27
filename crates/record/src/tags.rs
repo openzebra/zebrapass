@@ -29,8 +29,8 @@ pub const TAG_TOTP: u16 = 0x0107;
 /// Local device id, 16 bytes (`Bytes`).
 pub const TAG_DEVICE_ID: u16 = 0x0201;
 
-/// Derived identity point, 64 bytes (`Bytes`).
-pub const TAG_USER_ID: u16 = 0x0202;
+/// Uniform client id derived from the master seed, 64 bytes (`Bytes`).
+pub const TAG_CLIENT_ID: u16 = 0x0202;
 
 /// Creation time in unix milliseconds (`Bytes`, 8-byte little-endian `u64`).
 pub const TAG_CREATED_AT_MS: u16 = 0x0203;

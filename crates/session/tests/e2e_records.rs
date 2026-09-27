@@ -80,8 +80,8 @@ fn seed_vault_storage_and_records_end_to_end() {
     let meta_key = session.local_meta_key().unwrap();
     let reloaded = local::load_local_meta(&paths.local_meta, &meta_key).unwrap();
     assert_eq!(reloaded.device_id, meta.device_id);
-    assert_eq!(reloaded.user_id, meta.user_id);
-    assert_eq!(reloaded.user_id, seed::user_id(&seed).unwrap());
+    assert_eq!(reloaded.client_id, meta.client_id);
+    assert_eq!(reloaded.client_id, kdf::client_id(&seed).unwrap());
     assert_ne!(meta.device_id, [0u8; 16]);
 
     // -- 2. One write, then a cold open: the body is decrypted once at
@@ -175,8 +175,16 @@ fn seed_vault_storage_and_records_end_to_end() {
 #[test]
 fn identity_is_deterministic_and_devices_differ() {
     let seed = [0x42u8; 64];
-    assert_eq!(seed::user_id(&seed).unwrap(), seed::user_id(&seed).unwrap());
-    assert_ne!(seed::user_id(&seed).unwrap(), seed::user_id(&[0x43u8; 64]).unwrap());
+    assert_eq!(kdf::client_id(&seed).unwrap(), kdf::client_id(&seed).unwrap());
+    assert_ne!(
+        kdf::client_id(&seed).unwrap(),
+        kdf::client_id(&[0x43u8; 64]).unwrap()
+    );
+    // The per-server ids differ from each other and from the global one.
+    let a = kdf::client_id_for(&seed, b"https://a.example").unwrap();
+    let b = kdf::client_id_for(&seed, b"https://b.example").unwrap();
+    assert_ne!(a, b);
+    assert_ne!(a, kdf::client_id(&seed).unwrap());
 
     let base = temp_base("identity");
     let (_p1, _s1, _f1, meta1) =
@@ -184,7 +192,7 @@ fn identity_is_deterministic_and_devices_differ() {
     let (_p2, _s2, _f2, meta2) =
         local::create_vault(&base, &seed, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     assert_ne!(meta1.device_id, meta2.device_id);
-    assert_eq!(meta1.user_id, meta2.user_id);
+    assert_eq!(meta1.client_id, meta2.client_id);
     std::fs::remove_dir_all(&base).unwrap();
 }
 
