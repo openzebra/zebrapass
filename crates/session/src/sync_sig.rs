@@ -10,6 +10,12 @@ use zeroize::Zeroizing;
 
 pub use pq::{sync_verifying_key, DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_VK_LEN};
 
+#[allow(clippy::cast_possible_truncation)]
+const SYNC_VK_LEN_U16: u16 = {
+    assert!(SYNC_VK_LEN <= u16::MAX as usize);
+    SYNC_VK_LEN as u16
+};
+
 use crate::error::SessionError;
 
 /// Wire format version of `record_message`.
@@ -44,6 +50,8 @@ pub fn ct_len_prefix(len: usize) -> Result<[u8; 4], SessionError> {
 }
 
 /// Exact bytes signed over one record. Exposed so a verifier can rebuild it.
+/// The wire version is a constant, not a caller choice: a future layout must
+/// change `MSG_VERSION` and this function together.
 #[must_use]
 pub fn record_message(
     vault_id: &[u8; 16],
@@ -51,7 +59,6 @@ pub fn record_message(
     revision: u64,
     content_hash: &[u8; 32],
     ciphertext: &[u8],
-    msg_version: u16,
     key_generation: u32,
 ) -> Vec<u8> {
     // The caller got `ciphertext` from a frame, so the length fits; the
@@ -73,7 +80,7 @@ pub fn record_message(
     msg.extend_from_slice(&L_CT_LEN.to_le_bytes());
     msg.extend_from_slice(&ct_len.to_le_bytes());
     msg.extend_from_slice(&L_VERSION.to_le_bytes());
-    msg.extend_from_slice(&msg_version.to_le_bytes());
+    msg.extend_from_slice(&MSG_VERSION.to_le_bytes());
     msg.extend_from_slice(&L_GENERATION.to_le_bytes());
     msg.extend_from_slice(&key_generation.to_le_bytes());
     msg.extend_from_slice(ciphertext);
@@ -103,17 +110,23 @@ pub struct SyncRecord {
 
 impl SyncRecord {
     /// Rebuild the signed message for `self`.
-    #[must_use]
-    pub fn signed_message(&self) -> Vec<u8> {
-        record_message(
+    ///
+    /// # Errors
+    ///
+    /// `unsupported sync message version` when `msg_version` is not the
+    /// constant baked into the message format.
+    pub fn signed_message(&self) -> anyhow::Result<Vec<u8>> {
+        if self.msg_version != MSG_VERSION {
+            return Err(anyhow::anyhow!("unsupported sync message version"));
+        }
+        Ok(record_message(
             &self.vault_id,
             self.record_id,
             self.revision,
             &self.content_hash,
             &self.frame,
-            self.msg_version,
             self.key_generation,
-        )
+        ))
     }
 
     /// Verify this record against a device verifying key and the expected
@@ -137,8 +150,8 @@ pub fn sign_record(
     device: &DeviceSignKey,
     record: &SyncRecord,
 ) -> Result<Vec<u8>, SessionError> {
-    pq::sync_sign(&*device.seed, SYNC_CTX, &record.signed_message())
-        .map_err(|_| SessionError::SignFailed)
+    let msg = record.signed_message().map_err(|_| SessionError::UnsupportedMsgVersion)?;
+    pq::sync_sign(&*device.seed, SYNC_CTX, &msg).map_err(|_| SessionError::SignFailed)
 }
 
 /// Verify one record payload. Binds the record to `vault_id` before any
@@ -156,7 +169,10 @@ pub fn verify_record(
     if vault_id != &record.vault_id {
         return Err(anyhow::anyhow!("vault id mismatch"));
     }
-    let msg = record.signed_message();
+    if record.msg_version != MSG_VERSION {
+        return Err(anyhow::anyhow!("unsupported sync message version"));
+    }
+    let msg = record.signed_message()?;
     pq::sync_verify(device_vk, SYNC_CTX, &msg, &record.signature)
 }
 
@@ -214,9 +230,7 @@ impl DeviceCert {
         let mut msg = Vec::with_capacity(2 + 64 + 2 + SYNC_VK_LEN + 2 + 8 + 2 + 8);
         msg.extend_from_slice(&64u16.to_le_bytes());
         msg.extend_from_slice(&self.client_id);
-        msg.extend_from_slice(
-            &u16::try_from(SYNC_VK_LEN).unwrap_or(u16::MAX).to_le_bytes(),
-        );
+        msg.extend_from_slice(&SYNC_VK_LEN_U16.to_le_bytes());
         msg.extend_from_slice(&self.device_vk);
         msg.extend_from_slice(&8u16.to_le_bytes());
         msg.extend_from_slice(&self.not_after_ms.to_le_bytes());
@@ -320,8 +334,8 @@ mod tests {
 
     #[test]
     fn message_is_length_prefixed_with_new_fields() {
-        let a = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 10], MSG_VERSION, 0);
-        let b = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 9], MSG_VERSION, 0);
+        let a = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 10], 0);
+        let b = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 9], 0);
         assert_ne!(a, b);
         assert_eq!(a.len(), 2 + 16 + 2 + 4 + 2 + 8 + 2 + 32 + 2 + 4 + 2 + 2 + 2 + 4 + 10);
     }

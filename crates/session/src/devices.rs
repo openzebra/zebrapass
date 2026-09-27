@@ -124,8 +124,11 @@ fn remove_wrap_of_kind(
 
 /// Drop the device wrap with `device_id`.
 ///
-/// The password wrap is never removed. The body is copied unchanged. Generation
-/// increases by one. On error, `file` and `session` are left as they were.
+/// This is wrap-only: the vault key does not rotate, so a device that was
+/// online at removal time keeps decrypting until [`revoke`] runs. Use
+/// [`revoke`] for a lost device. The password wrap is never removed. The
+/// body is copied unchanged. Generation increases by one. On error, `file`
+/// and `session` are left as they were.
 ///
 /// # Errors
 ///

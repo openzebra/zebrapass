@@ -162,7 +162,8 @@ pub fn write_record(
             .ok_or_else(|| anyhow::anyhow!("record id overflow"))?
     };
     let revision = next_revision(latest(&refs, record_id))?;
-    append_frame(session, file, record_id, revision, KIND_REVISION, &doc.encode()?)?;
+    let encoded = doc.encode()?;
+    append_frame(session, file, record_id, revision, KIND_REVISION, &pack_frame(&encoded)?)?;
     Ok(record_id)
 }
 
@@ -287,7 +288,68 @@ fn open_frame(session: &Session, reference: &FrameRef) -> anyhow::Result<Documen
     let key = frame_key_for(session, reference.record_id)?;
     let bytes = frame_at(session.records.expose(), reference)?;
     let plaintext = frame::open(&key, bytes)?;
-    Document::parse(plaintext.expose())
+    Document::parse(unpack_frame(plaintext.expose())?)
+}
+
+/// Ciphertext sizes at which record writes are padded, so the sealed
+/// frame length only reveals the bucket, not the document size.
+const BUCKETS: [usize; 6] = [256, 1024, 4_096, 16_384, 65_536, 262_144];
+
+/// First four bytes of a padded frame: `"ZPAD"`. Encoded documents begin
+/// with the little-endian schema `u16`, so no document can start with it.
+const PAD_MAGIC: [u8; 4] = *b"ZPAD";
+
+/// Frames written before the padding scheme carry the document verbatim;
+/// `unpack_frame` tells the two layouts apart by the `ZPAD` prefix.
+fn unpack_frame(plaintext: &[u8]) -> anyhow::Result<&[u8]> {
+    let Some(magic) = plaintext.first_chunk::<4>() else {
+        return Ok(plaintext);
+    };
+    if magic != &PAD_MAGIC {
+        return Ok(plaintext);
+    }
+    let real_len = plaintext
+        .get(4..8)
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+        .map_or(0, u32::from_le_bytes) as usize;
+    plaintext
+        .get(8..8 + real_len)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))
+}
+
+/// Wire layout of a padded record plaintext:
+/// `"ZPAD" ‖ u32 real_len ‖ doc ‖ zero padding`.
+fn pack_frame(doc: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let bucket = BUCKETS
+        .iter()
+        .copied()
+        .find(|bucket| doc.len().checked_add(8).is_some_and(|total| total <= *bucket));
+    let padded = match bucket {
+        Some(bucket) => bucket,
+        None => total_len(doc.len())?,
+    };
+    let mut out = vec![0u8; padded];
+    let real_len = u32::try_from(doc.len()).map_err(|_| anyhow::anyhow!("document too large"))?;
+    let Some(head) = out.get_mut(..4) else {
+        return Err(anyhow::anyhow!("frame too small"));
+    };
+    head.copy_from_slice(&PAD_MAGIC);
+    let Some(prefix) = out.get_mut(4..8) else {
+        return Err(anyhow::anyhow!("frame too small"));
+    };
+    prefix.copy_from_slice(&real_len.to_le_bytes());
+    let Some(body) = out.get_mut(8..8 + doc.len()) else {
+        return Err(anyhow::anyhow!("frame too small"));
+    };
+    body.copy_from_slice(doc);
+    Ok(out)
+}
+
+fn total_len(doc_len: usize) -> anyhow::Result<usize> {
+    doc_len
+        .checked_add(4)
+        .and_then(|total| total.checked_next_multiple_of(65_536))
+        .ok_or_else(|| anyhow::anyhow!("frame too large"))
 }
 
 fn next_revision(winner: Option<&FrameRef>) -> anyhow::Result<u64> {
@@ -311,11 +373,10 @@ fn append_frame(
         kind,
         record_id,
         revision,
-        origin_device: session.origin_device.unwrap_or([0u8; 16]),
+        origin_device: session.origin_device,
         timestamp_ms: now_ms(),
         alg: ALG_AEGIS256,
-    };
-    let key = frame_key_for(session, record_id)?;
+    };    let key = frame_key_for(session, record_id)?;
     let frame_bytes = frame::seal(&key, &meta, plaintext)?;
     // write_records appends: it owns the old bytes and the commit update.
     write_records(session, file, &frame_bytes)

@@ -38,9 +38,10 @@ pub struct Session {
     /// Public vault id: the HKDF salt for frame keys.
     pub(crate) vault_id: [u8; 16],
     /// Device identity this session stamps into new frames: the wrap id of
-    /// the device wrap that opened the session, or `None` for seed, human
-    /// password, and recovery unlocks (their frames use the zero origin).
-    pub(crate) origin_device: Option<[u8; 16]>,
+    /// the device wrap that opened the session, a fresh random id when the
+    /// vault was just created, or a per-unlock random id for seed, human
+    /// password, and recovery unlocks (an unregistered origin).
+    pub(crate) origin_device: [u8; 16],
     /// Decrypted frame body. A per-record key opens single frames from it.
     pub(crate) records: Secret<Vec<u8>>,
     /// Running `Frames` body commitment. Zero for whole-body modes.
@@ -74,7 +75,7 @@ impl Session {
 
     /// The device wrap id this session unlocked with, if any.
     #[must_use]
-    pub const fn origin_device(&self) -> Option<[u8; 16]> {
+    pub const fn origin_device(&self) -> [u8; 16] {
         self.origin_device
     }
 
@@ -109,6 +110,7 @@ pub fn create(
     // KuzMgm is a recognized id this build cannot seal. Reject it before Argon2.
     let body_id = body_alg_id(body_alg)?;
     let vk = draw_secret()?;
+    let origin_device = fresh_device_id()?;
     let header = new_header(profile, body_id)?;
     let password = seal_password(&header, master, vk.expose())?;
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &header.vault_id)?;
@@ -121,7 +123,6 @@ pub fn create(
         CommitMode::Folded => body_digest(&body)?,
         CommitMode::Whole => [0u8; 32],
     };
-    let origin_device = None;
     Ok((
         file,
         Session {
@@ -444,11 +445,23 @@ fn new_header(profile: KdfProfile, body_alg: u16) -> anyhow::Result<StaticHeader
 }
 
 fn fill_random(dest: &mut [u8]) -> anyhow::Result<()> {
-    // The session error set has no RNG variant. Wipe whatever was written and
-    // report a structural failure; the caller cannot repair an OS entropy error.
+    // An OS entropy failure is environmental, not structural: report it as
+    // its own error so the UI never shows a corruption message.
     if getrandom::fill(dest).is_err() {
         dest.zeroize();
-        return Err(anyhow::anyhow!("corrupted length"));
+        return Err(SessionError::Entropy.into());
     }
     Ok(())
+}
+
+/// Random per-device frame origin. The all-zero id is never handed out: it
+/// would make an unidentified origin look like a registered device.
+///
+/// # Errors
+///
+/// `os entropy failed` when the OS RNG is unavailable.
+pub fn fresh_device_id() -> anyhow::Result<[u8; 16]> {
+    let mut id = [0u8; 16];
+    fill_random(&mut id)?;
+    Ok(id)
 }

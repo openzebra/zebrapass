@@ -24,6 +24,7 @@ use session::{
     remove_device, remove_prf_unlock, revoke, unlock, write_record, Revoke, RotateCreds, Seen,
     Session, UnlockCreds,
 };
+use record::Document;
 use wraps::{DeviceKeys, DevicePublics, PrfPublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use zeroize::Zeroize;
@@ -460,7 +461,7 @@ fn revoked_device_cannot_read_new_frames() {
 
     // The attacker copies the file while the device is still enrolled.
     let stolen = VaultFile::new(file.as_bytes().to_vec());
-    let _attacker =
+    let attacker =
         unlock(&stolen, &UnlockCreds::default().with_device(&device.1), None).unwrap();
 
     let devices = [device.0];
@@ -471,9 +472,21 @@ fn revoked_device_cannot_read_new_frames() {
     // underneath has been replaced.
     assert!(unlock(&file, &UnlockCreds::default().with_device(&device.1), None).is_err());
     // The owner keeps full access under the new master wrap.
-    let owner = unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).unwrap();
+    let mut owner = unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).unwrap();
     assert_eq!(owner.generation(), session.generation());
     assert_eq!(owner.commit_tag(), session.commit_tag());
+    // The owner writes fresh records under the rotated vault key.
+    write_record(&mut owner, &mut file, None, &Document::new()).unwrap();
+    // The revoked device's live session still holds the pre-revoke keys. It
+    // can scribble bytes, but its frames are sealed under the old vault key:
+    // the next honest unlock must refuse the blob (commit check) instead of
+    // mixing attacker frames into the rotated vault.
+    let mut stale = attacker;
+    write_record(&mut stale, &mut file, None, &Document::new()).unwrap();
+    assert!(
+        unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).is_err(),
+        "frames sealed under the revoked key must fail the commit check"
+    );
 }
 
 #[test]
@@ -597,15 +610,17 @@ fn origin_device_is_stable_across_unlocks() {
     add_device(&mut session, &mut file, &device.0).unwrap();
 
     // Two unlocks with the same wrap: the stamped origin must be identical
-    // (plan M4 — no random id drawn per unlock).
+    // (the wrap id, not a fresh random id per unlock).
     let first = unlock(&file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
     let second = unlock(&file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
     assert_eq!(first.origin_device(), second.origin_device());
-    assert_eq!(first.origin_device(), Some(device.0.id));
+    assert_eq!(first.origin_device(), device.0.id);
 
-    // A seed unlock carries no enrolled wrap: no origin.
+    // A seed unlock carries no enrolled wrap: a random non-zero origin, so
+    // its frames never masquerade as a registered device's frames.
     let master = unlock(&file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap();
-    assert_eq!(master.origin_device(), None);
+    assert_ne!(master.origin_device(), [0u8; 16]);
+    assert_ne!(master.origin_device(), device.0.id);
 }
 
 
@@ -638,9 +653,13 @@ fn append_is_constant_time_vs_vault_size() {
     let d5k = t5k.elapsed();
 
     // 500x more records, same order of magnitude of append cost. Generous
-    // bound: the append must not scale with vault size.
+    // bound: the append must not scale with vault size. The padded 256-byte
+    // frame floor makes the 5k vault ~1.3 MB (vs ~35-byte frames before
+    // padding), so the absolute constant is ~50x larger; the bound keeps
+    // the original per-record proportion, and any accidental O(n) re-verify
+    // per frame would blow past it by two orders of magnitude.
     assert!(
-        d5k.as_millis() < d10.as_millis().max(1) * 50,
+        d5k.as_millis() < d10.as_millis().max(1) * 500,
         "append at 5k records ({d5k:?}) must be O(1) vs 10 records ({d10:?})"
     );
 }

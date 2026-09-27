@@ -72,7 +72,7 @@ pub fn kem_decapsulate(dk: &[u8], ciphertext: &[u8]) -> anyhow::Result<Secret<[u
     let key = DecapsulationKey::<MlKem768>::from_seed(Seed::from(*seed));
     let ss = key
         .decapsulate_slice(ciphertext)
-        .map_err(|_| anyhow!("ml-kem ciphertext must be {KEM_CT_LEN} bytes"))?;
+        .map_err(|_| anyhow!("ml-kem decapsulation failed"))?;
     let mut shared = [0u8; 32];
     shared.copy_from_slice(ss.as_slice());
     Ok(Secret::new(shared))

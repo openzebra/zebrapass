@@ -52,6 +52,10 @@ pub enum SessionError {
     CertRejected,
     /// The device certificate is past its `not_after` time.
     CertExpired,
+    /// The sync message layout version is not the constant one.
+    UnsupportedMsgVersion,
+    /// The OS entropy source failed.
+    Entropy,
 }
 
 impl std::fmt::Display for SessionError {
@@ -74,6 +78,8 @@ impl std::fmt::Display for SessionError {
             Self::DeviceNotTrusted => "device not enrolled",
             Self::CertRejected => "device cert rejected",
             Self::CertExpired => "device cert expired",
+            Self::UnsupportedMsgVersion => "unsupported sync message version",
+            Self::Entropy => "os entropy failed",
         })
     }
 }

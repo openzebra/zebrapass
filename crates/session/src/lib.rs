@@ -6,7 +6,7 @@
 //! `BodyAlg`, device wrap types) are re-exported here so no internal crate
 //! is required.
 
-mod create;
+pub(crate) mod create;
 mod devices;
 mod error;
 mod records;
@@ -20,7 +20,7 @@ mod unlock;
 
 pub use aead::BodyAlg;
 pub use container::VaultFile;
-pub use create::{create, Session};
+pub use create::{create, fresh_device_id, Session};
 pub use devices::{
     add_chip_unlock, add_device, add_human_password, add_prf_unlock, drop_recovery_wrap,
     remove_chip_unlock, remove_device, remove_prf_unlock,

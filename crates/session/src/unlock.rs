@@ -104,7 +104,11 @@ pub fn unlock(
     seen: Option<Seen>,
 ) -> anyhow::Result<Session> {
     let parsed = file.parse()?;
-    let (vk, origin_device) = unwrap_vk(&parsed.header, &parsed.entries, creds)?;
+    let (vk, wrap_device) = unwrap_vk(&parsed.header, &parsed.entries, creds)?;
+    let origin_device = match wrap_device {
+        Some(id) => id,
+        None => crate::create::fresh_device_id()?,
+    };
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
     // A flipped body byte must surface as CommitMismatch, not BodyAuthFailed.
     // For `Frames` bodies the tag covers the fold digest, not the raw bytes,
@@ -140,8 +144,6 @@ pub fn unlock(
     )?;
     // An older blob is still cryptographically valid. `seen` rejects it after auth.
     accept_seen(seen, parsed.generation, &parsed.commit)?;
-    // The folded digest was already computed for the commit check; keep it.
-    let frames_digest = [0u8; 32];
     Ok(Session {
         vk,
         k_body,
