@@ -2,3 +2,4 @@
 fuzz/target
 .DS_Store
 .rlm/
+docs/
