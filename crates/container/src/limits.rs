@@ -108,20 +108,22 @@ const BODY_MIN_KUZ_CTR: usize = 40;
 /// Inclusive Argon2id memory floor, in KiB (19 MiB).
 pub const KDF_M_KIB_MIN: u32 = 19_456;
 
-/// Inclusive Argon2id memory ceiling, in KiB (1 GiB).
-pub const KDF_M_KIB_MAX: u32 = 1_048_576;
+/// Inclusive Argon2id memory ceiling, in KiB (256 MiB, the Desktop
+/// profile). Untrusted header params beyond the largest built-in profile
+/// are rejected before Argon2 allocates.
+pub const KDF_M_KIB_MAX: u32 = 262_144;
 
 /// Inclusive Argon2id time floor.
 pub const KDF_T_MIN: u32 = 2;
 
 /// Inclusive Argon2id time ceiling.
-pub const KDF_T_MAX: u32 = 16;
+pub const KDF_T_MAX: u32 = 8;
 
 /// Inclusive Argon2id parallelism floor.
 pub const KDF_P_MIN: u32 = 1;
 
 /// Inclusive Argon2id parallelism ceiling.
-pub const KDF_P_MAX: u32 = 16;
+pub const KDF_P_MAX: u32 = 4;
 
 const _: () = {
     assert!(MIN_FILE_LEN == 104);

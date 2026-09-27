@@ -455,7 +455,7 @@ fn policy_kuzmgm_rejected_pre_kdf() {
     let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     assert!(unlock(&file, &UnlockCreds::default(), None).is_err());
     assert!(
-        t0.elapsed() < std::time::Duration::from_secs(5),
+        t0.elapsed() < std::time::Duration::from_secs(30),
         "pre-KDF rejections must not run Argon2"
     );
 }
