@@ -14,11 +14,12 @@ mod common;
 use crossterm::event::KeyCode;
 use tui::app::flows::ceremony::CeremonyFocus;
 use tui::app::flows::create::{SetupField, Step, DEFAULT_PROFILE};
+use tui::app::flows::enroll::{EnrollFactor, EnrollFocus};
 use tui::app::flows::restore::RestoreField;
 use tui::app::keymap::{Scope, KEYMAP};
 use tui::app::screen::Screen;
 
-use common::{app, ctrl, press, temp_dir, type_text};
+use common::{app, ctrl, press, temp_dir, type_text, wait, PASSWORD};
 
 fn create_state(app: &tui::App) -> &tui::app::flows::create::CreateState {
     let Screen::Create(state) = &app.screen else {
@@ -137,4 +138,72 @@ fn verify_step_tabs_to_the_skip_button_and_confirms() {
     assert!(create_state(&app).verify.as_ref().is_some_and(|v| v.skip));
     press(&mut app, KeyCode::Enter);
     assert_eq!(create_state(&app).step, Step::Enroll);
+}
+
+#[test]
+fn enroll_tab_on_cards_cycles_the_factor() {
+    let mut app = app(&temp_dir("keys-enroll-cards"));
+    reach_verify(&mut app);
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Password);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Cards);
+    for _ in 0..EnrollFactor::ALL.len() {
+        press(&mut app, KeyCode::Tab);
+    }
+    let enroll = &create_state(&app).enroll;
+    assert_eq!(enroll.focus, EnrollFocus::Cards);
+    assert_eq!(enroll.factor, EnrollFactor::Password);
+}
+
+#[test]
+fn enroll_tab_tours_password_repeat_and_wraps_to_cards() {
+    let mut app = app(&temp_dir("keys-enroll-tab-tour"));
+    reach_verify(&mut app);
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Password);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Repeat);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Cards);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Cards);
+    assert_eq!(create_state(&app).enroll.factor, EnrollFactor::Device);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(create_state(&app).enroll.factor, EnrollFactor::Password);
+    press(&mut app, KeyCode::Down);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Password);
+}
+
+#[test]
+fn enroll_arrows_walk_cards_password_repeat_and_stop() {
+    let mut app = app(&temp_dir("keys-enroll-arrows"));
+    reach_verify(&mut app);
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Password);
+    press(&mut app, KeyCode::Down);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Repeat);
+    press(&mut app, KeyCode::Down);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Repeat);
+    press(&mut app, KeyCode::Up);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Password);
+    press(&mut app, KeyCode::Up);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Cards);
+    press(&mut app, KeyCode::Up);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Cards);
+}
+
+#[test]
+fn enroll_enter_moves_password_to_repeat_then_confirms() {
+    let mut app = app(&temp_dir("keys-enroll-enter"));
+    reach_verify(&mut app);
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Password);
+    type_text(&mut app, PASSWORD);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Repeat);
+    type_text(&mut app, PASSWORD);
+    press(&mut app, KeyCode::Enter);
+    wait(&mut app);
+    assert_eq!(app.screen.name(), "unlocked");
 }

@@ -200,7 +200,9 @@ pub const KEYMAP: &[Binding] = bindings! {
 
     Enroll: key(KeyCode::Left) => Left, "factor";
     Enroll: key(KeyCode::Right) => Right;
-    Enroll: key(KeyCode::Tab) => NextField, "field";
+    Enroll: key(KeyCode::Up) => Up, "field";
+    Enroll: key(KeyCode::Down) => Down;
+    Enroll: key(KeyCode::Tab) => NextField;
     Enroll: key(KeyCode::BackTab) => PrevField;
     Enroll: ctrl('g') => GeneratePassphrase, "generate";
     Enroll: ctrl('r') => RevealField, "reveal";

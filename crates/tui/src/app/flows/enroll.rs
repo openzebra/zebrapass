@@ -142,37 +142,39 @@ impl EnrollState {
 
     fn on_action(&mut self, action: Action, ctx: &mut Ctx) -> EnrollEvent {
         match action {
-            Action::Left | Action::Right => {
-                let at = EnrollFactor::ALL
-                    .iter()
-                    .position(|factor| *factor == self.factor)
-                    .unwrap_or(0);
-                let len = EnrollFactor::ALL.len();
-                let next = if action == Action::Left {
-                    at + len - 1
-                } else {
-                    at + 1
-                } % len;
-                self.factor = EnrollFactor::ALL
-                    .get(next)
-                    .copied()
-                    .unwrap_or(EnrollFactor::Password);
-                self.message = None;
-            }
+            Action::Left | Action::Right => self.cycle_factor(action == Action::Right),
             Action::NextField | Action::PrevField => {
-                self.focus = match (self.focus, action == Action::NextField) {
+                let forward = action == Action::NextField;
+                if self.focus == EnrollFocus::Cards {
+                    self.cycle_factor(forward);
+                } else {
+                    self.focus = match (self.focus, forward) {
+                        (EnrollFocus::Password, true) => EnrollFocus::Repeat,
+                        (EnrollFocus::Repeat, true) | (EnrollFocus::Password, false) => {
+                            EnrollFocus::Cards
+                        }
+                        (EnrollFocus::Repeat | EnrollFocus::Cards, _) => EnrollFocus::Password,
+                    };
+                    if self.reveal.hide() {
+                        ctx.redraw();
+                    }
+                }
+            }
+            Action::Up | Action::Down => {
+                let down = action == Action::Down;
+                let next = match (self.focus, down) {
                     (EnrollFocus::Cards, true) | (EnrollFocus::Repeat, false) => {
-                        EnrollFocus::Password
+                        Some(EnrollFocus::Password)
                     }
-                    (EnrollFocus::Password, true) | (EnrollFocus::Cards, false) => {
-                        EnrollFocus::Repeat
-                    }
-                    (EnrollFocus::Repeat, true) | (EnrollFocus::Password, false) => {
-                        EnrollFocus::Cards
-                    }
+                    (EnrollFocus::Password, true) => Some(EnrollFocus::Repeat),
+                    (EnrollFocus::Password | EnrollFocus::Cards, false) => Some(EnrollFocus::Cards),
+                    (EnrollFocus::Repeat, true) => None,
                 };
-                if self.reveal.hide() {
-                    ctx.redraw();
+                if let Some(focus) = next {
+                    self.focus = focus;
+                    if self.reveal.hide() {
+                        ctx.redraw();
+                    }
                 }
             }
             Action::GeneratePassphrase => self.generate(ctx),
@@ -186,11 +188,39 @@ impl EnrollState {
                     ctx.redraw();
                 }
             }
-            Action::Confirm => return self.confirm(),
+            Action::Confirm => {
+                match self.focus {
+                    // Enter on the password card just descends into the input.
+                    EnrollFocus::Cards if self.factor == EnrollFactor::Password => {
+                        self.focus = EnrollFocus::Password;
+                    }
+                    EnrollFocus::Password => {
+                        self.focus = EnrollFocus::Repeat;
+                        if self.reveal.hide() {
+                            ctx.redraw();
+                        }
+                    }
+                    EnrollFocus::Cards | EnrollFocus::Repeat => return self.confirm(),
+                }
+            }
             Action::Back => return EnrollEvent::Back,
             _ => {}
         }
         EnrollEvent::Stay
+    }
+
+    fn cycle_factor(&mut self, forward: bool) {
+        let at = EnrollFactor::ALL
+            .iter()
+            .position(|factor| *factor == self.factor)
+            .unwrap_or(0);
+        let len = EnrollFactor::ALL.len();
+        let next = if forward { at + 1 } else { at + len - 1 } % len;
+        self.factor = EnrollFactor::ALL
+            .get(next)
+            .copied()
+            .unwrap_or(EnrollFactor::Password);
+        self.message = None;
     }
 
     fn generate(&mut self, ctx: &mut Ctx) {

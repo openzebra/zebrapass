@@ -12,7 +12,7 @@ use crate::app::flows::enroll::{
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::create::titled;
-use crate::ui::widgets::chrome::{hint_bar, panel, pq_badge};
+use crate::ui::widgets::chrome::{hint_bar, panel};
 use crate::ui::widgets::field::{boxed, secret_line};
 use crate::ui::widgets::meter::strength_spans;
 use crate::vault::chip::Chips;
@@ -201,20 +201,14 @@ fn draw_cards(frame: &mut Frame<'_>, area: Rect, state: &EnrollState, ctx: &Ctx)
             Line::from(Span::styled(*primitive, theme.text())),
             Line::from(Span::styled(*detail, theme.muted())),
         ];
-        if matches!(*factor, EnrollFactor::Chip | EnrollFactor::Device) {
-            lines.push(Line::from(pq_badge(theme)));
-        }
         let note_style = if matches!(*factor, EnrollFactor::Password | EnrollFactor::Device) {
             theme.accent()
         } else {
             theme.warn()
         };
-        let text = match (note.is_empty(), chosen) {
-            (false, _) => (*note).to_owned(),
-            (true, true) => format!("{} selected", glyphs.pointer),
-            (true, false) => String::new(),
-        };
-        lines.push(Line::from(Span::styled(text, note_style)));
+        if !note.is_empty() {
+            lines.push(Line::from(Span::styled(*note, note_style)));
+        }
         frame.render_widget(Paragraph::new(lines).block(block), *rect);
     }
 }
