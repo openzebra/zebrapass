@@ -44,9 +44,31 @@ pub const TAG_SEEN_GENERATION: u16 = 0x0205;
 /// Last accepted vault commit tag, 32 bytes (`Bytes`).
 pub const TAG_SEEN_COMMIT: u16 = 0x0206;
 
-/// Enrolled device public keys in the vault metadata record:
-/// `id(16) ‖ x25519_pk(32) ‖ ml_kem_pk` per device (`Bytes`).
-pub const TAG_DEVICE_BOOK: u16 = 0x0207;
+// Tag `0x0207` (the retired X25519 device book) is never reused.
+
+/// Auto-lock delay in seconds, 2 little-endian bytes (`Bytes`).
+pub const TAG_PREF_LOCK_AFTER: u16 = 0x0210;
+
+/// Clipboard clear delay in seconds, 1 byte (`Bytes`).
+pub const TAG_PREF_CLIP_CLEAR: u16 = 0x0211;
+
+/// Reveal auto-hide delay in seconds, 1 byte (`Bytes`).
+pub const TAG_PREF_REVEAL_HIDE: u16 = 0x0212;
+
+/// Color theme id, 1 byte (`Bytes`).
+pub const TAG_PREF_THEME: u16 = 0x0213;
+
+/// Interface switches (animation, ASCII, focus lock), 1 byte (`Bytes`).
+pub const TAG_PREF_FLAGS: u16 = 0x0214;
+
+/// Sync mode, 1 byte (`Bytes`).
+pub const TAG_PREF_SYNC_MODE: u16 = 0x0215;
+
+/// Sync server origin, `https://host[:port]` (`Text`).
+pub const TAG_PREF_SERVER_ORIGIN: u16 = 0x0216;
+
+/// Pinned sync server key fingerprint, 32 bytes (`Bytes`).
+pub const TAG_PREF_SERVER_PIN: u16 = 0x0217;
 
 /// First custom tag. Custom values carry `name_len ‖ name ‖ data`.
 pub const TAG_CUSTOM_MIN: u16 = 0x8000;

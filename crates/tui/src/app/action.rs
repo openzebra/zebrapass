@@ -96,7 +96,11 @@ actions! {
     OpenHealth,
     /// Settings.
     OpenSettings,
-    /// Save the editor.
+    /// Reset the selected setting to its default.
+    ResetSetting,
+    /// Reset every setting of the section.
+    ResetSection,
+    /// Save the editor, or apply staged settings.
     Save,
     /// Reveal the focused input for a few seconds.
     RevealField,

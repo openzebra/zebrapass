@@ -10,13 +10,16 @@ rust-version.workspace = true
 [dependencies]
 aead = { path = "../aead" }
 anyhow.workspace = true
+ec = { path = "../ec" }
 frame = { path = "../frame" }
 getrandom.workspace = true
 kdf = { path = "../kdf" }
+pq = { path = "../pq" }
 record = { path = "../record" }
 secret = { path = "../secret" }
 seed = { path = "../seed" }
 session = { path = "../session" }
+zeroize.workspace = true
 
 [lints]
 workspace = true

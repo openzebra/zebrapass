@@ -12,10 +12,12 @@
     reason = "tests may unwrap, index, and panic"
 )]
 
+mod common;
+
 use aead::BodyAlg;
 use kdf::{client_id, KdfProfile};
 use session::{
-    add_device, check_fresh, create, export_record, issue_device_cert, newer, sign_record, unlock,
+    check_fresh, create, export_record, issue_device_cert, newer, sign_record, unlock,
     verify_sync_record, write_record, DeviceCert, DeviceSignKey, SyncRecord, UnlockCreds,
     VaultFile, DEVICE_CERT_CTX, SYNC_VK_LEN,
 };
@@ -37,28 +39,8 @@ fn round_trip() -> (VaultFile, session::Session) {
     // certified-device origin; `export_record` refuses the zero origin
     // that seed/password unlocks stamp.
     let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
-    let (ntru_bytes, kem_secret) = pq::keypair().unwrap();
-    let ntru_pk: [u8; pq::PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
-    let mut scalar = [0u8; 32];
-    getrandom::fill(&mut scalar).unwrap();
-    let x_pk = x25519_dalek::x25519(scalar, x25519_dalek::X25519_BASEPOINT_BYTES);
-    let id = [0xA1u8; 16];
-    add_device(
-        &mut session,
-        &mut file,
-        &wraps::DevicePublics {
-            id,
-            x_pk,
-            pq_pk: ntru_pk,
-        },
-    )
-    .unwrap();
-    let keys = wraps::DeviceKeys {
-        id,
-        x_sk: secret::Secret::new(scalar),
-        pq_sk: kem_secret,
-    };
-    let session = unlock(&file, &UnlockCreds::master(&SEED).with_device(&keys), None).unwrap();
+    let key = common::enroll(&mut session, &mut file);
+    let session = common::unlock_device(&file, &key).unwrap();
     (file, session)
 }
 

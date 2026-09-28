@@ -1,15 +1,16 @@
 //! Factor management without the phrase: human password replace/remove,
-//! the device book, chip re-seal from the file, and cascade record frames.
+//! device and chip re-seal from the file, and cascade record frames.
 
 #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
+
+mod common;
 
 use container::WrapEntry;
 use platform::{ChipBackend, SoftwareChip};
 use session::{
-    add_chip_unlock, add_device, add_human_password, create, drop_recovery_wrap, enroll_device,
-    known_devices, open_record, remove_human_password, replace_human_password, revoke, unlock,
-    write_record, BodyAlg, ChipKeys, ChipPublics, DeviceKeys, DevicePublics, HumanPasswordPublics,
-    KdfProfile, Revoke, RotateCreds, UnlockCreds,
+    add_chip_unlock, add_human_password, create, drop_recovery_wrap, open_record,
+    remove_human_password, replace_human_password, revoke, unlock, write_record, BodyAlg, ChipKeys,
+    ChipPublics, HumanPasswordPublics, KdfProfile, Revoke, RotateCreds, UnlockCreds,
 };
 
 const SEED: [u8; 64] = [0x6B; 64];
@@ -32,26 +33,9 @@ fn titled(title: &str) -> record::Document {
     doc
 }
 
-fn device(id_byte: u8) -> (DevicePublics, DeviceKeys) {
-    let (pq_bytes, pq_sk) = pq::keypair().unwrap();
-    let scalar = [id_byte; 32];
-    let publics = DevicePublics {
-        id: [id_byte; 16],
-        x_pk: x25519_dalek::x25519(scalar, x25519_dalek::X25519_BASEPOINT_BYTES),
-        pq_pk: pq_bytes.as_slice().try_into().unwrap(),
-    };
-    let keys = DeviceKeys {
-        id: publics.id,
-        x_sk: secret::Secret::new(scalar),
-        pq_sk,
-    };
-    (publics, keys)
-}
-
 const fn no_creds() -> RotateCreds<'static> {
     RotateCreds {
         master: &SEED,
-        devices: &[],
         prfs: &[],
         human_password: None,
     }
@@ -101,14 +85,12 @@ fn last_factor_human_password_cannot_be_removed() {
 }
 
 #[test]
-fn revoke_reseals_booked_devices_and_file_chips_without_creds() {
+fn revoke_reseals_remaining_devices_and_chips_from_the_file_alone() {
     let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Frames).unwrap();
     let id = write_record(&mut session, &mut file, None, &titled("survives")).unwrap();
-    let (kept, kept_keys) = device(0x21);
-    let (lost, _) = device(0x22);
-    enroll_device(&mut session, &mut file, &kept).unwrap();
-    enroll_device(&mut session, &mut file, &lost).unwrap();
-    assert_eq!(known_devices(&session).unwrap().len(), 2);
+    let kept = common::enroll(&mut session, &mut file);
+    let lost = common::enroll(&mut session, &mut file);
+    let before_revoke = file.clone();
 
     let chip = SoftwareChip::new();
     let (pq_bytes, pq_sk) = pq::keypair().unwrap();
@@ -122,21 +104,24 @@ fn revoke_reseals_booked_devices_and_file_chips_without_creds() {
     revoke(
         &mut session,
         &mut file,
-        &Revoke::Device(&lost.id),
+        &Revoke::Chip(lost.id()),
         &no_creds(),
     )
     .unwrap();
 
-    let by_device = unlock(&file, &UnlockCreds::default().with_device(&kept_keys), None).unwrap();
+    let by_device = common::unlock_device(&file, &kept).unwrap();
     let doc = open_record(&by_device, id).unwrap();
     assert_eq!(doc.text(record::TAG_TITLE).unwrap(), Some("survives"));
+    // The revoked key opened the old file but not the rotated one.
+    common::unlock_device(&before_revoke, &lost).unwrap();
+    assert!(common::unlock_device(&file, &lost).is_err());
 
     let parsed = file.parse().unwrap();
     let eph_pub = parsed
         .entries
         .iter()
         .find_map(|entry| match entry {
-            WrapEntry::Chip(wrap) => Some(wrap.eph_pub),
+            WrapEntry::Chip(wrap) if wrap.id == chip_publics.id => Some(wrap.eph_pub),
             _ => None,
         })
         .unwrap();
@@ -151,27 +136,6 @@ fn revoke_reseals_booked_devices_and_file_chips_without_creds() {
         None,
     )
     .unwrap();
-}
-
-#[test]
-fn unbooked_device_still_needs_its_publics() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Frames).unwrap();
-    let (kept, _) = device(0x41);
-    let (lost, _) = device(0x42);
-    add_device(&mut session, &mut file, &kept).unwrap();
-    add_device(&mut session, &mut file, &lost).unwrap();
-    let target = Revoke::Device(&lost.id);
-    assert_eq!(
-        revoke(&mut session, &mut file, &target, &no_creds())
-            .unwrap_err()
-            .to_string(),
-        "wrap not found"
-    );
-    let creds = RotateCreds {
-        devices: &[kept],
-        ..no_creds()
-    };
-    revoke(&mut session, &mut file, &target, &creds).unwrap();
 }
 
 #[test]

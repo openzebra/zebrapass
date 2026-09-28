@@ -69,7 +69,7 @@ pub fn argon2id(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use crate::{argon2id, derive_vault_keys, hkdf_sha512, KdfProfile, INFO_DEVICE_WRAP};
+    use crate::{argon2id, derive_vault_keys, hkdf_sha512, KdfProfile, INFO_CHIP_WRAP};
 
     #[test]
     fn bounds_empty_password_floor_and_domains() {
@@ -103,7 +103,7 @@ mod tests {
             presets,
             [(65_536, 3, 4), (262_144, 3, 4), (1_048_576, 4, 4)]
         );
-        assert_eq!(INFO_DEVICE_WRAP, b"brby/v2/device-wrap");
+        assert_eq!(INFO_CHIP_WRAP, b"brby/v2/chip-wrap");
 
         let vk = [0x42u8; 32];
         let vault_id = [0x07u8; 16];

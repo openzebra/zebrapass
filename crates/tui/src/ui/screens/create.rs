@@ -150,7 +150,7 @@ fn crypto_lines(wide: bool, ctx: &Ctx) -> Vec<Line<'static>> {
             "Records",
             "AEGIS-256 inside Kuznyechik-CTR + HMAC, keys per layer",
         ),
-        ("Devices", "ML-KEM-768 + X25519 hybrid key wraps"),
+        ("Devices", "ML-KEM-768 + P-256 hybrid key wraps"),
         ("Sync", "ML-DSA-65 signatures on every upload"),
     ];
     let mut lines = vec![Line::from(Span::styled("  Encryption", theme.strong()))];

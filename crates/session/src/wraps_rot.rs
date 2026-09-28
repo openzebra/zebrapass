@@ -4,10 +4,7 @@
 use aead::BodyAlg;
 use container::{VaultFile, WrapEntry};
 use secret::Secret;
-use wraps::{
-    seal_chip, seal_device, seal_human_password, seal_password, seal_prf, ChipPublics,
-    DevicePublics, PrfPublics,
-};
+use wraps::{seal_chip, seal_human_password, seal_password, seal_prf, ChipPublics, PrfPublics};
 
 use crate::create::{
     assemble_committed, commit_mode, dir_bytes, draw_secret, encode_entry, encrypt_records,
@@ -18,7 +15,6 @@ use kdf::derive_vault_keys;
 use frame::encode_frames;
 
 use crate::create::fold_log;
-use crate::device_book::known_devices;
 use crate::error::SessionError;
 use crate::rotate::RotateCreds;
 
@@ -47,13 +43,6 @@ pub fn rotate_all(
             }
             None => parsed.entries.clone(),
         };
-        let mut devices = known_devices(session)?;
-        devices.extend_from_slice(creds.devices);
-        let creds = &RotateCreds {
-            devices: &devices,
-            ..*creds
-        };
-        require_device_publics(&entries, creds.devices)?;
         require_prf_publics(&entries, creds.prfs)?;
         let vk = draw_secret()?;
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
@@ -195,10 +184,7 @@ pub fn replace_password(
             }
             // A human wrap is carried over unchanged: rotation re-seals the
             // recovery wrap only, and the human KEK still opens the same vk.
-            WrapEntry::HumanPassword(_)
-            | WrapEntry::Device(_)
-            | WrapEntry::Chip(_)
-            | WrapEntry::Prf(_) => {
+            WrapEntry::HumanPassword(_) | WrapEntry::Chip(_) | WrapEntry::Prf(_) => {
                 records.push(encode_entry(entry)?);
             }
         }
@@ -208,20 +194,6 @@ pub fn replace_password(
     } else {
         Err(anyhow::anyhow!("wrap not found"))
     }
-}
-
-fn require_device_publics(
-    entries: &[WrapEntry<'_>],
-    devices: &[DevicePublics],
-) -> anyhow::Result<()> {
-    for entry in entries {
-        if let WrapEntry::Device(dev) = entry {
-            if !devices.iter().any(|item| item.id == dev.device_id) {
-                return Err(anyhow::anyhow!("wrap not found"));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn require_prf_publics(
@@ -264,15 +236,6 @@ pub fn reseal(
                     human.kdf.t,
                     human.kdf.p,
                 )?
-            }
-            WrapEntry::Device(dev) => {
-                let publics = creds
-                    .devices
-                    .iter()
-                    .find(|item| item.id == dev.device_id)
-                    .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
-                let (record, _grant) = seal_device(header, publics, vk)?;
-                record
             }
             // The chip wrap carries both of its public keys, authenticated by
             // the commit, so it re-seals from the file alone.

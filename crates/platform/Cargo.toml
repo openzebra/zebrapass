@@ -12,8 +12,5 @@ ec = { path = "../ec" }
 p256.workspace = true
 zeroize.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework.workspace = true
-
 [lints]
 workspace = true

@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::editing::{edit_secret, edit_text, printable, Hold};
+use crate::app::flows::enroll::EnrollFactor;
 use crate::app::flows::form::{Form, FormFocus};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::{resolve, Scope};
@@ -29,6 +30,8 @@ pub enum ConfirmKind {
     RestoreRevision(u32, u64),
     /// Leave the editor without saving.
     Discard,
+    /// Close settings and drop the staged changes.
+    DiscardSettings,
 }
 
 /// A yes/no question.
@@ -51,14 +54,6 @@ pub struct Info {
     pub body: Vec<String>,
 }
 
-/// Add-factor choices.
-pub const ADD_FACTOR: [&str; 4] = [
-    "Password (Argon2id)",
-    "This device (keychain, ML-KEM hybrid)",
-    "Secure chip",
-    "Hardware key (FIDO2 PRF)",
-];
-
 /// A dialog.
 #[derive(Debug)]
 pub enum Dialog {
@@ -68,7 +63,7 @@ pub enum Dialog {
     Info(Info),
     /// Inputs.
     Form(Box<Form>),
-    /// Add-factor menu with its cursor.
+    /// Add-factor menu with its cursor into [`EnrollFactor::ALL`].
     AddFactor(usize),
 }
 
@@ -85,7 +80,7 @@ impl Dialog {
     /// Advance timers. `true` when a hold completed and the form submits.
     pub fn tick(&mut self, ctx: &mut Ctx) -> bool {
         let Self::Form(form) = self else { return false };
-        if form.reveal.tick(ctx.now) {
+        if form.reveal.tick(ctx.now, ctx.reveal_after) {
             ctx.redraw();
         }
         form.hold
@@ -128,11 +123,13 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         Dialog::AddFactor(cursor) => {
             match event.code {
                 KeyCode::Up => *cursor = cursor.saturating_sub(1),
-                KeyCode::Down => *cursor = (*cursor + 1).min(ADD_FACTOR.len() - 1),
+                KeyCode::Down => *cursor = (*cursor + 1).min(EnrollFactor::ALL.len() - 1),
                 KeyCode::Enter => {
-                    let choice = *cursor;
+                    let choice = EnrollFactor::ALL.get(*cursor).copied();
                     state.dialog = None;
-                    crate::app::flows::form::add_factor(state, choice, ctx);
+                    if let Some(choice) = choice {
+                        crate::app::flows::form::add_factor(state, choice, ctx);
+                    }
                 }
                 KeyCode::Esc => state.dialog = None,
                 _ => {}

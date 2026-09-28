@@ -15,8 +15,6 @@ path = "src/main.rs"
 default = ["osc52"]
 # Clipboard through the OSC 52 terminal escape (works over SSH, no native dependency).
 osc52 = []
-# Development-only secure-chip factor backed by the in-memory `SoftwareChip`.
-dev-chip = ["dep:pq"]
 
 [dependencies]
 anyhow.workspace = true
@@ -26,8 +24,6 @@ getrandom.workspace = true
 hmac.workspace = true
 kdf = { path = "../kdf" }
 local = { path = "../local" }
-platform = { path = "../platform" }
-pq = { path = "../pq", optional = true }
 ratatui.workspace = true
 record = { path = "../record" }
 secrecy.workspace = true

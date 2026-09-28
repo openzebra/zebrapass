@@ -1,13 +1,14 @@
 //! Reveal state for one masked secret at a time.
 //!
 //! A reveal ends on key release (when the terminal reports releases), on a
-//! second press, on a 5 s timeout, or when anything else takes focus. When a
+//! second press, on a timeout (5 s unless the vault's preferences say otherwise), or when anything else takes focus. When a
 //! reveal ends the app forces a full redraw, so the plaintext cells are
 //! overwritten in both of ratatui's buffers and on the terminal.
 
 use std::time::{Duration, Instant};
 
-/// A revealed secret hides itself after this long.
+/// A revealed secret hides itself after this long unless the preferences
+/// say otherwise.
 pub const REVEAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Which secret on the current screen is revealed. Screens pick the key.
@@ -52,10 +53,10 @@ impl RevealGuard {
         was
     }
 
-    /// Expire an old reveal. Returns `true` when it just hid.
-    pub fn tick(&mut self, now: Instant) -> bool {
+    /// Expire a reveal older than `after`. Returns `true` when it just hid.
+    pub fn tick(&mut self, now: Instant, after: Duration) -> bool {
         match self.shown {
-            Some((_, since)) if now.saturating_duration_since(since) >= REVEAL_TIMEOUT => {
+            Some((_, since)) if now.saturating_duration_since(since) >= after => {
                 self.shown = None;
                 true
             }
@@ -75,11 +76,11 @@ impl RevealGuard {
         self.shown.is_some()
     }
 
-    /// Seconds left before auto-hide, for the countdown hint.
+    /// Time left before auto-hide after `after`, for the countdown hint.
     #[must_use]
-    pub fn remaining(&self, now: Instant) -> Option<Duration> {
+    pub fn remaining(&self, now: Instant, after: Duration) -> Option<Duration> {
         self.shown
-            .map(|(_, since)| REVEAL_TIMEOUT.saturating_sub(now.saturating_duration_since(since)))
+            .map(|(_, since)| after.saturating_sub(now.saturating_duration_since(since)))
     }
 }
 
@@ -96,8 +97,11 @@ mod tests {
         let key = RevealKey(7);
         assert!(!guard.toggle(key, start));
         assert!(guard.is_shown(key));
-        assert!(!guard.tick(start + Duration::from_secs(1)));
-        assert!(guard.tick(start + REVEAL_TIMEOUT));
+        assert!(!guard.tick(start + Duration::from_secs(1), REVEAL_TIMEOUT));
+        assert!(guard.tick(start + REVEAL_TIMEOUT, REVEAL_TIMEOUT));
+        guard.show(key, start);
+        assert!(!guard.tick(start + REVEAL_TIMEOUT, Duration::from_secs(10)));
+        assert!(guard.tick(start + Duration::from_secs(10), Duration::from_secs(10)));
         assert!(!guard.is_shown(key));
         guard.show(key, start);
         assert!(guard.toggle(key, start));

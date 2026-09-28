@@ -4,18 +4,19 @@
 //! advances the rollback cursor. The vault moves into the worker and back;
 //! it is never cloned.
 
+use local::Prefs;
 use record::{Document, TAG_PASSWORD};
 use seed::SeedPhrase;
 use session::{
-    clear_history, delete_record, drop_recovery_wrap, remove_chip_unlock, remove_device,
-    remove_human_password, remove_prf_unlock, replace_human_password, restore_revision, revoke,
-    rotate_vault_key, unlock, write_record, Factor, KdfProfile, Revoke, RotateCreds, UnlockCreds,
+    clear_history, delete_record, drop_recovery_wrap, remove_chip_unlock, remove_human_password,
+    remove_prf_unlock, replace_human_password, restore_revision, revoke, rotate_vault_key, unlock,
+    write_record, Factor, KdfProfile, Revoke, RotateCreds, UnlockCreds,
 };
 use zeroize::Zeroizing;
 
 use crate::secure::health::{analyze, Candidate, HealthReport};
-use crate::vault::chip::Chips;
 use crate::vault::create::{add_password, password_publics, unix_ms};
+use crate::vault::device;
 use crate::vault::factors::{presence, FactorKind};
 use crate::vault::open::Vault;
 
@@ -24,8 +25,6 @@ use crate::vault::open::Vault;
 pub enum FactorRef {
     /// Device wrap.
     Device([u8; 16]),
-    /// Chip wrap.
-    Chip([u8; 16]),
     /// Hardware-key wrap.
     HwKey([u8; 16]),
 }
@@ -65,6 +64,8 @@ pub enum Op {
     ClearHistory,
     /// Rename the vault on this device.
     Rename(String),
+    /// Save this device's preferences for the vault.
+    SavePrefs(Box<Prefs>),
     /// Add the password factor.
     AddPassword(Zeroizing<Vec<u8>>, KdfProfile),
     /// Replace the password wrap; the vault key stays.
@@ -76,11 +77,17 @@ pub enum Op {
     },
     /// Drop the password wrap.
     RemovePassword,
-    /// Add this device's keyring factor.
-    AddDevice,
-    /// Add a development chip factor.
-    #[cfg(feature = "dev-chip")]
-    AddChip,
+    /// Add this device's factor, its key file sealed under this PIN.
+    AddDevice(Zeroizing<Vec<u8>>, KdfProfile),
+    /// Re-seal this device's key file under a new PIN.
+    ChangePin {
+        /// The PIN that opens the key file now.
+        current: Zeroizing<Vec<u8>>,
+        /// Its replacement.
+        new: Zeroizing<Vec<u8>>,
+        /// Argon2id preset the new PIN is stretched with.
+        profile: KdfProfile,
+    },
     /// Drop one wrap without rotating the vault key.
     RemoveWrap(FactorRef),
     /// Rotate the vault key.
@@ -110,6 +117,8 @@ pub enum Outcome {
     HistoryCleared,
     /// Vault renamed.
     Renamed,
+    /// Preferences saved.
+    PrefsSaved,
     /// A factor was added.
     FactorAdded(FactorKind),
     /// A wrap was removed.
@@ -118,6 +127,8 @@ pub enum Outcome {
     Rotated(bool),
     /// The password wrap was replaced.
     PasswordChanged,
+    /// The device key file was re-sealed.
+    PinChanged,
     /// The recovery wrap is gone from this copy.
     RecoveryDropped,
     /// Health analysis.
@@ -129,7 +140,7 @@ pub enum Outcome {
 /// # Errors
 ///
 /// Core and storage errors; on error the core leaves the vault unchanged.
-pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome> {
+pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
     let outcome = match op {
         Op::Write { id, doc } => {
             Outcome::Saved(write_record(&mut vault.session, &mut vault.file, id, &doc)?)
@@ -150,8 +161,12 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
             vault.meta.name = name;
             Outcome::Renamed
         }
+        Op::SavePrefs(prefs) => {
+            vault.meta.prefs = Some(*prefs);
+            Outcome::PrefsSaved
+        }
         Op::AddPassword(password, profile) => {
-            if presence(&vault.directory, chips).password {
+            if presence(&vault.directory, device::owned_id(&vault.paths)).password {
                 anyhow::bail!("this vault already has a password factor");
             }
             add_password(&mut vault.session, &mut vault.file, &password, profile)?;
@@ -176,26 +191,38 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
             remove_human_password(&mut vault.session, &mut vault.file)?;
             Outcome::FactorRemoved
         }
-        Op::AddDevice => {
-            chips
-                .keyring()
-                .enroll(&mut vault.session, &mut vault.file)?;
+        Op::AddDevice(pin, profile) => {
+            if presence(&vault.directory, device::owned_id(&vault.paths)).owned_devices > 0 {
+                anyhow::bail!("this device is already enrolled");
+            }
+            device::enroll(
+                &mut vault.session,
+                &mut vault.file,
+                &vault.paths,
+                &pin,
+                profile,
+            )?;
             Outcome::FactorAdded(FactorKind::Device)
         }
-        #[cfg(feature = "dev-chip")]
-        Op::AddChip => {
-            chips.enroll(&mut vault.session, &mut vault.file)?;
-            Outcome::FactorAdded(FactorKind::Chip)
+        Op::ChangePin {
+            current,
+            new,
+            profile,
+        } => {
+            device::change_pin(
+                &vault.paths,
+                vault.session.vault_id(),
+                &current,
+                &new,
+                profile,
+            )?;
+            Outcome::PinChanged
         }
         Op::RemoveWrap(factor) => {
             match factor {
                 FactorRef::Device(id) => {
-                    remove_device(&mut vault.session, &mut vault.file, &id)?;
-                    chips.keyring().forget(vault.session.vault_id(), &id);
-                }
-                FactorRef::Chip(id) => {
                     remove_chip_unlock(&mut vault.session, &mut vault.file, &id)?;
-                    chips.forget(&id);
+                    device::forget(&vault.paths, &id);
                 }
                 FactorRef::HwKey(id) => {
                     remove_prf_unlock(&mut vault.session, &mut vault.file, &id)?;
@@ -203,7 +230,7 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
             }
             Outcome::FactorRemoved
         }
-        Op::Rotate(rotation) => rotate(vault, &rotation, chips)?,
+        Op::Rotate(rotation) => rotate(vault, &rotation)?,
         Op::DropRecovery => {
             drop_recovery_wrap(&mut vault.session, &mut vault.file)?;
             Outcome::RecoveryDropped
@@ -214,9 +241,9 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
     Ok(outcome)
 }
 
-fn rotate(vault: &mut Vault, rotation: &Rotation, chips: &Chips) -> anyhow::Result<Outcome> {
+fn rotate(vault: &mut Vault, rotation: &Rotation) -> anyhow::Result<Outcome> {
     vault.check_phrase(&rotation.phrase)?;
-    let has_password = presence(&vault.directory, chips).password;
+    let has_password = presence(&vault.directory, device::owned_id(&vault.paths)).password;
     if has_password {
         let current = rotation
             .current
@@ -231,7 +258,6 @@ fn rotate(vault: &mut Vault, rotation: &Rotation, chips: &Chips) -> anyhow::Resu
         .filter(|_| has_password);
     let creds = RotateCreds {
         master: rotation.phrase.seed(),
-        devices: &[],
         prfs: &[],
         human_password: human,
     };
@@ -240,19 +266,10 @@ fn rotate(vault: &mut Vault, rotation: &Rotation, chips: &Chips) -> anyhow::Resu
             revoke(
                 &mut vault.session,
                 &mut vault.file,
-                &Revoke::Device(&id),
-                &creds,
-            )?;
-            chips.keyring().forget(vault.session.vault_id(), &id);
-        }
-        Some(FactorRef::Chip(id)) => {
-            revoke(
-                &mut vault.session,
-                &mut vault.file,
                 &Revoke::Chip(&id),
                 &creds,
             )?;
-            chips.forget(&id);
+            device::forget(&vault.paths, &id);
         }
         Some(FactorRef::HwKey(id)) => revoke(
             &mut vault.session,

@@ -13,19 +13,16 @@
     reason = "tests may unwrap, index, and panic"
 )]
 
+mod common;
+
 use aead::BodyAlg;
 use kdf::KdfProfile;
-use pq::keypair;
 use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
-use secret::Secret;
 use seed::SeedPhrase;
 use session::{
-    add_device, change_master, clear_history, delete_record, history, list_records, open_record,
-    restore_revision, unlock, vault_meta, write_record, DeviceKeys, DevicePublics, Seen,
-    UnlockCreds, VaultFile,
+    change_master, clear_history, delete_record, history, list_records, open_record,
+    restore_revision, unlock, vault_meta, write_record, Seen, UnlockCreds, VaultFile,
 };
-use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
-use zeroize::Zeroize;
 
 /// A fresh directory under the system temp dir; caller removes it.
 fn temp_base(tag: &str) -> std::path::PathBuf {
@@ -43,27 +40,6 @@ fn temp_base(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(name);
     std::fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-fn device_identity(id_byte: u8) -> (DevicePublics, DeviceKeys) {
-    let (ntru_bytes, kem_secret) = keypair().unwrap();
-    let ntru_pk: [u8; pq::PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
-    let mut scalar = [0u8; 32];
-    getrandom::fill(&mut scalar).unwrap();
-    let x_pk = x25519(scalar, X25519_BASEPOINT_BYTES);
-    let id = [id_byte; 16];
-    let publics = DevicePublics {
-        id,
-        x_pk,
-        pq_pk: ntru_pk,
-    };
-    let keys = DeviceKeys {
-        id,
-        x_sk: Secret::new(scalar),
-        pq_sk: kem_secret,
-    };
-    scalar.zeroize();
-    (publics, keys)
 }
 
 fn login_doc(title: &str, password: &str) -> Document {
@@ -215,12 +191,11 @@ fn device_factor_opens_without_master() {
         local::create_vault(&base, &seed, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
 
     write_record(&mut session, &mut file, None, &login_doc("Wifi", "pw")).unwrap();
-    let (pubs, keys) = device_identity(0x61);
-    add_device(&mut session, &mut file, &pubs).unwrap();
+    let key = common::enroll(&mut session, &mut file);
     drop(session);
 
     // Device factor only: no master seed presented.
-    let opened = unlock(&file, &UnlockCreds::default().with_device(&keys), None).unwrap();
+    let opened = common::unlock_device(&file, &key).unwrap();
     let listed = list_records(&opened).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(

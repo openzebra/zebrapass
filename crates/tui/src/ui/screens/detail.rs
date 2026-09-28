@@ -128,7 +128,7 @@ pub fn draw_rows(
     if detail.rows.is_empty() {
         lines.push(Line::from(Span::styled("  (no fields)", theme.muted())));
     }
-    if let Some(left) = detail.reveal.remaining(ctx.now) {
+    if let Some(left) = detail.reveal.remaining(ctx.now, ctx.reveal_after) {
         lines.push(Line::from(Span::styled(
             format!("  revealed {} hides in {}s", glyphs.dot, left.as_secs() + 1),
             theme.warn(),

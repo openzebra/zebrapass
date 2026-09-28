@@ -291,7 +291,7 @@ impl RestoreState {
             self.error = Some("No ZebraPass vault file at that path.");
             return;
         };
-        let existing = presence(&directory, &ctx.chips).password;
+        let existing = presence(&directory, None).password;
         self.parsed = Some(Box::new(parsed));
         self.phrase.clear();
         self.passphrase.clear();

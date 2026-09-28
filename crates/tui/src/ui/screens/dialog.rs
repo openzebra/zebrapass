@@ -6,7 +6,8 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::dialog::{ConfirmKind, Dialog, ADD_FACTOR};
+use crate::app::flows::dialog::{ConfirmKind, Dialog};
+use crate::app::flows::enroll::EnrollFactor;
 use crate::app::flows::form::{Form, FormFocus, FormKind};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::layout::centered;
@@ -83,6 +84,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
                     | ConfirmKind::RemoveWrap(_)
                     | ConfirmKind::RemovePassword
                     | ConfirmKind::ClearHistory
+                    | ConfirmKind::DiscardSettings
             );
             let rect = fitted(area, &confirm.title, &confirm.body, 3);
             let body: Vec<String> = confirm
@@ -119,14 +121,14 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
         }
         Dialog::AddFactor(cursor) => {
             let inner = modal(frame, centered(area, 52, 8), "Add a factor", theme);
-            let lines: Vec<Line<'_>> = ADD_FACTOR
+            let lines: Vec<Line<'_>> = EnrollFactor::ALL
                 .iter()
                 .enumerate()
-                .map(|(index, label)| {
+                .map(|(index, factor)| {
                     let chosen = index == *cursor;
                     let pointer = if chosen { theme.glyphs.pointer } else { " " };
                     Line::from(Span::styled(
-                        format!(" {pointer} {label}"),
+                        format!(" {pointer} {}", factor.menu_label()),
                         row_style(chosen, theme),
                     ))
                 })
@@ -208,16 +210,20 @@ fn draw_form(frame: &mut Frame<'_>, area: Rect, form: &Form, ctx: &Ctx) {
         ));
     }
     if let Some(input) = form.current.as_ref() {
-        lines.push(secret_row(
-            "current password",
-            input,
-            FormFocus::Current,
-            form,
-            ctx,
-        ));
+        let label = if form.kind == FormKind::ChangePin {
+            "current PIN"
+        } else {
+            "current password"
+        };
+        lines.push(secret_row(label, input, FormFocus::Current, form, ctx));
     }
     if let Some(input) = form.new.as_ref() {
-        lines.push(secret_row("new password", input, FormFocus::New, form, ctx));
+        let label = if matches!(form.kind, FormKind::AddDevice | FormKind::ChangePin) {
+            "new PIN"
+        } else {
+            "new password"
+        };
+        lines.push(secret_row(label, input, FormFocus::New, form, ctx));
     }
     if let Some(input) = form.repeat.as_ref() {
         lines.push(secret_row("repeat", input, FormFocus::Repeat, form, ctx));
@@ -271,6 +277,8 @@ fn confirm_line(form: &Form, ctx: &Ctx) -> Line<'static> {
                 FormKind::Rotate
                 | FormKind::ChangePassword
                 | FormKind::AddPassword
+                | FormKind::AddDevice
+                | FormKind::ChangePin
                 | FormKind::Rename => "rotate",
             };
             let how = if ctx.caps.key_release {

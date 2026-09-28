@@ -16,22 +16,22 @@
 //! Reference: Hirose & Minematsu, "Envelope Encryption in the Symmetric-Key
 //! Setting" (eprint 2023-1727). zebrapass instantiates GEE1: DEK = vault key
 //! vk[32] (one-time AEAD domain), KEKs = password wrap (Argon2id -> AEGIS-256)
-//! and device wrap (X25519 + ntrulp hybrid -> HKDF-SHA512 -> AEGIS-256), body
+//! and device wrap (P-256 ECDH + ML-KEM-768 -> HKDF-SHA512 -> AEGIS-256), body
 //! = AEGIS-256 or Kuznyechik-CTR + HMAC-SHA256, commit = HMAC-SHA256 over
 //! `header || wrapdir || body`.
 //!
 //! Sections: CORRECTNESS (Dec, §3), CONF (§4.1), INT (§4.2), KCI (committing,
 //! §2.1), MU-UNLKAG (§5), POLICY (KDF bounds), FRESHNESS (nonce reuse).
 
+mod common;
+
 use aead::BodyAlg;
 use container::{VaultFile, COMMIT_LEN, HEADER_LEN, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_T_MIN};
 use kdf::{derive_vault_keys, KdfProfile};
-use pq::keypair;
 use secret::Secret;
-use session::{add_device, change_master, create, remove_device, unlock, Seen, UnlockCreds};
-use wraps::{DeviceKeys, DevicePublics};
-use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
-use zeroize::Zeroize;
+use session::{
+    add_chip_unlock, change_master, create, remove_chip_unlock, unlock, ChipKeys, Seen, UnlockCreds,
+};
 
 const SEED: [u8; 64] = [0x5E; 64];
 const SEED2: [u8; 64] = [0x6E; 64];
@@ -65,27 +65,6 @@ fn body_span(file: &VaultFile) -> (usize, usize) {
     (end - body_len, end)
 }
 
-fn device_identity(id_byte: u8) -> (DevicePublics, DeviceKeys) {
-    let (ntru_bytes, kem_secret) = keypair().unwrap();
-    let ntru_pk: [u8; pq::PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
-    let mut scalar = [0u8; 32];
-    getrandom::fill(&mut scalar).unwrap();
-    let x_pk = x25519(scalar, X25519_BASEPOINT_BYTES);
-    let id = [id_byte; 16];
-    let publics = DevicePublics {
-        id,
-        x_pk,
-        pq_pk: ntru_pk,
-    };
-    let keys = DeviceKeys {
-        id,
-        x_sk: Secret::new(scalar),
-        pq_sk: kem_secret,
-    };
-    scalar.zeroize();
-    (publics, keys)
-}
-
 // ---------------------------------------------------------------------------
 // CORRECTNESS — §3 Dec: every wrapped KEK path must reproduce the same DEK.
 // ---------------------------------------------------------------------------
@@ -101,16 +80,14 @@ fn gee1_correctness_password_and_device_lifecycle() {
     assert_eq!(s.generation(), 1);
     assert_eq!(s.commit_tag(), session.commit_tag());
 
-    let (pubs1, keys1) = device_identity(0x01);
-    let (pubs2, keys2) = device_identity(0x02);
-    add_device(&mut session, &mut file, &pubs1).unwrap();
+    let key1 = common::enroll(&mut session, &mut file);
     assert_eq!(session.generation(), 2);
-    add_device(&mut session, &mut file, &pubs2).unwrap();
+    let key2 = common::enroll(&mut session, &mut file);
     assert_eq!(session.generation(), 3);
 
     // Dec via device 1, device 2, and password: same underlying vault key.
-    let s1 = unlock(&file, &UnlockCreds::default().with_device(&keys1), None).unwrap();
-    let s2 = unlock(&file, &UnlockCreds::default().with_device(&keys2), None).unwrap();
+    let s1 = common::unlock_device(&file, &key1).unwrap();
+    let s2 = common::unlock_device(&file, &key2).unwrap();
     let sp = unlock(&file, &UnlockCreds::master(&SEED), None).unwrap();
     assert_eq!(s1.commit_tag(), s2.commit_tag());
     assert_eq!(s2.commit_tag(), sp.commit_tag());
@@ -141,19 +118,23 @@ fn gee1_wrap_rotation_leaves_body_bytes_untouched() {
 #[test]
 fn correctness_remove_device_revokes_only_target_kek() {
     let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
-    let (pubs1, keys1) = device_identity(0x03);
-    let (pubs2, keys2) = device_identity(0x04);
-    add_device(&mut session, &mut file, &pubs1).unwrap();
-    add_device(&mut session, &mut file, &pubs2).unwrap();
+    let key1 = common::enroll(&mut session, &mut file);
+    let key2 = common::enroll(&mut session, &mut file);
+    let before = file.clone();
 
-    remove_device(&mut session, &mut file, &pubs1.id).unwrap();
+    remove_chip_unlock(&mut session, &mut file, key1.id()).unwrap();
     // create=1, add=2, add=3, remove=4 — every wrapdir mutation bumps generation.
     assert_eq!(session.generation(), 4);
 
-    assert!(unlock(&file, &UnlockCreds::default().with_device(&keys1), None).is_err()); // revoked
-    unlock(&file, &UnlockCreds::default().with_device(&keys2), None).unwrap(); // sibling intact
+    // The removed key's shared secret against its old wrap no longer finds a wrap.
+    let ss1 = key1
+        .ecdh(&common::eph_pub(&before, key1.id()).unwrap())
+        .unwrap();
+    let creds1 = UnlockCreds::default().with_chip(key1.chip_keys(), *ss1.expose());
+    assert!(unlock(&file, &creds1, None).is_err()); // revoked
+    common::unlock_device(&file, &key2).unwrap(); // sibling intact
     unlock(&file, &UnlockCreds::master(&SEED), None).unwrap(); // password intact
-    assert!(remove_device(&mut session, &mut file, &pubs1.id).is_err()); // idempotent? no
+    assert!(remove_chip_unlock(&mut session, &mut file, key1.id()).is_err()); // already gone
 }
 
 #[test]
@@ -203,15 +184,21 @@ fn conf_wrong_password_rejected() {
 fn conf_wrong_device_secret_same_id_rejected() {
     // KCI: attacker knows the public wrap (id, pks) but not the secrets.
     let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
-    let (pubs, _keys) = device_identity(0x11);
-    add_device(&mut session, &mut file, &pubs).unwrap();
-    let (_forged_pubs, forged_keys) = device_identity(0x11); // same id, own secrets
-    assert!(unlock(
-        &file,
-        &UnlockCreds::default().with_device(&forged_keys),
-        None
-    )
-    .is_err());
+    let real = common::enroll(&mut session, &mut file);
+    let (_, forged) = common::device();
+    // Same id, the attacker's own ML-KEM seed and P-256 scalar.
+    let forged_keys = ChipKeys {
+        id: *real.id(),
+        pq_sk: Secret::new(*forged.chip_keys().pq_sk.expose()),
+    };
+    let ss = forged
+        .ecdh(&common::eph_pub(&file, real.id()).unwrap())
+        .unwrap();
+    let creds = UnlockCreds::default().with_chip(&forged_keys, *ss.expose());
+    assert_eq!(
+        unlock(&file, &creds, None).unwrap_err().to_string(),
+        "wrap authentication failed"
+    );
 }
 
 #[test]
@@ -230,8 +217,7 @@ fn conf_cross_vault_transplant_password_wrap_rejected() {
 #[test]
 fn conf_cross_vault_transplant_device_wrap_rejected() {
     let (mut file_a, mut session_a) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
-    let (pubs, _keys) = device_identity(0x12);
-    add_device(&mut session_a, &mut file_a, &pubs).unwrap();
+    common::enroll(&mut session_a, &mut file_a);
     let (file_b, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
 
     // Splice A's [password+device] entries in front of B's body.
@@ -302,35 +288,38 @@ fn int_password_record_field_flips_all_rejected() {
 #[test]
 fn int_device_record_field_flips_all_rejected() {
     let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
-    let (pubs, keys) = device_identity(0x13);
-    add_device(&mut session, &mut file, &pubs).unwrap();
+    let key = common::enroll(&mut session, &mut file);
+    // The shared secret the device would compute against the untampered wrap.
+    let ss = key
+        .ecdh(&common::eph_pub(&file, key.id()).unwrap())
+        .unwrap();
+    let creds = UnlockCreds::default().with_chip(key.chip_keys(), *ss.expose());
 
-    // Device entry starts right after the password entry.
-    let off_id = ENTRY_END; // device_id
-    let off_dev_x = off_id + 16 + 2; // skip id + kem id
-    let off_eph_x = off_dev_x + 32;
-    // Tail is record-relative: nonce/ct/tag are the last 96 bytes of the file
-    // minus commit; flip near the end (ntru_ct length is variable).
-    let len = file.as_bytes().len();
-    let off_tail_nonce = len - COMMIT_LEN - 96;
+    // Device entry starts right after the password entry: header, id,
+    // chip_pub(65), eph_pub(65), pq_pk(1184), kem_ct(1088), nonce, ct, tag.
+    let off_id = ENTRY_END + 6;
+    let off_chip_pub = off_id + 16 + 1;
+    let off_eph = off_chip_pub + 65;
+    let off_pq_pk = off_eph + 65;
+    let off_kem_ct = off_pq_pk + 1184;
+    let off_tail_nonce = body_span(&file).0 - 96;
     let off_tail_ct = off_tail_nonce + 32;
     let off_tail_tag = off_tail_ct + 32;
     for idx in [
         off_id,
-        off_dev_x,
-        off_eph_x,
+        off_chip_pub,
+        off_eph,
+        off_pq_pk,
+        off_kem_ct,
         off_tail_nonce,
         off_tail_ct,
         off_tail_tag,
     ] {
         let f = flip(&file, idx);
-        assert!(
-            unlock(&f, &UnlockCreds::default().with_device(&keys), None).is_err(),
-            "device byte {idx}"
-        );
+        assert!(unlock(&f, &creds, None).is_err(), "device byte {idx}");
     }
     // Sanity: untampered device still opens.
-    unlock(&file, &UnlockCreds::default().with_device(&keys), None).unwrap();
+    unlock(&file, &creds, None).unwrap();
 }
 
 #[test]
@@ -391,9 +380,9 @@ fn int_wrapdir_invariants_enforced() {
     .is_err());
 
     // A repeated device id does not parse.
-    let (pubs, _keys) = device_identity(0x14);
-    assert!(add_device(&mut session, &mut file, &pubs).is_ok());
-    assert!(add_device(&mut session, &mut file, &pubs).is_err());
+    let (publics, _key) = common::device();
+    assert!(add_chip_unlock(&mut session, &mut file, &publics).is_ok());
+    assert!(add_chip_unlock(&mut session, &mut file, &publics).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -442,23 +431,20 @@ fn kci_no_key_ambiguity_cross_body_with_own_keys() {
 fn mu_three_devices_interleaved_unlocks() {
     let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let mut devs = Vec::new();
-    for b in [0x21u8, 0x22, 0x23] {
-        let (pubs, keys) = device_identity(b);
-        add_device(&mut session, &mut file, &pubs).unwrap();
-        devs.push((pubs, keys));
+    for _ in 0..3 {
+        devs.push(common::enroll(&mut session, &mut file));
         // Every KEK added so far must open the current file (benign multi-user).
-        for (p, k) in &devs {
-            unlock(&file, &UnlockCreds::default().with_device(k), None)
-                .unwrap_or_else(|e| panic!("device id {:?} failed after add: {e}", &p.id[..2]));
+        for key in &devs {
+            common::unlock_device(&file, key)
+                .unwrap_or_else(|e| panic!("device {:?} failed after add: {e}", &key.id()[..2]));
         }
         unlock(&file, &UnlockCreds::master(&SEED), None).unwrap();
     }
     // Revoke the middle device; the others keep working.
-    let (mid_pubs, mid_keys) = &devs[1];
-    remove_device(&mut session, &mut file, &mid_pubs.id).unwrap();
-    assert!(unlock(&file, &UnlockCreds::default().with_device(mid_keys), None).is_err());
-    unlock(&file, &UnlockCreds::default().with_device(&devs[0].1), None).unwrap();
-    unlock(&file, &UnlockCreds::default().with_device(&devs[2].1), None).unwrap();
+    remove_chip_unlock(&mut session, &mut file, devs[1].id()).unwrap();
+    assert!(common::unlock_device(&file, &devs[1]).is_err());
+    common::unlock_device(&file, &devs[0]).unwrap();
+    common::unlock_device(&file, &devs[2]).unwrap();
 }
 
 // ---------------------------------------------------------------------------

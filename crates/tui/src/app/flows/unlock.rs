@@ -4,6 +4,7 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent};
+use local::{device_key_info, DEVICE_PIN_LEN};
 use seed::SeedPhrase;
 use session::WrapDirectory;
 
@@ -17,6 +18,7 @@ use crate::secure::phrase_input::{secret_string, PhraseInput};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::widgets::toast::Tone;
+use crate::vault::device;
 use crate::vault::discover::VaultRef;
 use crate::vault::error::UnlockError;
 use crate::vault::factors::{presence, views, FactorKind, Presence};
@@ -36,10 +38,8 @@ pub enum Mode {
     Password,
     /// Recovery phrase.
     Recovery,
-    /// This device's keys from the keyring.
+    /// This device's PIN-sealed key file.
     Device,
-    /// Development chip.
-    Chip,
 }
 
 /// Focus inside recovery mode.
@@ -64,6 +64,8 @@ pub struct UnlockState {
     pub mode: Mode,
     /// Password being typed.
     pub password: SecretInput,
+    /// Device PIN being typed.
+    pub pin: SecretInput,
     /// Recovery words.
     pub phrase: PhraseInput,
     /// Recovery passphrase.
@@ -88,13 +90,14 @@ pub const REVEAL_PASSWORD: RevealKey = RevealKey(1);
 impl UnlockState {
     /// Unlock screen for `vaults[current]`.
     #[must_use]
-    pub fn new(vaults: Vec<VaultRef>, current: usize, ctx: &Ctx) -> Self {
+    pub fn new(vaults: Vec<VaultRef>, current: usize) -> Self {
         let mut state = Self {
             vaults,
             current,
             directory: Err(UnlockError::Io),
             mode: Mode::Password,
             password: SecretInput::new(MAX_PASSWORD),
+            pin: SecretInput::new(*DEVICE_PIN_LEN.end()),
             phrase: PhraseInput::default(),
             passphrase: SecretInput::new(MAX_PASSPHRASE),
             recovery_field: RecoveryField::Phrase,
@@ -104,7 +107,7 @@ impl UnlockState {
             picker: None,
             reveal: RevealGuard::default(),
         };
-        state.select(current, ctx);
+        state.select(current);
         state
     }
 
@@ -114,23 +117,29 @@ impl UnlockState {
         self.vaults.get(self.current)
     }
 
+    /// The device wrap this machine holds a key file for.
+    #[must_use]
+    pub fn owned_device(&self) -> Option<[u8; 16]> {
+        self.vault()
+            .and_then(|vault| device::owned_id(&vault.paths))
+    }
+
     /// Which factor kinds the selected vault has.
     #[must_use]
-    pub fn presence(&self, ctx: &Ctx) -> Presence {
+    pub fn presence(&self) -> Presence {
         self.directory
             .as_ref()
-            .map(|directory| presence(directory, &ctx.chips))
+            .map(|directory| presence(directory, self.owned_device()))
             .unwrap_or_default()
     }
 
     /// Modes this vault offers, in Tab order.
     #[must_use]
-    pub fn modes(&self, ctx: &Ctx) -> Vec<Mode> {
-        let found = self.presence(ctx);
+    pub fn modes(&self) -> Vec<Mode> {
+        let found = self.presence();
         [
             (Mode::Device, found.owned_devices > 0),
             (Mode::Password, found.password),
-            (Mode::Chip, found.owned_chips > 0),
             (Mode::Recovery, found.recovery),
         ]
         .iter()
@@ -139,28 +148,21 @@ impl UnlockState {
         .collect()
     }
 
-    fn select(&mut self, index: usize, ctx: &Ctx) {
+    fn select(&mut self, index: usize) {
         self.current = index.min(self.vaults.len().saturating_sub(1));
         self.directory = self.vault().map_or(Err(UnlockError::Io), |vault| {
             read_directory(&vault.paths.vault_file)
         });
-        // Learn whether this device holds keys for the vault; the keys are
-        // dropped at once and read again only when the user unlocks. Only a
-        // vault with device wraps is asked about, so no keychain prompt
-        // appears for vaults that could not use it.
-        let vault_id = self.vault().and_then(|vault| vault.vault_id);
-        if let (Some(vault_id), true) = (vault_id, self.presence(ctx).devices > 0) {
-            let _ = ctx.chips.keyring().keys(&vault_id);
-        }
         self.password.clear();
+        self.pin.clear();
         self.phrase.clear();
         self.passphrase.clear();
         self.error = None;
         self.attempts = 0;
         self.retry_at = None;
-        let found = self.presence(ctx);
-        self.mode = self.modes(ctx).first().copied().unwrap_or(Mode::Password);
-        let other = found.password || found.owned_chips > 0 || found.owned_devices > 0;
+        let found = self.presence();
+        self.mode = self.modes().first().copied().unwrap_or(Mode::Password);
+        let other = found.password || found.owned_devices > 0;
         if found.hw_keys > 0 && !other && !found.recovery {
             self.error = Some(UnlockError::NeedsHwKey);
         }
@@ -169,7 +171,7 @@ impl UnlockState {
     /// Handle a key.
     pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         if let Some(cursor) = self.picker {
-            return self.on_picker(event, cursor, ctx);
+            return self.on_picker(event, cursor);
         }
         let recovery_words =
             self.mode == Mode::Recovery && self.recovery_field == RecoveryField::Phrase;
@@ -194,16 +196,15 @@ impl UnlockState {
         }
         let input = match (self.mode, self.recovery_field) {
             (Mode::Recovery, RecoveryField::Passphrase) => &mut self.passphrase,
-            (Mode::Recovery, RecoveryField::Phrase) | (Mode::Chip | Mode::Device, _) => {
-                return Nav::Stay
-            }
+            (Mode::Recovery, RecoveryField::Phrase) => return Nav::Stay,
             (Mode::Password, _) => &mut self.password,
+            (Mode::Device, _) => &mut self.pin,
         };
         edit_secret(input, event);
         Nav::Stay
     }
 
-    fn on_picker(&mut self, event: &KeyEvent, cursor: usize, ctx: &Ctx) -> Nav {
+    fn on_picker(&mut self, event: &KeyEvent, cursor: usize) -> Nav {
         match event.code {
             KeyCode::Up => self.picker = Some(cursor.saturating_sub(1)),
             KeyCode::Down => {
@@ -211,7 +212,7 @@ impl UnlockState {
             }
             KeyCode::Enter => {
                 self.picker = None;
-                self.select(cursor, ctx);
+                self.select(cursor);
             }
             KeyCode::Esc => self.picker = None,
             _ => {}
@@ -238,7 +239,9 @@ impl UnlockState {
                 }
                 self.phrase.space();
             }
-            (Mode::Chip | Mode::Device, _) => {}
+            (Mode::Device, _) => {
+                self.pin.insert_str(text);
+            }
         }
     }
 
@@ -247,7 +250,7 @@ impl UnlockState {
         match action {
             Action::Confirm => self.submit(ctx),
             Action::SwitchFactor => {
-                let modes = self.modes(ctx);
+                let modes = self.modes();
                 let at = modes
                     .iter()
                     .position(|mode| *mode == self.mode)
@@ -278,6 +281,7 @@ impl UnlockState {
             }
             Action::Back => {
                 self.password.clear();
+                self.pin.clear();
                 self.phrase.clear();
                 self.passphrase.clear();
                 self.reveal_off(ctx);
@@ -306,8 +310,8 @@ impl UnlockState {
         let Some(paths) = self.vault().map(|vault| vault.paths.clone()) else {
             return;
         };
-        let cost = match &self.directory {
-            Ok(directory) => views(directory, &ctx.chips)
+        let password_cost = match &self.directory {
+            Ok(directory) => views(directory, self.owned_device())
                 .iter()
                 .find(|view| view.kind == FactorKind::Password)
                 .and_then(|view| view.cost),
@@ -330,17 +334,21 @@ impl UnlockState {
                     return;
                 }
             },
-            Mode::Device => Credential::Device,
-            #[cfg(feature = "dev-chip")]
-            Mode::Chip => Credential::Chip,
-            #[cfg(not(feature = "dev-chip"))]
-            Mode::Chip => return,
+            Mode::Device => {
+                if self.pin.len() < *DEVICE_PIN_LEN.start() {
+                    ctx.toast(Tone::Warn, "The device PIN has at least 6 characters.");
+                    return;
+                }
+                Credential::Device(self.pin.take())
+            }
         };
         self.reveal_off(ctx);
-        let cost = if self.mode == Mode::Password {
-            cost
-        } else {
-            None
+        let cost = match self.mode {
+            Mode::Password => password_cost,
+            Mode::Device => device_key_info(&paths.device_key)
+                .ok()
+                .map(|info| (info.profile.m_kib(), info.profile.t(), info.profile.p())),
+            Mode::Recovery => None,
         };
         ctx.start(Job::Unlock(paths, credential), Task::Unlock(cost));
     }

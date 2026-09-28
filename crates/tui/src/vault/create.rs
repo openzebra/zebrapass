@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use local::{paths_for, LocalMeta};
+use local::{paths_for, LocalMeta, Paths};
 use seed::SeedPhrase;
 use session::{
     add_human_password, unlock, wrap_directory, BodyAlg, HumanPasswordPublics, KdfProfile, Session,
@@ -13,7 +13,7 @@ use session::{
 };
 use zeroize::Zeroizing;
 
-use crate::vault::chip::Chips;
+use crate::vault::device;
 use crate::vault::error::UnlockError;
 use crate::vault::open::{read_vault_file, Vault};
 
@@ -23,11 +23,8 @@ pub enum Enrollment {
     Password(Zeroizing<Vec<u8>>),
     /// Keep the password factor the restored file already has.
     KeepExisting,
-    /// This device's keys in the keyring.
-    Device,
-    /// The development chip.
-    #[cfg(feature = "dev-chip")]
-    Chip,
+    /// This device's keys, sealed under this PIN with this Argon2id preset.
+    Device(Zeroizing<Vec<u8>>, KdfProfile),
 }
 
 impl std::fmt::Debug for Enrollment {
@@ -74,7 +71,7 @@ pub struct RestoreVault {
 ///
 /// Core and storage errors; the vault directory may be left behind when the
 /// failure happens after the first write.
-pub fn create(request: NewVault, chips: &Chips) -> anyhow::Result<Box<Vault>> {
+pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
     let NewVault {
         phrase,
         name,
@@ -88,7 +85,7 @@ pub fn create(request: NewVault, chips: &Chips) -> anyhow::Result<Box<Vault>> {
         local::create_vault(&base, phrase.seed(), profile, BodyAlg::Frames)?;
     drop(phrase);
     meta.name = name;
-    enroll(&mut session, &mut file, profile, factor, chips)?;
+    enroll(&mut session, &mut file, &paths, profile, factor)?;
     let directory = wrap_directory(&file)?;
     let mut vault = Box::new(Vault {
         session,
@@ -109,7 +106,7 @@ pub fn create(request: NewVault, chips: &Chips) -> anyhow::Result<Box<Vault>> {
 ///
 /// [`UnlockError::Denied`] when the phrase does not open the file; storage
 /// errors as [`UnlockError::Io`].
-pub fn restore(request: RestoreVault, chips: &Chips) -> Result<Box<Vault>, UnlockError> {
+pub fn restore(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
     let RestoreVault {
         phrase,
         name,
@@ -130,8 +127,9 @@ pub fn restore(request: RestoreVault, chips: &Chips) -> Result<Box<Vault>, Unloc
         created_at_ms: unix_ms(),
         name,
         seen: None,
+        prefs: None,
     };
-    enroll(&mut session, &mut file, profile, factor, chips).map_err(|_| UnlockError::Io)?;
+    enroll(&mut session, &mut file, &paths, profile, factor).map_err(|_| UnlockError::Io)?;
     let directory = wrap_directory(&file).map_err(|_| UnlockError::NotAVault)?;
     let mut vault = Box::new(Vault {
         session,
@@ -148,16 +146,16 @@ pub fn restore(request: RestoreVault, chips: &Chips) -> Result<Box<Vault>, Unloc
 fn enroll(
     session: &mut Session,
     file: &mut VaultFile,
+    paths: &Paths,
     profile: KdfProfile,
     factor: Enrollment,
-    chips: &Chips,
 ) -> anyhow::Result<()> {
     match factor {
         Enrollment::Password(password) => add_password(session, file, &password, profile),
         Enrollment::KeepExisting => Ok(()),
-        Enrollment::Device => chips.keyring().enroll(session, file),
-        #[cfg(feature = "dev-chip")]
-        Enrollment::Chip => chips.enroll(session, file),
+        Enrollment::Device(pin, pin_profile) => {
+            device::enroll(session, file, paths, &pin, pin_profile)
+        }
     }
 }
 

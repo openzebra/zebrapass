@@ -23,7 +23,7 @@ pub fn initial_screen(ctx: &mut Ctx) -> Screen {
     if vaults.is_empty() {
         Screen::Welcome(WelcomeState::default())
     } else {
-        Screen::Unlock(Box::new(UnlockState::new(vaults, 0, ctx)))
+        Screen::Unlock(Box::new(UnlockState::new(vaults, 0)))
     }
 }
 
@@ -136,7 +136,7 @@ pub struct LockedState {
 
 impl LockedState {
     /// Any key: back to unlock.
-    pub fn resume(&mut self, ctx: &mut Ctx) -> Nav {
+    pub fn resume(&mut self) -> Nav {
         let vaults = std::mem::take(&mut self.vaults);
         if vaults.is_empty() {
             return Nav::To(Screen::Welcome(WelcomeState::default()));
@@ -144,7 +144,6 @@ impl LockedState {
         Nav::To(Screen::Unlock(Box::new(UnlockState::new(
             vaults,
             self.current,
-            ctx,
         ))))
     }
 }

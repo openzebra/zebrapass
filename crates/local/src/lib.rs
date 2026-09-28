@@ -6,7 +6,10 @@
 //! the vault key with a dedicated info.
 
 mod atomic;
+mod device_key;
+mod limits;
 mod meta;
+mod prefs;
 
 use std::path::{Path, PathBuf};
 
@@ -15,7 +18,13 @@ use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
 pub use atomic::write_atomic;
+pub use device_key::{
+    device_key_info, open_device_key, seal_device_key, DeviceKey, DeviceKeyInfo,
+    DEVICE_KEY_FILE_LEN,
+};
+pub use limits::{CLIP_CLEAR_S, DEVICE_PIN_LEN, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
+pub use prefs::{parse_origin, Prefs, SyncMode};
 
 /// Locations of one vault on this device.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,6 +35,8 @@ pub struct Paths {
     pub vault_file: PathBuf,
     /// This device's metadata: `vaults/<vault_id_hex>/local.meta`.
     pub local_meta: PathBuf,
+    /// This device's PIN-sealed key file: `vaults/<vault_id_hex>/device.key`.
+    pub device_key: PathBuf,
 }
 
 impl Paths {
@@ -78,6 +89,7 @@ pub fn paths_for(base: &Path, vault_id: &[u8; 16]) -> Paths {
         base: base.to_path_buf(),
         vault_file: vault_dir.join("vault.brby"),
         local_meta: vault_dir.join("local.meta"),
+        device_key: vault_dir.join("device.key"),
     }
 }
 
@@ -111,6 +123,7 @@ pub fn create_vault(
         created_at_ms: now_ms(),
         name: String::new(),
         seen: None,
+        prefs: None,
     };
     save_local_meta(&paths.local_meta, &meta, &session.local_meta_key()?)?;
     Ok((paths, session, file, meta))
@@ -178,6 +191,7 @@ mod tests {
         let dir = PathBuf::from("/data/vaults").join("07070707070707070707070707070707");
         assert_eq!(paths.vault_file, dir.join("vault.brby"));
         assert_eq!(paths.local_meta, dir.join("local.meta"));
+        assert_eq!(paths.device_key, dir.join("device.key"));
         assert_eq!(paths.vault_dir(), dir);
     }
 

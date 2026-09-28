@@ -7,13 +7,12 @@
 )]
 
 use container::{
-    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry,
-    encode_password_entry, encode_prf_entry, encode_wrap_dir, HumanKdf, StaticHeader, VaultFile,
-    WrapDir, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN,
-    DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN, DEVICE_SUFFIX_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE,
+    assemble, encode_chip_entry, encode_human_password_entry, encode_password_entry,
+    encode_prf_entry, encode_wrap_dir, HumanKdf, StaticHeader, VaultFile, WrapDir, WrapEntry,
+    BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, DOMAIN_WRAP_CHIP,
     DOMAIN_WRAP_PASSWORD, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX,
-    KDF_P_MIN, KDF_T_MAX, KDF_T_MIN, KEM_MLKEM768, KEM_NTRULP, KIND_CHIP, KIND_PASSWORD, KIND_PRF,
-    MAGIC, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
+    KDF_P_MIN, KDF_T_MAX, KDF_T_MIN, KIND_CHIP, KIND_PASSWORD, KIND_PRF, MAGIC,
+    PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
 };
 use pq::{KEM_CT_LEN, PQ_PK_LEN};
 
@@ -41,29 +40,30 @@ fn password_record() -> [u8; PASSWORD_RECORD_LEN] {
     encode_password_entry([9; 8], [1; 32], [2; 32], [3; 32])
 }
 
-const DUMMY_KEM_CT: usize = KEM_CT_LEN;
-
-fn device_record(id_byte: u8, kem_alg: u16, ct_byte: u8) -> Vec<u8> {
-    encode_device_entry(
-        [id_byte; 16],
-        kem_alg,
-        [0x21; 32],
-        [0x43; 32],
-        &[ct_byte; DUMMY_KEM_CT],
-        [0x55; 32],
-        [0x66; 32],
-        [0x77; 32],
-    )
-    .expect("dummy ciphertext fits")
+/// A well-formed record of the retired X25519 device kind `0x0002`: id,
+/// KEM id, two X25519 keys, ML-KEM ciphertext, nonce, ct, tag.
+fn retired_device_record() -> Vec<u8> {
+    let payload_len = 16 + 2 + 32 + 32 + KEM_CT_LEN + 32 + 32 + 32;
+    let mut raw = Vec::with_capacity(6 + payload_len);
+    raw.extend_from_slice(&0x0002u16.to_le_bytes());
+    raw.extend_from_slice(&u32::try_from(payload_len).unwrap().to_le_bytes());
+    raw.extend_from_slice(&[0x11; 16]);
+    raw.extend_from_slice(&0xC002u16.to_le_bytes());
+    raw.resize(6 + payload_len, 0x5A);
+    raw
 }
 
 fn chip_record(id_byte: u8, ct_byte: u8) -> Vec<u8> {
+    chip_record_with_kem(id_byte, ct_byte, 0x5A)
+}
+
+fn chip_record_with_kem(id_byte: u8, ct_byte: u8, kem_byte: u8) -> Vec<u8> {
     encode_chip_entry(
         [id_byte; 16],
         [0x41; 65],
         [0x43; 65],
         [0x42; PQ_PK_LEN],
-        &[0x5A; KEM_CT_LEN],
+        &[kem_byte; KEM_CT_LEN],
         [1; 32],
         [ct_byte; 32],
         [3; 32],
@@ -103,18 +103,13 @@ fn constants_match_the_spec() {
     assert_eq!(KIND_PASSWORD, 0x0001);
     assert_eq!(KIND_CHIP, 0x0003);
     assert_eq!(KIND_PRF, 0x0004);
-    assert_eq!(KEM_MLKEM768, 0xC002);
-    assert_eq!(KEM_NTRULP, 0xC001);
     assert_eq!(DOMAIN_BODY, b"brby/v2/body");
     assert_eq!(DOMAIN_WRAP_PASSWORD, b"brby/v2/wrap-password");
-    assert_eq!(DOMAIN_WRAP_DEVICE, b"brby/v2/wrap-device");
+    assert_eq!(DOMAIN_WRAP_CHIP, b"brby/v2/wrap-chip");
     assert_eq!(HEADER_LEN, 72);
     assert_eq!(COMMIT_LEN, 32);
     assert_eq!(PASSWORD_PAYLOAD_LEN, 104);
     assert_eq!(PASSWORD_RECORD_LEN, 110);
-    assert_eq!(DEVICE_PREFIX_LEN, 82);
-    assert_eq!(DEVICE_SUFFIX_LEN, 96);
-    assert_eq!(DEVICE_PAYLOAD_MIN, 82 + KEM_CT_LEN + 96);
 }
 
 #[test]
@@ -222,8 +217,8 @@ fn two_password_entries_are_allowed() {
 
 #[test]
 fn file_without_password_wrap_is_rejected() {
-    let device = device_record(0xAB, KEM_MLKEM768, 0x5A);
-    let file = file_from(&sample_header(BODY_AEGIS256), &[&device], &[0x22; 64], 1);
+    let chip = chip_record(0xAB, 0x5A);
+    let file = file_from(&sample_header(BODY_AEGIS256), &[&chip], &[0x22; 64], 1);
     assert_eq!(file.parse().unwrap_err().to_string(), "no password wrap");
 }
 
@@ -275,24 +270,10 @@ fn prf_entry_roundtrip() {
 }
 
 #[test]
-fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
+fn distinct_chip_ids_parse_and_borrow_the_ciphertext() {
     let password = password_record();
-    let first = device_record(0xAB, KEM_MLKEM768, 0x5A);
-    let duplicate = device_record(0xAB, KEM_MLKEM768, 0x5B);
-    let duplicated = file_from(
-        &sample_header(BODY_AEGIS256),
-        &[&password, first.as_slice(), duplicate.as_slice()],
-        &[0x22; 64],
-        3,
-    );
-    assert_eq!(
-        duplicated.parse().unwrap_err().to_string(),
-        "corrupted length"
-    );
-
-    let second = device_record(0xCD, KEM_MLKEM768, 0x5C);
-    let expected_len = 2 + 4 + DEVICE_PREFIX_LEN + DUMMY_KEM_CT + DEVICE_SUFFIX_LEN;
-    assert_eq!(second.len(), expected_len);
+    let first = chip_record(0xAB, 0x5A);
+    let second = chip_record_with_kem(0xCD, 0x5B, 0x5C);
     let file = file_from(
         &sample_header(BODY_AEGIS256),
         &[&password, first.as_slice(), second.as_slice()],
@@ -302,17 +283,13 @@ fn duplicate_device_id_is_rejected_and_distinct_ids_borrow_ciphertext() {
     let parsed = file.parse().unwrap();
     assert_eq!(parsed.generation, 6);
     assert_eq!(parsed.entries.len(), 3);
-    let WrapEntry::Device(device) = parsed.entries.get(2).unwrap() else {
-        panic!("expected device");
+    let WrapEntry::Chip(chip) = parsed.entries.get(2).unwrap() else {
+        panic!("expected chip");
     };
-    assert_eq!(device.device_id, [0xCD; 16]);
-    assert_eq!(device.kem_alg, KEM_MLKEM768);
-    assert_eq!(device.kem_ct, &[0x5C; DUMMY_KEM_CT]);
+    assert_eq!(chip.id, [0xCD; 16]);
+    assert_eq!(chip.kem_ct, &[0x5C; KEM_CT_LEN]);
     let bytes = file.as_bytes();
-    assert!(bytes.as_ptr_range().contains(&device.kem_ct.as_ptr()));
-    assert!(bytes
-        .windows(DUMMY_KEM_CT)
-        .any(|window| window == device.kem_ct));
+    assert!(bytes.as_ptr_range().contains(&chip.kem_ct.as_ptr()));
 }
 
 #[test]
@@ -483,19 +460,24 @@ fn algorithm_ids_are_checked_before_kdf_params() {
 }
 
 #[test]
-fn unsupported_kem_and_recognized_body_minimums() {
+fn retired_device_kind_and_recognized_body_minimums() {
     let password = password_record();
-    let bad_kem = device_record(0x11, 0x0002, 0x5A);
+    // The X25519 device wrap is retired: a well-formed record of its kind no
+    // longer parses as a standalone entry or inside a file.
+    let retired = retired_device_record();
+    assert_eq!(
+        WrapEntry::try_from(retired.as_slice())
+            .unwrap_err()
+            .to_string(),
+        "corrupted length"
+    );
     let file = file_from(
         &sample_header(BODY_AEGIS256),
-        &[&password, bad_kem.as_slice()],
+        &[&password, retired.as_slice()],
         &[0x22; 64],
         1,
     );
-    assert_eq!(
-        file.parse().unwrap_err().to_string(),
-        "unsupported kem 0x0002"
-    );
+    assert_eq!(file.parse().unwrap_err().to_string(), "corrupted length");
 
     let minimums = [
         (BODY_AEGIS256, 64usize),

@@ -31,12 +31,8 @@ pub enum Factor {
         /// Lanes.
         p: u32,
     },
-    /// A device wrap (kind `0x0002`).
-    Device {
-        /// Device id.
-        id: [u8; 16],
-    },
-    /// A chip wrap (kind `0x0003`).
+    /// A chip wrap (kind `0x0003`): this device's secure chip or PIN-sealed
+    /// key file.
     Chip(Box<ChipFactor>),
     /// A hardware-key PRF wrap (kind `0x0004`).
     Prf {
@@ -54,7 +50,6 @@ impl From<&WrapEntry<'_>> for Factor {
                 t: wrap.kdf.t,
                 p: wrap.kdf.p,
             },
-            WrapEntry::Device(wrap) => Self::Device { id: wrap.device_id },
             WrapEntry::Chip(wrap) => Self::Chip(Box::new(ChipFactor {
                 publics: ChipPublics {
                     id: wrap.id,

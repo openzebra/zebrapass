@@ -3,11 +3,10 @@
 //! This crate is the public API of the zebrapass workspace: depend only on
 //! `session`. All other workspace crates are internal (`publish = false`);
 //! types that appear in the API signatures (`VaultFile`, `KdfProfile`,
-//! `BodyAlg`, device wrap types) are re-exported here so no internal crate
+//! `BodyAlg`, chip wrap types) are re-exported here so no internal crate
 //! is required.
 
 pub(crate) mod create;
-mod device_book;
 mod devices;
 mod directory;
 mod error;
@@ -24,11 +23,9 @@ mod wraps_rot;
 pub use aead::BodyAlg;
 pub use container::VaultFile;
 pub use create::{create, fresh_device_id, Session};
-pub use device_book::{enroll_device, known_devices};
 pub use devices::{
-    add_chip_unlock, add_device, add_human_password, add_prf_unlock, drop_recovery_wrap,
-    remove_chip_unlock, remove_device, remove_human_password, remove_prf_unlock,
-    replace_human_password,
+    add_chip_unlock, add_human_password, add_prf_unlock, drop_recovery_wrap, remove_chip_unlock,
+    remove_human_password, remove_prf_unlock, replace_human_password,
 };
 pub use directory::{wrap_directory, ChipFactor, Factor, WrapDirectory};
 pub use error::{Seen, SessionError};
@@ -50,7 +47,4 @@ pub use sync_sig::{
     DeviceSignKey, SyncRecord,
 };
 pub use unlock::{check_seen, unlock, UnlockCreds};
-pub use wraps::{
-    ChipGrant, ChipKeys, ChipPublics, DeviceGrant, DeviceKeys, DevicePublics, HumanPasswordPublics,
-    PrfPublics,
-};
+pub use wraps::{ChipGrant, ChipKeys, ChipPublics, HumanPasswordPublics, PrfPublics};

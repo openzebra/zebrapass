@@ -10,8 +10,8 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 
 ### 0.1 Product model
 1. A **BIP39 phrase** is the root secret. It is used **only** to create a vault or restore one on a new device.
-2. After a restore, each device enrolls its own unlock factor: password, biometric (device/chip key), or later a hardware key (FIDO2 PRF / YubiKey).
-3. **Envelope encryption.** One random vault key (VK) encrypts the data. The VK is wrapped by N independent KEKs (master, password, device, chip, PRF). Adding or removing a factor never re-encrypts the data. Revoking a device **rotates the VK**.
+2. After a restore, each device enrolls its own unlock factor: password, this device (P-256 + ML-KEM keys in a PIN-sealed `device.key` file, or a secure chip in native apps), or later a hardware key (FIDO2 PRF / YubiKey). Device keys never go to the OS keychain.
+3. **Envelope encryption.** One random vault key (VK) encrypts the data. The VK is wrapped by N independent KEKs (master, password, device, PRF). Adding or removing a factor never re-encrypts the data. Revoking a device **rotates the VK**.
 4. **Quantum-safe.** Symmetric keys are 256-bit. Key exchange uses a hybrid of ML-KEM and a classical EC share. Signatures use ML-DSA.
 5. **Sync is per record.** A single signed record frame goes to the server, never the whole vault.
 6. **Client ID** is `[u8; 64]`, derived one-way from the seed with HKDF-SHA512 and a domain-separated label.
@@ -23,10 +23,10 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 | Crate | Responsibility |
 |---|---|
 | `session` | Public API: `create`, `unlock`, records CRUD, devices, rotation/revoke, `export_record` / `accept_record`, sync signatures |
-| `local` | On-device storage: atomic writes, local meta, rollback `seen` state |
-| `platform` | OS / keychain / secure-enclave abstraction (`SecretStore`: macOS keychain, in-memory for tests) |
-| `container` | Vault file wire format: static header, wrap directory, wrap entries (`password`, `device`, `chip`, `prf`), commitment tag, parse limits |
-| `wraps` | KEK derivation and VK wrap/unwrap per factor (`password`, `password_human`, `device`, `chip`, `prf`, `grant`) and wrap AD construction (`wad`) |
+| `local` | On-device storage: atomic writes, local meta, rollback `seen` state, the PIN-sealed device key file |
+| `platform` | Secure-chip seam for native apps (`ChipBackend`; `SoftwareChip` for tests). Terminal apps cannot reach the Secure Enclave |
+| `container` | Vault file wire format: static header, wrap directory, wrap entries (`password`, `password_human`, `chip` = device, `prf`); kind `0x0002` is retired, commitment tag, parse limits |
+| `wraps` | KEK derivation and VK wrap/unwrap per factor (`password`, `password_human`, `chip` = device, `prf`) and wrap AD construction (`wad`) |
 | `frame` | Per-record encrypted frames (AEGIS-256, header as AD), frame index, append log |
 | `record` | Plaintext document model, tags, size limits |
 | `kdf` | Argon2id, HKDF-SHA512, all key-derivation labels (`INFO_*`), KDF profiles |
@@ -59,7 +59,8 @@ BIP39 phrase ──► seed[64] ──HKDF──► master KEK ─┐
                          ├──HKDF──► client_id[64]│
                          └──HKDF──► account sign key (certifies device keys)
 password ──Argon2id──► password KEK ────────────┤
-device / chip / PRF ──(ML-KEM hybrid | HW)──► KEK ┤
+device file|chip ──(P-256+ML-KEM)──► KEK ───────┤
+hardware key ──(PRF, TODO)──► KEK ──────────────┤
                                                  ▼
                                   wrap(VK) with AD = header ‖ wrap metadata
 VK ──HKDF(vault_id)──► k_body, k_bmac, k_commit (+ frame keys)

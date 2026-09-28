@@ -22,7 +22,6 @@ use session::KdfProfile;
 use tui::app::ctx::Caps;
 use tui::app::screen::Screen;
 use tui::cli::{Config, Flags};
-use tui::vault::chip::Chips;
 use tui::vault::create::{create, Enrollment, NewVault};
 use tui::App;
 use zeroize::Zeroizing;
@@ -74,16 +73,13 @@ pub fn app_with(config: &Config, base: &Path, caps: Caps) -> App {
 pub fn make_vault(base: &Path) -> String {
     let phrase = SeedPhrase::generate_24().unwrap();
     let words = phrase.phrase_normalized().to_owned();
-    let vault = create(
-        NewVault {
-            phrase: Box::new(phrase),
-            name: String::from("Personal"),
-            base: base.to_path_buf(),
-            profile: KdfProfile::Fast,
-            factor: Enrollment::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
-        },
-        &Chips::default(),
-    )
+    let vault = create(NewVault {
+        phrase: Box::new(phrase),
+        name: String::from("Personal"),
+        base: base.to_path_buf(),
+        profile: KdfProfile::Fast,
+        factor: Enrollment::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
+    })
     .unwrap();
     drop(vault);
     words

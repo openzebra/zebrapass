@@ -3,6 +3,7 @@
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::dialog::{ConfirmKind, Dialog};
 use crate::app::flows::editing::Hold;
+use crate::app::flows::enroll::EnrollFactor;
 use crate::app::flows::unlock::{MAX_PASSPHRASE, MAX_PASSWORD};
 use crate::app::flows::unlocked::Unlocked;
 use crate::secure::phrase_input::PhraseInput;
@@ -10,10 +11,10 @@ use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::chip::Chips;
 use crate::vault::factors::presence;
 use crate::vault::limits::MAX_VAULT_NAME;
 use crate::vault::ops::{FactorRef, Op};
+use local::DEVICE_PIN_LEN;
 
 /// What the form is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,6 +27,10 @@ pub enum FormKind {
     ChangePassword,
     /// First password factor.
     AddPassword,
+    /// Enroll this device under a new PIN.
+    AddDevice,
+    /// Re-seal this device's key file under a new PIN.
+    ChangePin,
     /// Drop the recovery wrap (type `DROP`).
     DropRecovery,
     /// Rename the vault on this device.
@@ -131,6 +136,12 @@ impl Form {
         self
     }
 
+    fn with_new_pin(mut self) -> Self {
+        self.new = Some(secret(*DEVICE_PIN_LEN.end()));
+        self.repeat = Some(secret(*DEVICE_PIN_LEN.end()));
+        self
+    }
+
     fn held(mut self) -> Self {
         self.hold = Some(Hold::default());
         self
@@ -202,6 +213,34 @@ impl Form {
         )
         .with_new()
         .focus_first()
+    }
+
+    /// Enroll this device under a PIN.
+    #[must_use]
+    pub fn add_device() -> Self {
+        Self::blank(
+            FormKind::AddDevice,
+            "Enroll this device",
+            &[
+                "New P-256 + ML-KEM keys are sealed in a file next to the vault.",
+                "Argon2id stretches the PIN; the key file never leaves this disk.",
+            ],
+        )
+        .with_new_pin()
+        .focus_first()
+    }
+
+    /// Change this device's PIN.
+    #[must_use]
+    pub fn change_pin() -> Self {
+        let mut form = Self::blank(
+            FormKind::ChangePin,
+            "Change the device PIN",
+            &["Only this device's key file is re-sealed; the vault does not change."],
+        )
+        .with_new_pin();
+        form.current = Some(secret(*DEVICE_PIN_LEN.end()));
+        form.focus_first()
     }
 
     /// Drop the recovery wrap.
@@ -339,46 +378,28 @@ pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
             state.run(Op::RestoreRevision(id, revision), Task::Save, ctx);
         }
         ConfirmKind::Discard => crate::app::flows::editor_keys::close(state, ctx),
+        ConfirmKind::DiscardSettings => crate::app::flows::settings::apply::discard(state, ctx),
     }
 }
 
 /// Carry out an add-factor menu choice.
-pub fn add_factor(state: &mut Unlocked, choice: usize, ctx: &mut Ctx) {
-    let found = presence(&state.info.directory, &ctx.chips);
+pub fn add_factor(state: &mut Unlocked, choice: EnrollFactor, ctx: &mut Ctx) {
+    let found = presence(&state.info.directory, state.info.owned_device());
     match choice {
-        0 if found.password => ctx.toast(
+        EnrollFactor::Password if found.password => ctx.toast(
             Tone::Info,
             "This vault already has a password. Use Change password.",
         ),
-        0 => state.dialog = Some(Box::new(Dialog::Form(Box::new(Form::add_password())))),
-        1 if found.owned_devices > 0 => ctx.toast(Tone::Info, "This device is already enrolled."),
-        1 => {
-            if !ctx.chips.keyring().persistent() {
-                ctx.toast(
-                    Tone::Warn,
-                    "Keychain is off: this device key lives in memory and is lost on quit.",
-                );
-            }
-            state.run(Op::AddDevice, Task::Factor, ctx);
+        EnrollFactor::Password => {
+            state.dialog = Some(Box::new(Dialog::Form(Box::new(Form::add_password()))));
         }
-        2 if Chips::available() => add_chip(state, ctx),
-        2 => ctx.toast(
-            Tone::Warn,
-            "No secure chip backend in this build (Secure Enclave is not built yet).",
-        ),
+        EnrollFactor::Device if found.owned_devices > 0 => {
+            ctx.toast(Tone::Info, "This device is already enrolled.");
+        }
+        EnrollFactor::Device => {
+            state.dialog = Some(Box::new(Dialog::Form(Box::new(Form::add_device()))));
+        }
         // TODO(hw-key): FIDO2 PRF enrollment plugs in here; until then it fails closed.
-        _ => ctx.toast(Tone::Warn, "Hardware keys are not available yet."),
+        EnrollFactor::HwKey => ctx.toast(Tone::Warn, "Hardware keys are not available yet."),
     }
 }
-
-#[cfg(feature = "dev-chip")]
-fn add_chip(state: &mut Unlocked, ctx: &mut Ctx) {
-    ctx.toast(
-        Tone::Warn,
-        "Software chip (dev): its key lives in memory and is lost on quit.",
-    );
-    state.run(Op::AddChip, Task::Factor, ctx);
-}
-
-#[cfg(not(feature = "dev-chip"))]
-const fn add_chip(_state: &mut Unlocked, _ctx: &mut Ctx) {}

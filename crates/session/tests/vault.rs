@@ -11,23 +11,22 @@
 )]
 
 use aead::BodyAlg;
+mod common;
+
 use container::{
     assemble, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry,
     BODY_AEGIS256, BODY_KUZ_CTR_HMAC, COMMIT_LEN, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX,
     KDF_P_MIN, KDF_T_MIN, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, WRAP_AEGIS256,
 };
 use kdf::KdfProfile;
-use pq::keypair;
+use local::DeviceKey;
 use record::Document;
-use secret::Secret;
 use session::{
-    add_device, add_prf_unlock, change_master, create, list_records, reencrypt_body, remove_device,
-    remove_prf_unlock, revoke, unlock, write_record, Revoke, RotateCreds, Seen, Session,
-    UnlockCreds,
+    add_chip_unlock, add_prf_unlock, change_master, create, list_records, reencrypt_body,
+    remove_chip_unlock, remove_prf_unlock, revoke, unlock, write_record, ChipPublics, Revoke,
+    RotateCreds, Seen, Session, UnlockCreds,
 };
-use wraps::{DeviceKeys, DevicePublics, PrfPublics};
-use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
-use zeroize::Zeroize;
+use wraps::PrfPublics;
 
 const SEED_AEGIS: [u8; 64] = [0xA1; 64];
 const SEED_KUZ: [u8; 64] = [0xB2; 64];
@@ -48,12 +47,12 @@ fn vault_operations_mobile_and_one_desktop() {
     tamper(&aegis, &SEED_AEGIS);
     transplant(&aegis, &kuz);
     let mut file = aegis;
-    reject_zero_x25519(&mut session, &mut file);
+    reject_invalid_device_key(&mut session, &mut file);
     let device = add_and_check(&mut session, &mut file);
     reencrypt_and_check(&mut session, &mut file, &device);
     change_master_and_check(&mut session, &mut file);
     write_and_check(&mut session, &mut file);
-    remove_and_check(&mut session, &mut file, &device.0.id);
+    remove_and_check(&mut session, &mut file, device.id());
     desktop_once();
 }
 
@@ -169,29 +168,31 @@ fn transplant(aegis: &VaultFile, kuz: &VaultFile) {
     );
 }
 
-fn reject_zero_x25519(session: &mut Session, file: &mut VaultFile) {
+fn reject_invalid_device_key(session: &mut Session, file: &mut VaultFile) {
     let before = file.as_bytes().to_vec();
     let generation = session.generation();
     let tag = *session.commit_tag();
-    let dev = DevicePublics {
-        id: [9; 16],
-        x_pk: [0; 32],
-        pq_pk: [0; pq::PQ_PK_LEN],
+    let (valid, _) = common::device();
+    let dev = ChipPublics {
+        chip_pub: [0; 65],
+        ..valid
     };
     assert_eq!(
-        add_device(session, file, &dev).unwrap_err().to_string(),
-        "zero shared secret"
+        add_chip_unlock(session, file, &dev)
+            .unwrap_err()
+            .to_string(),
+        "kem length"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
     assert_eq!(session.generation(), generation);
     assert_eq!(session.commit_tag(), &tag);
 }
 
-fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics, DeviceKeys) {
+fn add_and_check(session: &mut Session, file: &mut VaultFile) -> DeviceKey {
     let body_before = body_of(file);
     let generation = session.generation();
-    let device = device_identity(0x42);
-    let grant = add_device(session, file, &device.0).unwrap();
+    let (publics, device) = common::device();
+    let grant = add_chip_unlock(session, file, &publics).unwrap();
     assert_eq!(body_of(file), body_before);
     assert_eq!(session.generation(), generation + 1);
     assert_eq!(file.parse().unwrap().generation, generation + 1);
@@ -200,7 +201,7 @@ fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics,
     let generation_after = session.generation();
     let tag_after = *session.commit_tag();
     assert_eq!(
-        add_device(session, file, &device.0)
+        add_chip_unlock(session, file, &publics)
             .unwrap_err()
             .to_string(),
         "corrupted length"
@@ -214,15 +215,11 @@ fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics,
     device
 }
 
-fn reencrypt_and_check(
-    session: &mut Session,
-    file: &mut VaultFile,
-    device: &(DevicePublics, DeviceKeys),
-) {
+fn reencrypt_and_check(session: &mut Session, file: &mut VaultFile, device: &DeviceKey) {
     // One real record so the rotated log is a well-formed frame log
     // (write_record below indexes the session log).
     write_record(session, file, None, &doc("pre-rotation")).unwrap();
-    reencrypt_body(session, file, &SEED_ROTATED, &[device.0], &[]).unwrap();
+    reencrypt_body(session, file, &SEED_ROTATED, &[]).unwrap();
     assert_eq!(
         unlock(file, &UnlockCreds::master(&SEED_AEGIS), None)
             .unwrap_err()
@@ -236,7 +233,7 @@ fn reencrypt_and_check(
         1,
         "reencrypt keeps records"
     );
-    let via_device = unlock(file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
+    let via_device = common::unlock_device(file, device).unwrap();
     assert_eq!(via_device.generation(), session.generation());
     assert_eq!(via_device.commit_tag(), session.commit_tag());
 }
@@ -325,7 +322,7 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
     let generation = session.generation();
     let missing = [0x11; 16];
     assert_eq!(
-        remove_device(session, file, &missing)
+        remove_chip_unlock(session, file, &missing)
             .unwrap_err()
             .to_string(),
         "wrap not found"
@@ -333,7 +330,7 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
     assert_eq!(file.as_bytes(), before.as_slice());
     assert_eq!(session.generation(), generation);
     let body_before = body_of(file);
-    remove_device(session, file, device_id).unwrap();
+    remove_chip_unlock(session, file, device_id).unwrap();
     assert_eq!(body_of(file), body_before);
     assert_eq!(session.generation(), generation + 1);
     let parsed = file.parse().unwrap();
@@ -344,7 +341,7 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
     assert!(parsed
         .entries
         .iter()
-        .all(|entry| { !matches!(entry, WrapEntry::Device(dev) if dev.device_id == *device_id) }));
+        .all(|entry| { !matches!(entry, WrapEntry::Chip(chip) if chip.id == *device_id) }));
 }
 
 fn desktop_once() {
@@ -353,27 +350,6 @@ fn desktop_once() {
     let opened = unlock(&file, &UnlockCreds::master(&SEED_DESKTOP), None).unwrap();
     assert_eq!(opened.generation(), 1);
     assert_eq!(opened.commit_tag(), session.commit_tag());
-}
-
-fn device_identity(id_byte: u8) -> (DevicePublics, DeviceKeys) {
-    let (ntru_bytes, kem_secret) = keypair().unwrap();
-    let ntru_pk: [u8; pq::PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
-    let mut scalar = [0u8; 32];
-    getrandom::fill(&mut scalar).unwrap();
-    let x_pk = x25519(scalar, X25519_BASEPOINT_BYTES);
-    let id = [id_byte; 16];
-    let publics = DevicePublics {
-        id,
-        x_pk,
-        pq_pk: ntru_pk,
-    };
-    let keys = DeviceKeys {
-        id,
-        x_sk: Secret::new(scalar),
-        pq_sk: kem_secret,
-    };
-    scalar.zeroize();
-    (publics, keys)
 }
 
 fn flip_at(file: &VaultFile, index: usize) -> VaultFile {
@@ -507,13 +483,11 @@ fn removed_prf_cannot_unlock() {
 
 const fn revoke_creds<'a>(
     master: &'a [u8; 64],
-    devices: &'a [DevicePublics],
     prfs: &'a [(PrfPublics, [u8; 32])],
 ) -> RotateCreds<'a> {
     RotateCreds {
         master,
         human_password: None,
-        devices,
         prfs,
     }
 }
@@ -522,31 +496,24 @@ const fn revoke_creds<'a>(
 fn revoked_device_cannot_read_new_frames() {
     let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
     let mut file = file;
-    let device = device_identity(0x71);
-    add_device(&mut session, &mut file, &device.0).unwrap();
+    let device = common::enroll(&mut session, &mut file);
 
     // The attacker copies the file while the device is still enrolled.
     let stolen = VaultFile::new(file.as_bytes().to_vec());
-    let attacker = unlock(
-        &stolen,
-        &UnlockCreds::default().with_device(&device.1),
-        None,
-    )
-    .unwrap();
+    let attacker = common::unlock_device(&stolen, &device).unwrap();
+    // The shared secret the stolen key derives against its enrolled wrap.
+    let ss = device
+        .ecdh(&common::eph_pub(&stolen, device.id()).unwrap())
+        .unwrap();
 
-    let devices = [device.0];
-    let creds = revoke_creds(&SEED_NEXT, &devices, &[]);
-    revoke(
-        &mut session,
-        &mut file,
-        &Revoke::Device(&device.0.id),
-        &creds,
-    )
-    .unwrap();
+    let creds = revoke_creds(&SEED_NEXT, &[]);
+    revoke(&mut session, &mut file, &Revoke::Chip(device.id()), &creds).unwrap();
 
     // The stolen device keys open nothing: its wrap is gone and the vault key
     // underneath has been replaced.
-    assert!(unlock(&file, &UnlockCreds::default().with_device(&device.1), None).is_err());
+    let stolen_creds = UnlockCreds::default().with_chip(device.chip_keys(), *ss.expose());
+    assert!(unlock(&file, &stolen_creds, None).is_err());
+    assert!(common::unlock_device(&file, &device).is_err());
     // The owner keeps full access under the new master wrap.
     let mut owner = unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).unwrap();
     assert_eq!(owner.generation(), session.generation());
@@ -569,20 +536,17 @@ fn revoked_device_cannot_read_new_frames() {
 fn remaining_factors_still_unlock_after_revoke() {
     let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
     let mut file = file;
-    let gone = device_identity(0x72);
-    let kept = device_identity(0x73);
-    add_device(&mut session, &mut file, &gone.0).unwrap();
-    add_device(&mut session, &mut file, &kept.0).unwrap();
+    let gone = common::enroll(&mut session, &mut file);
+    let kept = common::enroll(&mut session, &mut file);
     let publics = prf_publics();
     let prf_out = [0x45; 32];
     add_prf_unlock(&mut session, &mut file, &publics, &prf_out).unwrap();
 
-    let devices = [gone.0, kept.0];
     let prfs = [(prf_publics(), prf_out)];
-    let creds = revoke_creds(&SEED_NEXT, &devices, &prfs);
-    revoke(&mut session, &mut file, &Revoke::Device(&gone.0.id), &creds).unwrap();
+    let creds = revoke_creds(&SEED_NEXT, &prfs);
+    revoke(&mut session, &mut file, &Revoke::Chip(gone.id()), &creds).unwrap();
 
-    assert!(unlock(&file, &UnlockCreds::default().with_device(&kept.1), None).is_ok());
+    assert!(common::unlock_device(&file, &kept).is_ok());
     assert!(unlock(
         &file,
         &UnlockCreds::default().with_prf(&publics, &prf_out),
@@ -590,32 +554,25 @@ fn remaining_factors_still_unlock_after_revoke() {
     )
     .is_ok());
     assert!(unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).is_ok());
-    assert!(unlock(&file, &UnlockCreds::default().with_device(&gone.1), None).is_err());
+    assert!(common::unlock_device(&file, &gone).is_err());
 }
 
 #[test]
 fn revoke_without_prf_output_fails() {
     let (file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
     let mut file = file;
-    let device = device_identity(0x74);
-    add_device(&mut session, &mut file, &device.0).unwrap();
+    let device = common::enroll(&mut session, &mut file);
     let publics = prf_publics();
     add_prf_unlock(&mut session, &mut file, &publics, &[0x46; 32]).unwrap();
 
     // Rotating without the PRF output would brick the hardware factor: refuse
     // and leave the file exactly as it was.
     let before = file.as_bytes().to_vec();
-    let devices = [device.0];
-    let creds = revoke_creds(&SEED_NEXT, &devices, &[]);
+    let creds = revoke_creds(&SEED_NEXT, &[]);
     assert_eq!(
-        revoke(
-            &mut session,
-            &mut file,
-            &Revoke::Device(&device.0.id),
-            &creds
-        )
-        .unwrap_err()
-        .to_string(),
+        revoke(&mut session, &mut file, &Revoke::Chip(device.id()), &creds)
+            .unwrap_err()
+            .to_string(),
         "prf factor required"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
@@ -692,21 +649,20 @@ fn drop_refuses_when_no_factor_would_remain() {
 #[test]
 fn origin_device_is_stable_across_unlocks() {
     let (mut file, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
-    let device = device_identity(0x75);
-    add_device(&mut session, &mut file, &device.0).unwrap();
+    let device = common::enroll(&mut session, &mut file);
 
     // Two unlocks with the same wrap: the stamped origin must be identical
     // (the wrap id, not a fresh random id per unlock).
-    let first = unlock(&file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
-    let second = unlock(&file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
+    let first = common::unlock_device(&file, &device).unwrap();
+    let second = common::unlock_device(&file, &device).unwrap();
     assert_eq!(first.origin_device(), second.origin_device());
-    assert_eq!(first.origin_device(), device.0.id);
+    assert_eq!(first.origin_device(), *device.id());
 
     // A seed unlock carries no enrolled wrap: a random non-zero origin, so
     // its frames never masquerade as a registered device's frames.
     let master = unlock(&file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap();
     assert_ne!(master.origin_device(), [0u8; 16]);
-    assert_ne!(master.origin_device(), device.0.id);
+    assert_ne!(master.origin_device(), *device.id());
 }
 
 #[test]

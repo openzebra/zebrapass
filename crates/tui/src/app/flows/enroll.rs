@@ -1,6 +1,7 @@
 //! "How will you unlock on this device?" — shared by create and restore.
 
 use crossterm::event::KeyEvent;
+use local::DEVICE_PIN_LEN;
 use subtle::ConstantTimeEq;
 
 use crate::app::action::Action;
@@ -13,25 +14,39 @@ use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::secure::strength::{estimate, Strength, StrengthLabel};
 use crate::ui::widgets::toast::Tone;
-use crate::vault::chip::Chips;
 use crate::vault::create::Enrollment;
+use crate::vault::device::PIN_PROFILE;
 
 /// Factor cards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnrollFactor {
     /// Argon2id password.
     Password,
-    /// This device's keys in the keyring.
+    /// This device's keys in a PIN-sealed key file.
     Device,
-    /// Secure chip.
-    Chip,
     /// Hardware key (not built yet).
     HwKey,
 }
 
 impl EnrollFactor {
     /// Cards in display order.
-    pub const ALL: [Self; 4] = [Self::Password, Self::Device, Self::Chip, Self::HwKey];
+    pub const ALL: [Self; 3] = [Self::Password, Self::Device, Self::HwKey];
+
+    /// Whether the card asks for a secret and its repeat.
+    #[must_use]
+    pub const fn takes_secret(self) -> bool {
+        matches!(self, Self::Password | Self::Device)
+    }
+
+    /// Label in the add-factor menu.
+    #[must_use]
+    pub const fn menu_label(self) -> &'static str {
+        match self {
+            Self::Password => "Password (Argon2id)",
+            Self::Device => "This device (PIN-sealed key, ML-KEM hybrid)",
+            Self::HwKey => "Hardware key (FIDO2 PRF)",
+        }
+    }
 }
 
 /// Focus.
@@ -39,7 +54,7 @@ impl EnrollFactor {
 pub enum EnrollFocus {
     /// The factor cards.
     Cards,
-    /// New password.
+    /// New password or device PIN.
     Password,
     /// Repeat.
     Repeat,
@@ -57,7 +72,7 @@ pub struct EnrollState {
     pub factor: EnrollFactor,
     /// Focus.
     pub focus: EnrollFocus,
-    /// New password.
+    /// New password, or the device PIN on the device card.
     pub password: SecretInput,
     /// Repeat.
     pub repeat: SecretInput,
@@ -190,8 +205,8 @@ impl EnrollState {
             }
             Action::Confirm => {
                 match self.focus {
-                    // Enter on the password card just descends into the input.
-                    EnrollFocus::Cards if self.factor == EnrollFactor::Password => {
+                    // Enter on a card with a secret just descends into the input.
+                    EnrollFocus::Cards if self.factor.takes_secret() => {
                         self.focus = EnrollFocus::Password;
                     }
                     EnrollFocus::Password => {
@@ -220,6 +235,9 @@ impl EnrollState {
             .get(next)
             .copied()
             .unwrap_or(EnrollFactor::Password);
+        // A password typed for one card must never become another card's PIN.
+        self.password.clear();
+        self.repeat.clear();
         self.message = None;
     }
 
@@ -248,12 +266,21 @@ impl EnrollState {
         match self.factor {
             // TODO(hw-key): FIDO2 PRF enrollment plugs in here; until then it fails closed.
             EnrollFactor::HwKey => self.message = Some("Hardware keys are not available yet."),
-            EnrollFactor::Device => return EnrollEvent::Done(Enrollment::Device),
-            EnrollFactor::Chip if !Chips::available() => {
-                self.message =
-                    Some("No secure chip backend in this build (Secure Enclave is not built yet).");
+            EnrollFactor::Device => {
+                if self.password.is_empty() {
+                    self.message = Some("Choose a device PIN.");
+                } else if !DEVICE_PIN_LEN.contains(&self.password.len()) {
+                    self.message = Some("A device PIN has 6 to 128 characters.");
+                } else if self.matches() != Some(true) {
+                    self.message = Some("The two entries do not match.");
+                } else {
+                    self.repeat.clear();
+                    return EnrollEvent::Done(Enrollment::Device(
+                        self.password.take(),
+                        PIN_PROFILE,
+                    ));
+                }
             }
-            EnrollFactor::Chip => return chip_enrollment(),
             EnrollFactor::Password => {
                 if self.existing_password && self.password.is_empty() && self.repeat.is_empty() {
                     return EnrollEvent::Done(Enrollment::KeepExisting);
@@ -272,14 +299,4 @@ impl EnrollState {
         }
         EnrollEvent::Stay
     }
-}
-
-#[cfg(feature = "dev-chip")]
-const fn chip_enrollment() -> EnrollEvent {
-    EnrollEvent::Done(Enrollment::Chip)
-}
-
-#[cfg(not(feature = "dev-chip"))]
-const fn chip_enrollment() -> EnrollEvent {
-    EnrollEvent::Stay
 }

@@ -25,7 +25,6 @@ pub const fn glyph(kind: FactorKind, theme: &Theme) -> &'static str {
         FactorKind::Recovery => theme.glyphs.recovery,
         FactorKind::Password => theme.glyphs.password,
         FactorKind::Device => theme.glyphs.device,
-        FactorKind::Chip => theme.glyphs.chip,
         FactorKind::HwKey => theme.glyphs.hw_key,
     }
 }

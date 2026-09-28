@@ -131,8 +131,8 @@ pub struct DeviceSignKey {
 }
 
 impl DeviceSignKey {
-    /// Derive a device key from `seed`. In production the seed comes from the
-    /// platform keychain; tests use fixed bytes.
+    /// Derive a device key from `seed`. In production the seed comes from
+    /// this device's sealed key storage; tests use fixed bytes.
     #[must_use]
     pub fn from_seed(seed: &[u8; SYNC_SEED_LEN]) -> Self {
         let key = pq::signing_key_from_seed(seed);

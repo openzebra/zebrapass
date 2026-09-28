@@ -15,7 +15,7 @@ use crate::ui::screens::create::titled;
 use crate::ui::widgets::chrome::{hint_bar, panel};
 use crate::ui::widgets::field::{boxed, secret_line};
 use crate::ui::widgets::meter::strength_spans;
-use crate::vault::chip::Chips;
+use crate::vault::device::PIN_PROFILE;
 
 /// Draw the enroll step with its wizard position `step`.
 pub fn draw(
@@ -44,20 +44,28 @@ pub fn draw(
     ])
     .areas(inner);
     draw_cards(frame, cards, state, ctx);
-    if state.factor == EnrollFactor::Password {
+    if state.factor.takes_secret() {
+        let device = state.factor == EnrollFactor::Device;
         let new_focus = state.focus == EnrollFocus::Password;
         let revealed = state.reveal.is_shown(REVEAL_NEW);
         labeled_secret(
             frame,
             password,
-            "New password",
+            if device { "Device PIN" } else { "New password" },
             secret_line(&state.password, new_focus, revealed, theme),
             new_focus,
             ctx,
         );
-        let mut spans = vec![Span::styled("   Strength       ", theme.text())];
-        spans.extend(strength_spans(state.strength(), 10, theme));
-        frame.render_widget(Paragraph::new(Line::from(spans)), strength);
+        if device {
+            let cost = PIN_PROFILE.m_kib() / 1024;
+            let note =
+                format!("   Argon2id {cost} MiB seals the key file; it never leaves this disk.");
+            frame.render_widget(Paragraph::new(Span::styled(note, theme.muted())), strength);
+        } else {
+            let mut spans = vec![Span::styled("   Strength       ", theme.text())];
+            spans.extend(strength_spans(state.strength(), 10, theme));
+            frame.render_widget(Paragraph::new(Line::from(spans)), strength);
+        }
         let repeat_focus = state.focus == EnrollFocus::Repeat;
         let revealed = state.reveal.is_shown(REVEAL_REPEAT);
         let field = labeled_secret(
@@ -80,28 +88,6 @@ pub fn draw(
             height: 1,
         };
         frame.render_widget(Paragraph::new(verdict), verdict_rect);
-    } else if state.factor == EnrollFactor::Device {
-        let where_ = ctx.chips.keyring().kind();
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled(
-                    format!("   New device keys (X25519 + ML-KEM-768) go to the {where_}."),
-                    theme.text(),
-                )),
-                Line::from(Span::styled(
-                    "   On this device you unlock with Enter; nothing to type.",
-                    theme.muted(),
-                )),
-                Line::from(Span::styled(
-                    "   Other devices restore with the phrase and enroll their own.",
-                    theme.muted(),
-                )),
-            ]),
-            Rect {
-                height: password.height + strength.height + repeat.height,
-                ..password
-            },
-        );
     }
     draw_notes(frame, message, state, ctx);
     hint_bar(frame, hints, Scope::Enroll, "", ctx);
@@ -138,18 +124,7 @@ fn labeled_secret(
 fn draw_cards(frame: &mut Frame<'_>, area: Rect, state: &EnrollState, ctx: &Ctx) {
     let theme = &ctx.theme;
     let glyphs = theme.glyphs;
-    let chip_note = if Chips::available() {
-        "dev backend"
-    } else {
-        "not built yet"
-    };
-    let keyring = ctx.chips.keyring();
-    let device_note = if keyring.persistent() {
-        ""
-    } else {
-        "lost on quit"
-    };
-    let specs: [(EnrollFactor, String, &str, &str, &str); 4] = [
+    let specs: [(EnrollFactor, String, &str, &str, &str); 3] = [
         (
             EnrollFactor::Password,
             format!("{} Password", glyphs.password),
@@ -160,16 +135,9 @@ fn draw_cards(frame: &mut Frame<'_>, area: Rect, state: &EnrollState, ctx: &Ctx)
         (
             EnrollFactor::Device,
             format!("{} This device", glyphs.device),
-            "X25519 + ML-KEM",
-            keyring.kind(),
-            device_note,
-        ),
-        (
-            EnrollFactor::Chip,
-            format!("{} Secure chip", glyphs.chip),
             "P-256 + ML-KEM",
-            "bound to this box",
-            chip_note,
+            "sealed key + PIN",
+            "stays on this disk",
         ),
         (
             EnrollFactor::HwKey,
@@ -179,7 +147,7 @@ fn draw_cards(frame: &mut Frame<'_>, area: Rect, state: &EnrollState, ctx: &Ctx)
             "coming soon",
         ),
     ];
-    let columns = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
+    let columns = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(area);
     for ((factor, title, primitive, detail, note), rect) in specs.iter().zip(columns.iter()) {
         let chosen = state.factor == *factor;
         let focused = chosen && state.focus == EnrollFocus::Cards;
