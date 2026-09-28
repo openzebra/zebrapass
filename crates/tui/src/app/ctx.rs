@@ -8,7 +8,8 @@ use crate::app::idle::Idle;
 use crate::app::worker::{Job, Worker};
 use crate::cli::{Config, Flags};
 use crate::secure::clipboard::{Clipboard, CopyError};
-use crate::ui::theme::Theme;
+use crate::secure::reveal::REVEAL_TIMEOUT;
+use crate::ui::theme::{Theme, ThemeName};
 use crate::ui::widgets::toast::{Toasts, Tone};
 
 /// What the terminal can do.
@@ -99,6 +100,11 @@ pub struct Ctx {
     pub pending: Option<Pending>,
     /// Auto-lock timer.
     pub idle: Idle,
+    /// A revealed secret hides itself after this long.
+    pub reveal_after: Duration,
+    /// Colors were switched off at start-up (`--no-color`, `NO_COLOR`); no
+    /// saved preference turns them back on.
+    pub no_color: bool,
     /// Measured time of one [`session::KdfProfile::Fast`] Argon2id run.
     pub kdf_fast: Option<Duration>,
     /// The next frame must clear the terminal first.
@@ -131,6 +137,8 @@ impl Ctx {
             worker: Worker::spawn()?,
             pending: None,
             idle: Idle::new(now, config.lock_after),
+            reveal_after: REVEAL_TIMEOUT,
+            no_color: config.theme == ThemeName::Mono,
             kdf_fast: None,
             full_redraw: false,
             size: (120, 40),

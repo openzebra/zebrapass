@@ -2,7 +2,7 @@
 //! and every view. Dropping this state is what "lock" means.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use local::{device_key_info, DeviceKeyInfo};
+use local::{device_key_info, DeviceKeyInfo, Prefs};
 use session::WrapDirectory;
 
 use crate::app::ctx::{Ctx, Task};
@@ -40,6 +40,8 @@ pub struct VaultInfo {
     pub directory: WrapDirectory,
     /// Public header of this device's key file, when it has one.
     pub device: Option<DeviceKeyInfo>,
+    /// Saved preferences; `None` until this device saves some.
+    pub prefs: Option<Prefs>,
 }
 
 impl VaultInfo {
@@ -60,6 +62,7 @@ impl From<&Vault> for VaultInfo {
             generation: vault.session.generation(),
             directory: vault.directory.clone(),
             device: device_key_info(&vault.paths.device_key).ok(),
+            prefs: vault.meta.prefs.clone(),
         }
     }
 }
@@ -271,10 +274,10 @@ impl Unlocked {
     pub fn on_tick(&mut self, ctx: &mut Ctx) -> Nav {
         let mut hid = false;
         if let Some(detail) = self.home.detail.as_mut() {
-            hid |= detail.reveal.tick(ctx.now);
+            hid |= detail.reveal.tick(ctx.now, ctx.reveal_after);
         }
         if let View::Editor(editor) = &mut self.view {
-            hid |= editor.reveal.tick(ctx.now);
+            hid |= editor.reveal.tick(ctx.now, ctx.reveal_after);
         }
         if hid {
             ctx.redraw();
@@ -323,6 +326,15 @@ impl Unlocked {
                 ctx.toast(Tone::Success, "History cleared.");
             }
             Outcome::Renamed => ctx.toast(Tone::Success, "Renamed on this device."),
+            Outcome::PrefsSaved => {
+                if let Some(prefs) = self.info.prefs.as_ref() {
+                    ctx.apply_prefs(prefs);
+                }
+                ctx.toast(
+                    Tone::Success,
+                    "Settings saved for this vault on this device.",
+                );
+            }
             Outcome::FactorAdded(kind) => {
                 self.animate(Anim::Add, ctx);
                 ctx.toast(Tone::Success, format!("Added {}.", kind.noun()));

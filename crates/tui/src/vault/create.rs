@@ -127,6 +127,7 @@ pub fn restore(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
         created_at_ms: unix_ms(),
         name,
         seen: None,
+        prefs: None,
     };
     enroll(&mut session, &mut file, &paths, profile, factor).map_err(|_| UnlockError::Io)?;
     let directory = wrap_directory(&file).map_err(|_| UnlockError::NotAVault)?;

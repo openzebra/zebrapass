@@ -78,7 +78,7 @@ impl Dialog {
     /// Advance timers. `true` when a hold completed and the form submits.
     pub fn tick(&mut self, ctx: &mut Ctx) -> bool {
         let Self::Form(form) = self else { return false };
-        if form.reveal.tick(ctx.now) {
+        if form.reveal.tick(ctx.now, ctx.reveal_after) {
             ctx.redraw();
         }
         form.hold

@@ -15,6 +15,8 @@ use record::{
 };
 use secret::Secret;
 
+use crate::prefs::Prefs;
+
 /// The last file state this device accepted, for rollback detection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SeenCursor {
@@ -39,9 +41,12 @@ pub struct LocalMeta {
     /// Last accepted generation and commit tag; `None` on files written
     /// before rollback detection existed.
     pub seen: Option<SeenCursor>,
+    /// This device's saved preferences for the vault; `None` until saved.
+    pub prefs: Option<Prefs>,
 }
 
-/// The document form of the metadata (tags `0x0201..0x0204`).
+/// The document form of the metadata (tags `0x0201..0x0206` and the
+/// preference tags `0x0210..`).
 #[must_use]
 pub fn meta_document(meta: &LocalMeta) -> Document {
     let mut doc = Document::new();
@@ -60,6 +65,9 @@ pub fn meta_document(meta: &LocalMeta) -> Document {
             &seen.generation.to_le_bytes(),
         );
         doc.set_data(TAG_SEEN_COMMIT, ValueType::Bytes, &seen.commit_tag);
+    }
+    if let Some(prefs) = meta.prefs.as_ref() {
+        prefs.write(&mut doc);
     }
     doc
 }
@@ -104,6 +112,7 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
         created_at_ms: u64::from_le_bytes(raw_time),
         name,
         seen,
+        prefs: Prefs::read(doc)?,
     })
 }
 
@@ -186,6 +195,10 @@ mod tests {
             client_id: [4; 64],
             created_at_ms: 1_700_000_000_123,
             name: String::from("Personal"),
+            prefs: Some(crate::Prefs {
+                lock_after_s: 60,
+                ..crate::Prefs::default()
+            }),
         }
     }
 

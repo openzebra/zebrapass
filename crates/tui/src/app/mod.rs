@@ -7,6 +7,7 @@ pub mod event;
 pub mod flows;
 pub mod idle;
 pub mod keymap;
+pub mod prefs;
 pub mod screen;
 pub mod worker;
 
@@ -311,19 +312,21 @@ impl App {
         let nav = match &mut self.screen {
             Screen::Unlocked(state) => state.on_tick(&mut self.ctx),
             Screen::Unlock(state) => {
-                if state.reveal.tick(now) {
+                if state.reveal.tick(now, self.ctx.reveal_after) {
                     self.ctx.redraw();
                 }
                 Nav::Stay
             }
             Screen::Create(state) => {
-                if state.ceremony.reveal.tick(now) || state.enroll.reveal.tick(now) {
+                let after = self.ctx.reveal_after;
+                if state.ceremony.reveal.tick(now, after) || state.enroll.reveal.tick(now, after) {
                     self.ctx.redraw();
                 }
                 Nav::Stay
             }
             Screen::Restore(state) => {
-                if state.reveal.tick(now) || state.enroll.reveal.tick(now) {
+                let after = self.ctx.reveal_after;
+                if state.reveal.tick(now, after) || state.enroll.reveal.tick(now, after) {
                     self.ctx.redraw();
                 }
                 Nav::Stay
@@ -364,6 +367,9 @@ impl App {
             }
             (JobResult::Opened(outcome), Screen::Unlock(state)) if waited => match outcome {
                 Ok(vault) => {
+                    if let Some(prefs) = vault.meta.prefs.as_ref() {
+                        self.ctx.apply_prefs(prefs);
+                    }
                     let vaults = std::mem::take(&mut state.vaults);
                     let current = state.current;
                     self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current)));
@@ -408,6 +414,9 @@ impl App {
             .iter()
             .position(|known| known.vault_id.as_ref() == Some(vault.session.vault_id()))
             .unwrap_or(0);
+        if let Some(prefs) = vault.meta.prefs.as_ref() {
+            self.ctx.apply_prefs(prefs);
+        }
         self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current)));
         self.ctx.idle.touch(self.ctx.now);
         self.ctx.toast(Tone::Success, message.to_owned());

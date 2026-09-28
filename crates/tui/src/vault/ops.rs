@@ -4,6 +4,7 @@
 //! advances the rollback cursor. The vault moves into the worker and back;
 //! it is never cloned.
 
+use local::Prefs;
 use record::{Document, TAG_PASSWORD};
 use seed::SeedPhrase;
 use session::{
@@ -63,6 +64,8 @@ pub enum Op {
     ClearHistory,
     /// Rename the vault on this device.
     Rename(String),
+    /// Save this device's preferences for the vault.
+    SavePrefs(Box<Prefs>),
     /// Add the password factor.
     AddPassword(Zeroizing<Vec<u8>>, KdfProfile),
     /// Replace the password wrap; the vault key stays.
@@ -105,6 +108,8 @@ pub enum Outcome {
     HistoryCleared,
     /// Vault renamed.
     Renamed,
+    /// Preferences saved.
+    PrefsSaved,
     /// A factor was added.
     FactorAdded(FactorKind),
     /// A wrap was removed.
@@ -144,6 +149,10 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
         Op::Rename(name) => {
             vault.meta.name = name;
             Outcome::Renamed
+        }
+        Op::SavePrefs(prefs) => {
+            vault.meta.prefs = Some(*prefs);
+            Outcome::PrefsSaved
         }
         Op::AddPassword(password, profile) => {
             if presence(&vault.directory, device::owned_id(&vault.paths)).password {

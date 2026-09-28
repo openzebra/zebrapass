@@ -9,6 +9,7 @@ mod atomic;
 mod device_key;
 mod limits;
 mod meta;
+mod prefs;
 
 use std::path::{Path, PathBuf};
 
@@ -21,8 +22,9 @@ pub use device_key::{
     device_key_info, open_device_key, seal_device_key, DeviceKey, DeviceKeyInfo,
     DEVICE_KEY_FILE_LEN,
 };
-pub use limits::DEVICE_PIN_LEN;
+pub use limits::{CLIP_CLEAR_S, DEVICE_PIN_LEN, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
+pub use prefs::{parse_origin, Prefs, SyncMode};
 
 /// Locations of one vault on this device.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +123,7 @@ pub fn create_vault(
         created_at_ms: now_ms(),
         name: String::new(),
         seen: None,
+        prefs: None,
     };
     save_local_meta(&paths.local_meta, &meta, &session.local_meta_key()?)?;
     Ok((paths, session, file, meta))
