@@ -28,6 +28,11 @@ fn open_settings(tag: &str) -> (App, std::path::PathBuf) {
     let mut app = app(&base);
     unlock(&mut app, PASSWORD);
     assert_eq!(app.screen.name(), "unlocked");
+    let home = render(&app, 180, 40);
+    assert!(
+        home.contains(", settings"),
+        "Home advertises settings: {home}"
+    );
     type_text(&mut app, ",");
     (app, base)
 }
