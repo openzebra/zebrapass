@@ -110,6 +110,8 @@ pub fn boxed(frame: &mut Frame<'_>, area: Rect, line: Line<'_>, focused: bool, t
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, reason = "tests may index")]
+
     use super::typing_mask;
     use crate::ui::theme::{Theme, ThemeName};
     use crate::ui::widgets::stripes::MASK_CELLS;
