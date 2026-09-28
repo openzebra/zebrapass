@@ -109,3 +109,32 @@ fn restore_tab_leaves_a_finished_phrase_and_shift_tab_returns() {
     press(&mut app, KeyCode::BackTab);
     assert_eq!(field(&app), RestoreField::Phrase);
 }
+
+/// Walk create → ceremony → verify: tick the box and continue.
+fn reach_verify(app: &mut tui::App) {
+    press(app, KeyCode::Enter);
+    press(app, KeyCode::Enter);
+    press(app, KeyCode::Enter); // unticked: focus moves to the checkbox
+    press(app, KeyCode::Char(' '));
+    press(app, KeyCode::Tab);
+    press(app, KeyCode::Enter);
+    assert_eq!(create_state(app).step, Step::Verify);
+}
+
+#[test]
+fn verify_step_skips_with_s() {
+    let mut app = app(&temp_dir("keys-verify-skip"));
+    reach_verify(&mut app);
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(create_state(&app).step, Step::Enroll);
+}
+
+#[test]
+fn verify_step_tabs_to_the_skip_button_and_confirms() {
+    let mut app = app(&temp_dir("keys-verify-skip-tab"));
+    reach_verify(&mut app);
+    press(&mut app, KeyCode::Tab);
+    assert!(create_state(&app).verify.as_ref().is_some_and(|v| v.skip));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(create_state(&app).step, Step::Enroll);
+}

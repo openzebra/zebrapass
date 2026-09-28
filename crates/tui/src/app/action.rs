@@ -50,6 +50,8 @@ actions! {
     Confirm,
     /// Back / clear / cancel.
     Back,
+    /// Skip the phrase check.
+    Skip,
     /// Open the command palette.
     Palette,
     /// Show the key cheat sheet.

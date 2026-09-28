@@ -184,6 +184,9 @@ pub const KEYMAP: &[Binding] = bindings! {
     Verify: key(KeyCode::Right) => Right;
     Verify: key(KeyCode::Enter) => Confirm, "confirm";
     Verify: key(KeyCode::Esc) => Back, "back to phrase";
+    Verify: key(KeyCode::Tab) => NextField, "skip button";
+    Verify: key(KeyCode::BackTab) => PrevField;
+    Verify: ch('s') => Skip, "skip";
 
     Restore: key(KeyCode::Tab) => AcceptSuggestion, "accept / next field";
     Restore: key(KeyCode::BackTab) => PrevField;
@@ -260,7 +263,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Home: ch(',') => OpenSettings;
     Home: ch('L') => Lock, "lock";
     Home: ch('?') => Help, "help";
-    Home: ch('q') => Quit;
+    Home: ch('q') => Quit, "quit";
     Home: key(KeyCode::Esc) => Back;
 
     Search: key(KeyCode::Esc) => Back, "clear";

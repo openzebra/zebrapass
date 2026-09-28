@@ -131,6 +131,8 @@ fn draw_verify(frame: &mut Frame<'_>, area: Rect, verify: &Verify, ctx: &Ctx) {
         Constraint::Min(1),
     ])
     .areas(inner);
+    let [text, action] =
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(13)]).areas(note);
     let shake = verify.shake(ctx.now);
     let shifted = Rect {
         x: cards.x.saturating_add_signed(shake),
@@ -206,8 +208,15 @@ fn draw_verify(frame: &mut Frame<'_>, area: Rect, verify: &Verify, ctx: &Ctx) {
             "   Positions come from the OS CSPRNG. Decoys are BIP39 words.",
             theme.muted(),
         )),
-        note,
+        text,
     );
+    let rect = Rect {
+        x: action.x + 2,
+        width: action.width.saturating_sub(4),
+        height: 3.min(action.height),
+        ..action
+    };
+    button(frame, rect, "Skip →", false, verify.skip, theme);
     hint_bar(frame, hints, Scope::Verify, "", ctx);
 }
 

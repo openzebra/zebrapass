@@ -191,13 +191,18 @@ impl CreateState {
                     self.step = Step::Ceremony;
                     return Nav::Stay;
                 }
+                if action == Action::Skip {
+                    self.verify = None;
+                    self.step = Step::Enroll;
+                    return Nav::Stay;
+                }
                 let (Some(verify), Some(phrase)) = (self.verify.as_mut(), self.phrase.as_ref())
                 else {
                     return Nav::Stay;
                 };
                 match verify.on_action(action, phrase, ctx.now) {
                     VerifyEvent::Stay | VerifyEvent::Failed => {}
-                    VerifyEvent::Passed => {
+                    VerifyEvent::Skipped | VerifyEvent::Passed => {
                         self.verify = None;
                         self.step = Step::Enroll;
                     }

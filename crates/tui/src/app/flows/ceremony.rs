@@ -141,6 +141,8 @@ pub enum VerifyEvent {
     Stay,
     /// All three picks were right.
     Passed,
+    /// The user skipped the check.
+    Skipped,
     /// At least one pick was wrong (which one is not said).
     Failed,
 }
@@ -158,6 +160,8 @@ pub struct Verify {
     pub shake_until: Option<Instant>,
     /// The last check failed.
     pub failed: bool,
+    /// The Skip button holds focus.
+    pub skip: bool,
 }
 
 impl std::fmt::Debug for Verify {
@@ -211,6 +215,7 @@ impl Verify {
             confirmed: 0,
             shake_until: None,
             failed: false,
+            skip: false,
         })
     }
 
@@ -236,7 +241,9 @@ impl Verify {
     /// Handle an action against `phrase`.
     pub fn on_action(&mut self, action: Action, phrase: &SeedPhrase, now: Instant) -> VerifyEvent {
         match action {
-            Action::Up | Action::Down => {
+            Action::NextField | Action::PrevField => self.skip = !self.skip,
+            Action::Confirm if self.skip => return VerifyEvent::Skipped,
+            Action::Up | Action::Down if !self.skip => {
                 if let Some(pick) = self.picks.get_mut(self.card) {
                     *pick = if action == Action::Up {
                         pick.saturating_sub(1)
@@ -245,13 +252,15 @@ impl Verify {
                     };
                 }
             }
-            Action::Left => {
+            Action::Left if !self.skip => {
                 self.card = self
                     .card
                     .saturating_sub(1)
                     .max(self.confirmed.min(CARDS - 1));
             }
-            Action::Right => self.card = (self.card + 1).min(self.confirmed.min(CARDS - 1)),
+            Action::Right if !self.skip => {
+                self.card = (self.card + 1).min(self.confirmed.min(CARDS - 1));
+            }
             Action::Confirm => {
                 self.confirmed = (self.confirmed + 1).min(CARDS);
                 self.card = self.confirmed.min(CARDS - 1);
