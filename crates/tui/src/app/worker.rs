@@ -6,6 +6,7 @@
 //! no longer waits for (a cancelled unlock) is dropped on arrival, and with it
 //! any session or secret it holds.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,8 @@ pub enum Job {
     Restore(Box<RestoreVault>),
     /// Run an op on an unlocked vault; the vault comes back in the result.
     Vault(Box<Vault>, Op),
+    /// Read and parse another manager's export.
+    ParseImport(PathBuf, import::Source),
 }
 
 /// A finished job.
@@ -43,6 +46,8 @@ pub enum JobResult {
     Restored(Result<Box<Vault>, UnlockError>),
     /// Op outcome with the vault handed back.
     Vault(Box<Vault>, Result<Outcome, String>),
+    /// Parsed export; the error text holds no file contents.
+    ImportParsed(Result<Box<import::Parsed>, String>),
 }
 
 impl std::fmt::Debug for JobResult {
@@ -53,6 +58,7 @@ impl std::fmt::Debug for JobResult {
             Self::Created(_) => "JobResult::Created",
             Self::Restored(_) => "JobResult::Restored",
             Self::Vault(..) => "JobResult::Vault",
+            Self::ImportParsed(_) => "JobResult::ImportParsed",
         })
     }
 }
@@ -131,7 +137,25 @@ fn run(job: Job) -> JobResult {
             let result = apply(&mut vault, op).map_err(|error| describe(&error));
             JobResult::Vault(vault, result)
         }
+        Job::ParseImport(path, source) => JobResult::ImportParsed(parse_import(&path, source)),
     }
+}
+
+/// Read the export at `path` and parse it as `source`. Folder names always
+/// become tags.
+fn parse_import(
+    path: &std::path::Path,
+    source: import::Source,
+) -> Result<Box<import::Parsed>, String> {
+    let bytes = import::read_file(path).map_err(|error| error.to_string())?;
+    import::parse(&import::Request {
+        bytes,
+        source,
+        mapping: None,
+        folders_as_tags: true,
+    })
+    .map(Box::new)
+    .map_err(|error| error.to_string())
 }
 
 /// One Argon2id run over a fixed dummy input, timed.

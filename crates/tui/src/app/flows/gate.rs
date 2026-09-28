@@ -42,9 +42,7 @@ impl WelcomeState {
                 self.restore = !self.restore;
                 Nav::Stay
             }
-            Action::Confirm if self.restore => {
-                Nav::To(Screen::Restore(Box::new(RestoreState::new(None, ctx))))
-            }
+            Action::Confirm if self.restore => Nav::To(Screen::Import(Box::default())),
             Action::Confirm => Nav::To(Screen::Create(Box::new(CreateState::new(ctx)))),
             _ => Nav::Stay,
         }

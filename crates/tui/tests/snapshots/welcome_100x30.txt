@@ -14,7 +14,7 @@
                                             quantum-safe                                            
                                                                                                     
                   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌──────────────────────────────┐                  
-                  ┃     ✦  Create a new vault    ┃│    ↺  Restore from phrase    │                  
+                  ┃     ✦  Create a new vault    ┃│     ↺  Restore or import     │                  
                   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└──────────────────────────────┘                  
                                                                                                     
                                                                                                     

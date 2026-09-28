@@ -66,6 +66,8 @@ fn restore_hides_the_typed_word_with_ctrl_e() {
     let mut app = app(&temp_dir("keys-restore"));
     press(&mut app, KeyCode::Right);
     press(&mut app, KeyCode::Enter);
+    // The restore chooser: the recovery phrase is the first entry.
+    press(&mut app, KeyCode::Enter);
     type_text(&mut app, "zo");
     app.on_key(&ctrl('e'));
     let Screen::Restore(state) = &app.screen else {
@@ -87,6 +89,8 @@ fn restore_hides_the_typed_word_with_ctrl_e() {
 fn restore_tab_leaves_a_finished_phrase_and_shift_tab_returns() {
     let mut app = app(&temp_dir("keys-restore-tab"));
     press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Enter);
+    // The restore chooser: the recovery phrase is the first entry.
     press(&mut app, KeyCode::Enter);
     let field = |app: &tui::App| {
         let Screen::Restore(state) = &app.screen else {

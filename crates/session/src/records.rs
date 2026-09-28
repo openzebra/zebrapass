@@ -22,6 +22,10 @@ use secret::Secret;
 use crate::create::Session;
 use crate::rotate::write_records;
 
+mod batch;
+
+pub use batch::{write_records_batch, MAX_BATCH};
+
 /// One live record: its winning revision frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecordSummary {

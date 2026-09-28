@@ -1,0 +1,18 @@
+//! Bounds on untrusted import input, checked before memory is allocated.
+
+/// Most items one import may produce.
+pub const MAX_ITEMS: usize = 20_000;
+
+/// Longest single field value, in bytes. Longer values skip the item.
+pub const MAX_FIELD: usize = 60 * 1024;
+
+/// Most custom fields per item. More skip the item.
+pub const MAX_CUSTOM: usize = 64;
+
+const _: () = assert!(MAX_FIELD <= u16::MAX as usize);
+
+/// Largest export file read, in bytes.
+pub const MAX_IMPORT_FILE: u64 = 64 * 1024 * 1024;
+
+/// Most CSV columns.
+pub const MAX_CSV_COLUMNS: usize = 64;

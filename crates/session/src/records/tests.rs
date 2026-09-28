@@ -14,7 +14,9 @@ use super::{
     delete_record, history, list_records, open_record, open_revision, restore_revision, vault_meta,
     RecordSummary,
 };
-use crate::{create, write_record, write_vault_meta};
+use crate::{
+    create, unlock, write_record, write_records_batch, write_vault_meta, UnlockCreds, MAX_BATCH,
+};
 
 fn sample_doc(title: &str, password: &str) -> Document {
     let mut doc = Document::new();
@@ -133,4 +135,70 @@ fn vault_meta_round_trip() {
             .unwrap(),
         "Personal"
     );
+}
+
+#[test]
+fn batch_writes_every_record_in_one_generation() {
+    let (mut file, mut session) = fresh_vault();
+    let before = session.generation();
+    let docs = [
+        sample_doc("A", "pa"),
+        sample_doc("B", "pb"),
+        sample_doc("C", "pc"),
+    ];
+    let ids = write_records_batch(&mut session, &mut file, &docs).unwrap();
+    assert_eq!(ids, [1, 2, 3]);
+    assert_eq!(session.generation(), before + 1);
+    assert_eq!(list_records(&session).unwrap().len(), 3);
+    for (id, password) in ids.iter().zip(["pa", "pb", "pc"]) {
+        let doc = open_record(&session, *id).unwrap();
+        assert_eq!(
+            doc.data(TAG_PASSWORD).unwrap().unwrap(),
+            password.as_bytes()
+        );
+    }
+    let reopened = unlock(&file, &UnlockCreds::master(&[1u8; 64]), None).unwrap();
+    assert_eq!(list_records(&reopened).unwrap().len(), 3);
+}
+
+#[test]
+fn batch_ids_continue_after_the_highest() {
+    let (mut file, mut session) = fresh_vault();
+    write_record(&mut session, &mut file, Some(7), &sample_doc("Seven", "")).unwrap();
+    let ids = write_records_batch(
+        &mut session,
+        &mut file,
+        &[sample_doc("X", ""), sample_doc("Y", "")],
+    )
+    .unwrap();
+    assert_eq!(ids, [8, 9]);
+}
+
+#[test]
+fn batch_tamper_fails_unlock() {
+    let (mut file, mut session) = fresh_vault();
+    write_records_batch(&mut session, &mut file, &[sample_doc("A", "pa")]).unwrap();
+    let mut bytes = file.as_bytes().to_vec();
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 0x01;
+    let tampered = container::VaultFile::new(bytes);
+    assert!(unlock(&tampered, &UnlockCreds::master(&[1u8; 64]), None).is_err());
+}
+
+#[test]
+fn batch_over_limit_leaves_the_vault_unchanged() {
+    let (mut file, mut session) = fresh_vault();
+    let before = file.as_bytes().to_vec();
+    let docs: Vec<Document> = (0..=MAX_BATCH).map(|_| Document::new()).collect();
+    assert_eq!(
+        write_records_batch(&mut session, &mut file, &docs)
+            .unwrap_err()
+            .to_string(),
+        "batch too large"
+    );
+    assert_eq!(file.as_bytes(), before.as_slice());
+    assert!(write_records_batch(&mut session, &mut file, &[])
+        .unwrap()
+        .is_empty());
+    assert_eq!(file.as_bytes(), before.as_slice());
 }

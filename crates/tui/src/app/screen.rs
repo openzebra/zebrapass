@@ -6,6 +6,7 @@
 
 use crate::app::flows::create::CreateState;
 use crate::app::flows::gate::{AlertState, LockedState, WelcomeState};
+use crate::app::flows::import::ImportState;
 use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlock::UnlockState;
 use crate::app::flows::unlocked::Unlocked;
@@ -20,6 +21,8 @@ pub enum Screen {
     Create(Box<CreateState>),
     /// Restore from phrase.
     Restore(Box<RestoreState>),
+    /// Restore or import from another manager.
+    Import(Box<ImportState>),
     /// Unlock a vault.
     Unlock(Box<UnlockState>),
     /// The open vault.
@@ -38,6 +41,7 @@ impl Screen {
             Self::Welcome(_) => Scope::Welcome,
             Self::Create(state) => state.scope(),
             Self::Restore(state) => state.scope(),
+            Self::Import(state) => state.scope(),
             Self::Unlock(_) => Scope::Unlock,
             Self::Unlocked(state) => state.scope(),
             Self::Alert(_) => Scope::Alert,
@@ -52,6 +56,7 @@ impl Screen {
             Self::Welcome(_) => "welcome",
             Self::Create(_) => "create",
             Self::Restore(_) => "restore",
+            Self::Import(_) => "import",
             Self::Unlock(_) => "unlock",
             Self::Unlocked(_) => "unlocked",
             Self::Alert(_) => "alert",

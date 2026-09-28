@@ -1,0 +1,19 @@
+[package]
+name = "import"
+version = "0.1.0"
+description = "Read exports of other password managers into record documents."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+csv.workspace = true
+record = { path = "../record" }
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

@@ -79,6 +79,7 @@ pub fn make_vault(base: &Path) -> String {
         base: base.to_path_buf(),
         profile: KdfProfile::Fast,
         factor: Enrollment::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
+        records: Vec::new(),
     })
     .unwrap();
     drop(vault);

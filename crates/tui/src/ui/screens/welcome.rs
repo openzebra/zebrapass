@@ -96,7 +96,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &WelcomeState, ctx: &Ctx) 
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(pair);
     let create = format!("{}  Create a new vault", theme.glyphs.spark);
-    let restore = format!("{}  Restore from phrase", theme.glyphs.recovery);
+    let restore = format!("{}  Restore or import", theme.glyphs.recovery);
     button(frame, left, &create, !state.restore, !state.restore, theme);
     button(frame, right, &restore, state.restore, state.restore, theme);
     hint_bar(

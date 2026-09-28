@@ -6,10 +6,11 @@
 use std::path::PathBuf;
 
 use local::{paths_for, LocalMeta, Paths};
+use record::Document;
 use seed::SeedPhrase;
 use session::{
-    add_human_password, unlock, wrap_directory, BodyAlg, HumanPasswordPublics, KdfProfile, Session,
-    UnlockCreds, VaultFile,
+    add_human_password, unlock, wrap_directory, write_records_batch, BodyAlg, HumanPasswordPublics,
+    KdfProfile, Session, UnlockCreds, VaultFile,
 };
 use zeroize::Zeroizing;
 
@@ -46,6 +47,8 @@ pub struct NewVault {
     pub profile: KdfProfile,
     /// This device's factor.
     pub factor: Enrollment,
+    /// Records imported from another manager, written with the vault.
+    pub records: Vec<Document>,
 }
 
 /// A restore request.
@@ -78,6 +81,7 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
         base,
         profile,
         factor,
+        records,
     } = request;
     // Every new vault uses per-record frames: each frame is the AEGIS-256 +
     // Kuznyechik cascade, and there is no cipher choice to get wrong.
@@ -86,6 +90,8 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
     drop(phrase);
     meta.name = name;
     enroll(&mut session, &mut file, &paths, profile, factor)?;
+    write_records_batch(&mut session, &mut file, &records)?;
+    drop(records);
     let directory = wrap_directory(&file)?;
     let mut vault = Box::new(Vault {
         session,

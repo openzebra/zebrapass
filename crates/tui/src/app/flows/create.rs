@@ -3,6 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Duration;
 
+use record::Document;
 use seed::SeedPhrase;
 use session::KdfProfile;
 
@@ -85,6 +86,10 @@ pub struct CreateState {
     pub verify: Option<Box<Verify>>,
     /// Factor step.
     pub enroll: EnrollState,
+    /// Records imported from another manager, written with the vault.
+    pub records: Vec<Document>,
+    /// How many were imported, and from where; kept for the result notice.
+    pub imported: Option<(usize, &'static str)>,
 }
 
 impl CreateState {
@@ -103,7 +108,18 @@ impl CreateState {
             ceremony: Ceremony::default(),
             verify: None,
             enroll: EnrollState::new(false),
+            records: Vec::new(),
+            imported: None,
         }
+    }
+
+    /// Start the wizard for a vault that receives `records` from `source`.
+    #[must_use]
+    pub fn with_records(ctx: &mut Ctx, records: Vec<Document>, source: &'static str) -> Self {
+        let mut state = Self::new(ctx);
+        state.imported = Some((records.len(), source));
+        state.records = records;
+        state
     }
 
     /// Keymap scope.
@@ -274,6 +290,7 @@ impl CreateState {
                 .copied()
                 .unwrap_or(KdfProfile::Balanced),
             factor,
+            records: std::mem::take(&mut self.records),
         };
         ctx.start(Job::Create(Box::new(request)), Task::Create);
         Nav::Stay
@@ -281,9 +298,14 @@ impl CreateState {
 
     /// The job failed; the phrase is gone, so start over from setup.
     pub fn failed(&mut self, message: &str, ctx: &mut Ctx) {
+        let again = if self.imported.take().is_some() {
+            " Start the import again."
+        } else {
+            ""
+        };
         ctx.toast(
             Tone::Danger,
-            format!("Could not create the vault: {message}"),
+            format!("Could not create the vault: {message}.{again}"),
         );
         self.step = Step::Setup;
         self.enroll = EnrollState::new(false);

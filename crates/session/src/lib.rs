@@ -33,7 +33,8 @@ pub use kdf::KdfProfile;
 pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN};
 pub use records::{
     clear_history, delete_record, history, list_records, open_record, open_revision,
-    restore_revision, vault_meta, write_record, write_vault_meta, RecordSummary, RevisionInfo,
+    restore_revision, vault_meta, write_record, write_records_batch, write_vault_meta,
+    RecordSummary, RevisionInfo, MAX_BATCH,
 };
 pub use rotate::{
     change_master, reencrypt_body, revoke, rewrite_body, rotate_vault_key, write_records, Revoke,

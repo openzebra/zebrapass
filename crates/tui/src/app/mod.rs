@@ -23,7 +23,6 @@ use crate::app::ctx::{Caps, Ctx};
 use crate::app::flows::create::CreateState;
 use crate::app::flows::gate::{initial_screen, AlertState, LockReason, LockedState};
 use crate::app::flows::palette::{Overlay, PaletteEvent, PaletteState};
-use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::{Nav, Screen};
@@ -171,6 +170,7 @@ impl App {
                 .map_or(Nav::Stay, |action| state.on_action(action, &mut self.ctx)),
             Screen::Create(state) => state.on_key(event, &mut self.ctx),
             Screen::Restore(state) => state.on_key(event, &mut self.ctx),
+            Screen::Import(state) => state.on_key(event, &mut self.ctx),
             Screen::Unlock(state) => state.on_key(event, &mut self.ctx),
             Screen::Unlocked(state) => state.on_key(event, &mut self.ctx),
             Screen::Alert(state) => resolve(Scope::Alert, event)
@@ -186,6 +186,7 @@ impl App {
             Screen::Unlocked(state) => state.on_release(event, &mut self.ctx),
             Screen::Welcome(_)
             | Screen::Restore(_)
+            | Screen::Import(_)
             | Screen::Unlock(_)
             | Screen::Alert(_)
             | Screen::Locked(_) => {}
@@ -205,6 +206,7 @@ impl App {
         match &mut self.screen {
             Screen::Create(state) => state.on_paste(text),
             Screen::Restore(state) => state.on_paste(text),
+            Screen::Import(state) => state.on_paste(text),
             Screen::Unlock(state) => state.on_paste(text),
             Screen::Unlocked(state) => state.on_paste(text),
             Screen::Welcome(_) | Screen::Alert(_) | Screen::Locked(_) => {}
@@ -226,8 +228,13 @@ impl App {
                 self.screen = Screen::Create(Box::new(CreateState::new(&mut self.ctx)));
             }
             Action::RestoreVault => {
+                if let Screen::Alert(state) = &mut self.screen {
+                    let nav = state.on_action(action, &mut self.ctx);
+                    self.apply(nav);
+                    return;
+                }
                 self.close_vault();
-                self.screen = Screen::Restore(Box::new(RestoreState::new(None, &self.ctx)));
+                self.screen = Screen::Import(Box::default());
             }
             other => {
                 let nav = match &mut self.screen {
@@ -238,7 +245,10 @@ impl App {
                     Screen::Unlock(state) => state.on_action(other, &mut self.ctx),
                     Screen::Create(state) => state.on_action(other, &mut self.ctx),
                     Screen::Alert(state) => state.on_action(other, &mut self.ctx),
-                    Screen::Unlocked(_) | Screen::Restore(_) | Screen::Locked(_) => {
+                    Screen::Unlocked(_)
+                    | Screen::Restore(_)
+                    | Screen::Import(_)
+                    | Screen::Locked(_) => {
                         self.ctx.toast(Tone::Info, "Not available on this screen.");
                         Nav::Stay
                     }
@@ -267,7 +277,9 @@ impl App {
             Screen::Unlocked(state) => (std::mem::take(&mut state.vaults), state.current),
             Screen::Unlock(state) => (std::mem::take(&mut state.vaults), state.current),
             Screen::Welcome(_) | Screen::Alert(_) | Screen::Locked(_) => return,
-            Screen::Create(_) | Screen::Restore(_) => (discover(&self.ctx.base), 0),
+            Screen::Create(_) | Screen::Restore(_) | Screen::Import(_) => {
+                (discover(&self.ctx.base), 0)
+            }
         };
         self.overlay = None;
         self.ctx.pending = None;
@@ -330,7 +342,9 @@ impl App {
                 }
                 Nav::Stay
             }
-            Screen::Welcome(_) | Screen::Alert(_) | Screen::Locked(_) => Nav::Stay,
+            Screen::Welcome(_) | Screen::Import(_) | Screen::Alert(_) | Screen::Locked(_) => {
+                Nav::Stay
+            }
         };
         self.apply(nav);
     }
@@ -387,11 +401,22 @@ impl App {
                 }
                 Err(error) => state.failed(error, self.ctx.now),
             },
+            (JobResult::ImportParsed(outcome), Screen::Import(state)) if waited => {
+                state.parsed(outcome, &mut self.ctx);
+            }
             (JobResult::Created(outcome), Screen::Create(state)) if waited => match outcome {
-                Ok(vault) => self.opened(
-                    vault,
-                    "Vault created. Your recovery phrase is the only way back in: keep it safe.",
-                ),
+                Ok(vault) => {
+                    let message = state.imported.map_or_else(
+                        || String::from(
+                            "Vault created. Your recovery phrase is the only way back in: keep it safe.",
+                        ),
+                        |(count, source)| format!(
+                            "Vault created with {count} records from {source}. Delete the export \
+                             file now: it holds your passwords in plain text.",
+                        ),
+                    );
+                    self.opened(vault, &message);
+                }
                 Err(message) => state.failed(&message, &mut self.ctx),
             },
             (JobResult::Restored(outcome), Screen::Restore(state)) if waited => match outcome {

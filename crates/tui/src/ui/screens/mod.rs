@@ -14,6 +14,8 @@ pub mod generator;
 pub mod health;
 pub mod history;
 pub mod home;
+pub mod import;
+pub mod import_preview;
 pub mod locked;
 pub mod restore;
 pub mod settings;
@@ -44,6 +46,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         Screen::Welcome(state) => welcome::draw(frame, area, state, ctx),
         Screen::Create(state) => create::draw(frame, area, state, ctx),
         Screen::Restore(state) => restore::draw(frame, area, state, ctx),
+        Screen::Import(state) => import::draw(frame, area, state, ctx),
         Screen::Unlock(state) => unlock::draw(frame, area, state, ctx),
         Screen::Alert(state) => alert::draw(frame, area, state, ctx),
         Screen::Locked(state) => locked::draw(frame, area, state, ctx),

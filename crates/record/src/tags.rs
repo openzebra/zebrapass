@@ -70,6 +70,12 @@ pub const TAG_PREF_SERVER_ORIGIN: u16 = 0x0216;
 /// Pinned sync server key fingerprint, 32 bytes (`Bytes`).
 pub const TAG_PREF_SERVER_PIN: u16 = 0x0217;
 
+/// Name of the custom field holding comma-separated tags.
+pub const CUSTOM_TAGS: &str = "tags";
+
+/// Name of the custom field marking a favorite (`"1"`).
+pub const CUSTOM_FAVORITE: &str = "favorite";
+
 /// First custom tag. Custom values carry `name_len ‖ name ‖ data`.
 pub const TAG_CUSTOM_MIN: u16 = 0x8000;
 

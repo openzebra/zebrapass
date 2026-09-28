@@ -1,0 +1,3 @@
+url,username,password,totp,extra,name,grouping,fav
+https://site.test,carol,pw3,,notes here,Site,Personal/Web,1
+http://sn,,,,secret note body,My note,Notes,0

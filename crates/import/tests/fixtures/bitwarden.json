@@ -1,0 +1,40 @@
+{
+  "encrypted": false,
+  "folders": [{ "id": "f-work", "name": "Work" }],
+  "items": [
+    {
+      "id": "1", "folderId": "f-work", "type": 1, "name": "GitHub", "notes": "dev account",
+      "favorite": true,
+      "fields": [
+        { "name": "recovery", "value": "rc-secret-777", "type": 1 },
+        { "name": "team", "value": "core", "type": 0 },
+        { "name": "linked", "value": null, "type": 3, "linkedId": 100 }
+      ],
+      "login": {
+        "uris": [{ "match": null, "uri": "https://github.com" }, { "uri": "https://gist.github.com" }],
+        "username": "octocat", "password": "fixture-pw-github", "totp": "JBSWY3DPEHPK3PXP",
+        "fido2Credentials": [{ "credentialId": "x" }]
+      },
+      "passwordHistory": [{ "lastUsedDate": "2024-01-01T00:00:00Z", "password": "old-pw" }]
+    },
+    { "id": "2", "type": 2, "name": "Wifi", "notes": "router in the hallway", "secureNote": { "type": 0 } },
+    {
+      "id": "3", "type": 3, "name": "Visa",
+      "card": { "cardholderName": "Jane Doe", "brand": "Visa", "number": "4111111111111111",
+                "expMonth": "12", "expYear": "2030", "code": "123" }
+    },
+    {
+      "id": "4", "type": 4, "name": "Me",
+      "identity": { "firstName": "Jane", "lastName": "Doe", "email": "jane@example.com",
+                    "ssn": "000-00-0000", "city": "Springfield" }
+    },
+    {
+      "id": "5", "type": 5, "name": "Server key",
+      "sshKey": { "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----", "publicKey": "ssh-ed25519 AAAA",
+                  "keyFingerprint": "SHA256:abc" }
+    },
+    { "id": "6", "type": 1, "name": "Old", "deletedDate": "2024-02-02T00:00:00Z",
+      "login": { "username": "gone", "password": "trash-pw" } },
+    { "id": "7", "type": 1, "login": {} }
+  ]
+}

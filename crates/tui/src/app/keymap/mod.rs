@@ -23,6 +23,12 @@ pub enum Scope {
     Verify,
     /// Typing a phrase.
     Restore,
+    /// Choosing how to restore or what to import.
+    Import,
+    /// Typing the export file path.
+    ImportFile,
+    /// Reviewing what will be imported.
+    ImportPreview,
     /// Choosing this device's factor.
     Enroll,
     /// Unlock screen.
@@ -74,6 +80,9 @@ impl Scope {
             Self::Ceremony => "Recovery phrase",
             Self::Verify => "Verify phrase",
             Self::Restore => "Restore",
+            Self::Import => "Restore or import",
+            Self::ImportFile => "Import file",
+            Self::ImportPreview => "Import preview",
             Self::Enroll => "Unlock factor",
             Self::Unlock => "Unlock",
             Self::Busy => "Working",
@@ -194,7 +203,7 @@ pub fn in_scope(scope: Scope) -> impl Iterator<Item = &'static Binding> {
 }
 
 /// Every scope, in help-screen order.
-pub const SCOPES: [Scope; 25] = [
+pub const SCOPES: [Scope; 28] = [
     Scope::Global,
     Scope::Home,
     Scope::Search,
@@ -214,6 +223,9 @@ pub const SCOPES: [Scope; 25] = [
     Scope::Setup,
     Scope::Ceremony,
     Scope::Verify,
+    Scope::Import,
+    Scope::ImportFile,
+    Scope::ImportPreview,
     Scope::Restore,
     Scope::Enroll,
     Scope::Busy,

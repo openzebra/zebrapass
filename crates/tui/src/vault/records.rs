@@ -11,10 +11,7 @@ use record::{
 use session::Session;
 use zeroize::Zeroize;
 
-/// Custom field holding comma-separated tags.
-pub const CUSTOM_TAGS: &str = "tags";
-/// Custom field marking a favorite (`"1"`).
-pub const CUSTOM_FAVORITE: &str = "favorite";
+pub use record::{CUSTOM_FAVORITE, CUSTOM_TAGS};
 
 /// What a record is, for its list glyph and filters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

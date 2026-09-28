@@ -59,7 +59,11 @@ fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
     let theme = &ctx.theme;
     let [body, hints] = body_and_hints(area);
     let card = centered(body, body.width.min(82), 22);
-    let block = panel(titled("New vault", (1, 4), card.width, ctx), theme);
+    let title = state.imported.map_or_else(
+        || String::from("New vault"),
+        |(count, source)| format!("New vault · {count} records from {source}"),
+    );
+    let block = panel(titled(&title, (1, 4), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
     let [name_label, name_box, _, cost, _, crypto, next] = Layout::vertical([

@@ -46,6 +46,25 @@ pub const KEYMAP: &[Binding] = bindings! {
     Verify: key(KeyCode::BackTab) => PrevField;
     Verify: ch('s') => Skip, "skip";
 
+    Import: key(KeyCode::Up) => Up, "choose";
+    Import: key(KeyCode::Down) => Down;
+    Import: key(KeyCode::Enter) => Confirm, "next";
+    Import: key(KeyCode::Esc) => Back, "back";
+
+    ImportFile: key(KeyCode::Enter) => Confirm, "read file";
+    ImportFile: key(KeyCode::Esc) => Back, "back";
+
+    ImportPreview: key(KeyCode::Up) => Up, "move";
+    ImportPreview: key(KeyCode::Down) => Down;
+    ImportPreview: key(KeyCode::PageUp) => PageUp;
+    ImportPreview: key(KeyCode::PageDown) => PageDown;
+    ImportPreview: key(KeyCode::Home) => Top;
+    ImportPreview: key(KeyCode::End) => Bottom;
+    ImportPreview: ch(' ') => ToggleInclude, "include";
+    ImportPreview: ch('a') => ToggleAll, "all";
+    ImportPreview: key(KeyCode::Enter) => Confirm, "create vault";
+    ImportPreview: key(KeyCode::Esc) => Back, "back";
+
     Restore: key(KeyCode::Tab) => AcceptSuggestion, "accept / next field";
     Restore: key(KeyCode::BackTab) => PrevField;
     Restore: ch(' ') => NextWord, "next word";

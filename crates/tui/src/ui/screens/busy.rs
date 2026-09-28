@@ -108,7 +108,7 @@ fn steps(task: Task, glyphs: &Glyphs) -> Vec<(String, String)> {
                 String::from("ML-KEM hybrid / Argon2id"),
             ),
         ],
-        Task::Save | Task::Factor | Task::Health => {
+        Task::Save | Task::Factor | Task::Health | Task::Import => {
             vec![pair(task.title(), String::new())]
         }
     }

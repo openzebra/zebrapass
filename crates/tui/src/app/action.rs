@@ -174,8 +174,12 @@ actions! {
     ToggleAscii,
     /// Create a new vault.
     CreateVault,
-    /// Restore a vault from its phrase.
+    /// Restore a vault, or import one from another manager.
     RestoreVault,
+    /// Include or exclude the selected item.
+    ToggleInclude,
+    /// Include or exclude every item.
+    ToggleAll,
 }
 
 /// Where a palette entry is listed.
@@ -250,7 +254,7 @@ pub const PALETTE: &[(Action, &str, Section)] = &[
     (Action::CreateVault, "Create a new vault", Section::Session),
     (
         Action::RestoreVault,
-        "Restore from phrase",
+        "Restore or import a vault",
         Section::Session,
     ),
     (Action::Lock, "Lock now", Section::Session),

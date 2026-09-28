@@ -108,6 +108,8 @@ fn restore_grid_masks_finished_words() {
     let mut app = app(&base);
     press(&mut app, KeyCode::Right);
     press(&mut app, KeyCode::Enter);
+    // The restore chooser: the recovery phrase is the first entry.
+    press(&mut app, KeyCode::Enter);
     assert_eq!(app.screen.name(), "restore");
     type_text(&mut app, "zebra");
     press(&mut app, KeyCode::Char(' '));

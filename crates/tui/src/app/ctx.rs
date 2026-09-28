@@ -38,6 +38,8 @@ pub enum Task {
     Factor,
     /// Health analysis.
     Health,
+    /// Reading another manager's export.
+    Import,
 }
 
 impl Task {
@@ -52,13 +54,17 @@ impl Task {
             Self::Rotate => "Rotating the vault key",
             Self::Factor => "Updating unlock factors",
             Self::Health => "Checking vault health",
+            Self::Import => "Reading the export",
         }
     }
 
     /// Only jobs that do not hold the vault can be detached.
     #[must_use]
     pub const fn cancellable(self) -> bool {
-        matches!(self, Self::Unlock(_) | Self::Create | Self::Restore)
+        matches!(
+            self,
+            Self::Unlock(_) | Self::Create | Self::Restore | Self::Import
+        )
     }
 }
 

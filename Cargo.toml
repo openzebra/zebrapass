@@ -13,6 +13,7 @@ members = [
     "crates/frame",
     "crates/seed",
     "crates/local",
+    "crates/import",
     "crates/tui",
 ]
 resolver = "2"
@@ -49,6 +50,10 @@ subtle = "=2.6.1"
 # Cargo.lock pins its `instability` proc-macro to 0.3.7 for the same reason.
 ratatui = "=0.29.0"
 crossterm = "=0.28.1"
+# Import only (crates/import): parsers for other managers' exports. No crypto.
+serde = { version = "=1.0.228", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "=1.0.151", default-features = false, features = ["std"] }
+csv = "=1.4.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

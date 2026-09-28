@@ -44,7 +44,7 @@ fn welcome_matches_golden_and_every_size() {
     let [normal, small, large] = render_all(&app);
     assert_all(
         &[normal.clone(), large],
-        &["Create a new vault", "Restore from phrase", "quantum-safe"],
+        &["Create a new vault", "Restore or import", "quantum-safe"],
     );
     assert!(small.contains("Create a new vault"), "{small}");
     let golden =
@@ -109,6 +109,16 @@ fn restore_and_unlock_screens_render() {
     let base = temp_dir("restore-unlock");
     let mut app = app(&base);
     press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.screen.name(), "import");
+    assert_all(
+        &render_all(&app),
+        &[
+            "Restore or import",
+            "ZebraPass recovery phrase",
+            "Bitwarden",
+        ],
+    );
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.screen.name(), "restore");
     assert_all(
