@@ -1,6 +1,7 @@
 //! Form validation: turn the typed inputs into one vault op. Every check runs
 //! before the vault reaches the worker; a rejected form keeps its inputs.
 
+use local::DEVICE_PIN_LEN;
 use seed::SeedPhrase;
 use session::KdfProfile;
 use subtle::ConstantTimeEq;
@@ -12,6 +13,7 @@ use crate::secure::phrase_input::secret_string;
 use crate::secure::secret_input::SecretInput;
 use crate::secure::strength::{estimate, StrengthLabel};
 use crate::ui::input::TextInput;
+use crate::vault::device::PIN_PROFILE;
 use crate::vault::ops::{FactorRef, Op, Rotation};
 
 impl Form {
@@ -51,6 +53,19 @@ impl Form {
         Ok(new.take())
     }
 
+    fn new_pin(&mut self) -> Result<Zeroizing<Vec<u8>>, &'static str> {
+        let (Some(new), Some(repeat)) = (self.new.as_mut(), self.repeat.as_ref()) else {
+            return Err("A device PIN is needed.");
+        };
+        if !DEVICE_PIN_LEN.contains(&new.len()) {
+            return Err("A device PIN has 6 to 128 characters.");
+        }
+        if !bool::from(new.expose().ct_eq(repeat.expose())) {
+            return Err("The two entries do not match.");
+        }
+        Ok(new.take())
+    }
+
     fn current_password(&mut self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         match self.current.as_mut() {
             None => Ok(None),
@@ -79,6 +94,7 @@ impl Form {
                 Op::AddPassword(self.new_password()?, KdfProfile::Balanced),
                 Task::Factor,
             )),
+            FormKind::AddDevice => Ok((Op::AddDevice(self.new_pin()?, PIN_PROFILE), Task::Factor)),
             FormKind::DropRecovery => {
                 if self.text.as_ref().map(TextInput::value) == Some("DROP") {
                     Ok((Op::DropRecovery, Task::Factor))

@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use local::Paths;
 use session::KdfProfile;
 
-use crate::vault::chip::Chips;
 use crate::vault::create::{create, restore, NewVault, RestoreVault};
 use crate::vault::error::{describe, UnlockError};
 use crate::vault::open::{unlock_vault, Credential, Vault};
@@ -79,14 +78,14 @@ impl Worker {
     /// # Errors
     ///
     /// When the OS refuses to spawn a thread.
-    pub fn spawn(chips: Chips) -> std::io::Result<Self> {
+    pub fn spawn() -> std::io::Result<Self> {
         let (jobs, inbox) = channel::<(u64, Job)>();
         let (outbox, results) = channel();
         std::thread::Builder::new()
             .name(String::from("zebrapass-worker"))
             .spawn(move || {
                 while let Ok((ticket, job)) = inbox.recv() {
-                    if outbox.send((ticket, run(job, &chips))).is_err() {
+                    if outbox.send((ticket, run(job))).is_err() {
                         break;
                     }
                 }
@@ -120,16 +119,16 @@ impl Worker {
     }
 }
 
-fn run(job: Job, chips: &Chips) -> JobResult {
+fn run(job: Job) -> JobResult {
     match job {
         Job::Bench => JobResult::Bench(bench(KdfProfile::Fast)),
-        Job::Unlock(paths, credential) => JobResult::Opened(unlock_vault(paths, credential, chips)),
+        Job::Unlock(paths, credential) => JobResult::Opened(unlock_vault(paths, credential)),
         Job::Create(request) => {
-            JobResult::Created(create(*request, chips).map_err(|error| describe(&error)))
+            JobResult::Created(create(*request).map_err(|error| describe(&error)))
         }
-        Job::Restore(request) => JobResult::Restored(restore(*request, chips)),
+        Job::Restore(request) => JobResult::Restored(restore(*request)),
         Job::Vault(mut vault, op) => {
-            let result = apply(&mut vault, op, chips).map_err(|error| describe(&error));
+            let result = apply(&mut vault, op).map_err(|error| describe(&error));
             JobResult::Vault(vault, result)
         }
     }

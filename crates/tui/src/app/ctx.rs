@@ -10,7 +10,6 @@ use crate::cli::{Config, Flags};
 use crate::secure::clipboard::{Clipboard, CopyError};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::toast::{Toasts, Tone};
-use crate::vault::chip::Chips;
 
 /// What the terminal can do.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -100,8 +99,6 @@ pub struct Ctx {
     pub pending: Option<Pending>,
     /// Auto-lock timer.
     pub idle: Idle,
-    /// Chip backend.
-    pub chips: Chips,
     /// Measured time of one [`session::KdfProfile::Fast`] Argon2id run.
     pub kdf_fast: Option<Duration>,
     /// The next frame must clear the terminal first.
@@ -117,7 +114,6 @@ impl Ctx {
     ///
     /// When the worker thread cannot start.
     pub fn new(config: &Config, base: PathBuf, caps: Caps, now: Instant) -> std::io::Result<Self> {
-        let chips = Chips::new(config.flags.has(Flags::KEYCHAIN));
         Ok(Self {
             now,
             tick: 0,
@@ -132,10 +128,9 @@ impl Ctx {
             flags: config.flags,
             toasts: Toasts::default(),
             clipboard: Clipboard::new(caps.osc52, config.clip_clear),
-            worker: Worker::spawn(chips.clone())?,
+            worker: Worker::spawn()?,
             pending: None,
             idle: Idle::new(now, config.lock_after),
-            chips,
             kdf_fast: None,
             full_redraw: false,
             size: (120, 40),

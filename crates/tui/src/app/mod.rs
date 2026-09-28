@@ -156,7 +156,7 @@ impl App {
             if resolve(Scope::Global, event) == Some(Action::Quit) {
                 self.quit();
             } else {
-                let nav = locked.resume(&mut self.ctx);
+                let nav = locked.resume();
                 self.apply(nav);
             }
             return;

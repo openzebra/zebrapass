@@ -1,8 +1,8 @@
-//! Platform backends for the fast unlock factors: the secure chip and the
-//! OS secret store that keeps device keys.
+//! Platform backend for a hardware-held device factor.
 //!
-//! [`SecretStore`] — small per-account secrets: [`MacKeychain`] on macOS,
-//! [`MemoryStore`] for tests.
+//! Terminal apps cannot use the Secure Enclave, so the desktop device factor
+//! keeps its keys in a PIN-sealed file (`local::DeviceKey`) instead; this
+//! seam is for native apps that can.
 //!
 //! [`ChipBackend`] — a secure chip that owns a non-exportable P-256 key
 //! per alias (`iOS` Secure Enclave, `Android` `StrongBox`). The
@@ -21,7 +21,7 @@
 //! storage (`zp/{vault_id_hex}` alias, non-exportable, Secure Enclave /
 //! `StrongBox`), compute `ECDH(chip_sk, peer)` on-device, and return the raw
 //! 32-byte X9.63 shared secret. Bare P-256 without the PQ half is not a
-//! valid grant: sealing always adds the software `ntrulp` half, so opening
+//! valid grant: sealing always adds the software ML-KEM-768 half, so opening
 //! needs both.
 //!
 //! !todo!: physical-key (`YubiKey` PRF) support was removed. To restore it:
@@ -32,12 +32,6 @@
 //! `add_prf_unlock` / `remove_prf_unlock`, the `prfs` parameter of
 //! `reencrypt_body`. The vault format already reserves wrap kind `0x0004`
 //! and `wraps::prf` still compiles, so files stay forward-compatible.
-
-mod keychain;
-
-#[cfg(target_os = "macos")]
-pub use keychain::MacKeychain;
-pub use keychain::{MemoryStore, SecretStore};
 
 use std::collections::HashMap;
 use std::sync::Mutex;

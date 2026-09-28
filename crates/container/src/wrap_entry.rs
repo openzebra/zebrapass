@@ -1,4 +1,4 @@
-//! Password, device, chip, and PRF wrap records.
+//! Password, chip, and PRF wrap records.
 //!
 //! `entry_len` is taken from the file only to compare it with the size the kind
 //! requires. It is never used as an allocation length.
@@ -7,27 +7,24 @@ use pq::PQ_PK_LEN;
 use std::marker::PhantomData;
 
 use crate::limits::{
-    read_u16, read_u32, shift, ENTRY_HEADER_LEN, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD,
-    KIND_PASSWORD_HUMAN, KIND_PRF,
+    read_u16, read_u32, shift, ENTRY_HEADER_LEN, KIND_CHIP, KIND_PASSWORD, KIND_PASSWORD_HUMAN,
+    KIND_PRF,
 };
 
 mod chip;
-mod device;
 mod password;
 mod prf;
 
 use chip::parse_chip;
-use device::parse_device;
 use password::parse_password;
 use prf::parse_prf;
 
 pub use chip::encode_chip_entry;
-pub use device::encode_device_entry;
 pub use password::encode_password_entry;
 pub use prf::encode_prf_entry;
 
 /// Password wrap. Fixed fields are copies; the lifetime ties the entry to the file
-/// the way [`DeviceWrap`] does.
+/// the way [`ChipWrap`] does.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PasswordWrap<'a> {
     /// Key id for this password wrap.
@@ -39,27 +36,6 @@ pub struct PasswordWrap<'a> {
     /// AEGIS-256 tag.
     pub tag: [u8; 32],
     _file: PhantomData<&'a [u8]>,
-}
-
-/// Device wrap. The `ntrulp` ciphertext borrows the file.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DeviceWrap<'a> {
-    /// Device id.
-    pub device_id: [u8; 16],
-    /// KEM id. Parsed entries hold [`KEM_MLKEM768`].
-    pub kem_alg: u16,
-    /// Long-term X25519 public key of the device.
-    pub dev_x_pk: [u8; 32],
-    /// Ephemeral X25519 public key of the vault owner.
-    pub eph_x_pk: [u8; 32],
-    /// `ntrulp` ciphertext borrowed from the file, not a `Vec` copy.
-    pub kem_ct: &'a [u8],
-    /// AEGIS-256 nonce.
-    pub nonce: [u8; 32],
-    /// Wrapped vault key ciphertext.
-    pub ct: [u8; 32],
-    /// AEGIS-256 tag.
-    pub tag: [u8; 32],
 }
 
 /// Chip wrap (secure enclave, kind `0x0003`). The `ntrulp` ciphertext borrows the file.
@@ -109,8 +85,6 @@ pub struct PrfWrap<'a> {
 pub enum WrapEntry<'a> {
     /// Kind `0x0001`.
     Password(PasswordWrap<'a>),
-    /// Kind `0x0002`.
-    Device(DeviceWrap<'a>),
     /// Kind `0x0003`.
     Chip(ChipWrap<'a>),
     /// Kind `0x0004`.
@@ -144,7 +118,6 @@ impl WrapEntry<'_> {
     pub const fn kind(&self) -> u16 {
         match self {
             Self::Password(_) => KIND_PASSWORD,
-            Self::Device(_) => KIND_DEVICE,
             Self::Chip(_) => KIND_CHIP,
             Self::Prf(_) => KIND_PRF,
             Self::HumanPassword(_) => KIND_PASSWORD_HUMAN,
@@ -156,19 +129,12 @@ impl WrapEntry<'_> {
     pub const fn wrap_id(&self) -> Option<[u8; 16]> {
         match self {
             Self::Password(_) | Self::HumanPassword(_) => None,
-            Self::Device(wrap) => Some(wrap.device_id),
             Self::Chip(wrap) => Some(wrap.id),
             Self::Prf(wrap) => Some(wrap.id),
         }
     }
 }
 
-/// Encode one device record. `kem_ct` is the ML-KEM-768 ciphertext.
-///
-/// # Errors
-///
-/// Returns `corrupted length` when `kem_ct` is not [`KEM_CT_LEN`] bytes or the payload
-/// does not fit in `entry_len`.
 /// Encode one chip record. `kem_ct` is the ML-KEM-768 ciphertext.
 ///
 /// # Errors
@@ -194,13 +160,12 @@ pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>
     let entry_len = read_u32(bytes, shift(offset, 2)?)?;
     match kind {
         KIND_PASSWORD => parse_password(bytes, header_end, entry_len),
-        KIND_DEVICE => parse_device(bytes, header_end, entry_len),
         KIND_CHIP => parse_chip(bytes, header_end, entry_len),
         KIND_PRF => parse_prf(bytes, header_end, entry_len),
         KIND_PASSWORD_HUMAN => {
             crate::wrap_human::parse_human_password(bytes, header_end, entry_len)
         }
-        // Unknown kinds are corruption. This version does not skip them.
+        // Unknown and retired kinds are corruption. This version does not skip them.
         _ => Err(anyhow::anyhow!("corrupted length")),
     }
 }
@@ -213,8 +178,7 @@ impl<'a> TryFrom<&'a [u8]> for WrapEntry<'a> {
     /// # Errors
     ///
     /// Returns `corrupted length` when the record is truncated,
-    /// the kind is unknown, or `entry_len` disagrees with the kind, and
-    /// `unsupported kem` when a device record names another KEM.
+    /// the kind is unknown or retired, or `entry_len` disagrees with the kind.
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let (entry, next) = parse_entry(bytes, 0)?;
         if next == bytes.len() {

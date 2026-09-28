@@ -121,7 +121,6 @@ const fn id_of(entry: &WrapEntry<'_>) -> Option<[u8; 16]> {
     match entry {
         WrapEntry::Password(_) | WrapEntry::HumanPassword(_) => None,
         WrapEntry::Chip(chip) => Some(chip.id),
-        WrapEntry::Device(device) => Some(device.device_id),
         WrapEntry::Prf(prf) => Some(prf.id),
     }
 }

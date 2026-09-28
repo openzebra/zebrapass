@@ -30,7 +30,7 @@ pub fn draw(
     let block = panel(" Constellation · how your vault is locked ", theme);
     let inner = block.inner(body);
     frame.render_widget(block, body);
-    let list = views(&state.info.directory, &ctx.chips);
+    let list = views(&state.info.directory, state.info.owned_device());
     let list_height = u16::try_from(list.len() + 2).unwrap_or(8);
     let [diagram, _, rows] = Layout::vertical([
         Constraint::Min(8),
@@ -56,9 +56,7 @@ pub fn draw(
             let actions = match view.kind {
                 FactorKind::Password => "Enter change password",
                 FactorKind::Recovery => "Enter drop from this copy (advanced)",
-                FactorKind::Device | FactorKind::Chip | FactorKind::HwKey => {
-                    "Enter details · r revoke · ⌫ remove"
-                }
+                FactorKind::Device | FactorKind::HwKey => "Enter details · r revoke · ⌫ remove",
             };
             let cost = view
                 .cost

@@ -26,7 +26,6 @@ zeroize.workspace = true
 local = { path = "../local" }
 platform = { path = "../platform" }
 seed = { path = "../seed" }
-x25519-dalek.workspace = true
 
 [lints]
 workspace = true

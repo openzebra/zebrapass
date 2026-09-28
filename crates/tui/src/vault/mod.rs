@@ -1,12 +1,11 @@
 //! Adapter over `session`, `local`, and `seed`. No cryptography lives here:
 //! every key operation is a core call.
 
-pub mod chip;
 pub mod create;
+pub mod device;
 pub mod discover;
 pub mod error;
 pub mod factors;
-pub mod keyring;
 pub mod limits;
 pub mod open;
 pub mod ops;

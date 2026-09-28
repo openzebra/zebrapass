@@ -15,7 +15,7 @@ use session::{
 };
 use zeroize::Zeroizing;
 
-use crate::vault::chip::Chips;
+use crate::vault::device;
 use crate::vault::error::UnlockError;
 use crate::vault::limits::MAX_VAULT_FILE;
 
@@ -90,11 +90,8 @@ pub enum Credential {
     Password(Zeroizing<Vec<u8>>),
     /// The recovery phrase.
     Phrase(Box<SeedPhrase>),
-    /// This device's keys from the keyring.
-    Device,
-    /// This process's development chip key.
-    #[cfg(feature = "dev-chip")]
-    Chip,
+    /// This device's PIN for its sealed key file.
+    Device(Zeroizing<Vec<u8>>),
 }
 
 impl std::fmt::Debug for Credential {
@@ -137,34 +134,18 @@ pub fn read_directory(path: &Path) -> Result<WrapDirectory, UnlockError> {
 ///
 /// An [`UnlockError`]; authentication failures are all
 /// [`UnlockError::Denied`].
-pub fn unlock_vault(
-    paths: Paths,
-    credential: Credential,
-    chips: &Chips,
-) -> Result<Box<Vault>, UnlockError> {
+pub fn unlock_vault(paths: Paths, credential: Credential) -> Result<Box<Vault>, UnlockError> {
     let file = read_vault_file(&paths.vault_file)?;
     let opened = match &credential {
         Credential::Password(password) => {
             unlock(&file, &UnlockCreds::default().with_human(password), None)
         }
         Credential::Phrase(phrase) => unlock(&file, &UnlockCreds::master(phrase.seed()), None),
-        Credential::Device => unlock_device(&file, chips),
-        #[cfg(feature = "dev-chip")]
-        Credential::Chip => chips.unlock(&file),
+        Credential::Device(pin) => device::unlock(&file, &paths, pin),
     };
     drop(credential);
     let session = opened.map_err(|error| UnlockError::from(&error))?;
     finish_open(file, session, paths)
-}
-
-/// Open `file` with this device's keys from the keyring.
-fn unlock_device(file: &VaultFile, chips: &Chips) -> anyhow::Result<Session> {
-    let vault_id = file.parse()?.header.vault_id;
-    let keys = chips
-        .keyring()
-        .keys(&vault_id)?
-        .ok_or_else(|| anyhow::anyhow!("no usable wrap"))?;
-    unlock(file, &UnlockCreds::default().with_device(&keys), None)
 }
 
 /// Apply the rollback cursor and hand back the vault.

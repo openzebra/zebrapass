@@ -4,8 +4,6 @@
 
 use session::{Factor, WrapDirectory};
 
-use crate::vault::chip::Chips;
-
 /// Kind of unlock factor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FactorKind {
@@ -13,10 +11,8 @@ pub enum FactorKind {
     Recovery,
     /// Human password wrap.
     Password,
-    /// Device wrap (X25519 + ML-KEM).
+    /// Device wrap (P-256 + ML-KEM), keys in a PIN-sealed file or a chip.
     Device,
-    /// Chip wrap (P-256 + ML-KEM).
-    Chip,
     /// Hardware key (FIDO2 PRF).
     HwKey,
 }
@@ -29,7 +25,6 @@ impl FactorKind {
             Self::Recovery => "recovery phrase",
             Self::Password => "password",
             Self::Device => "device",
-            Self::Chip => "secure chip",
             Self::HwKey => "hardware key",
         }
     }
@@ -37,7 +32,7 @@ impl FactorKind {
     /// Whether the wrap uses the post-quantum hybrid KEM.
     #[must_use]
     pub const fn post_quantum(self) -> bool {
-        matches!(self, Self::Device | Self::Chip)
+        matches!(self, Self::Device)
     }
 
     /// Primitive summary shown next to the factor.
@@ -46,8 +41,7 @@ impl FactorKind {
         match self {
             Self::Recovery => "BIP39 seed wrap",
             Self::Password => "Argon2id → KEK",
-            Self::Device => "X25519 + ML-KEM hybrid",
-            Self::Chip => "P-256 + ML-KEM hybrid",
+            Self::Device => "P-256 + ML-KEM hybrid",
             Self::HwKey => "FIDO2 PRF",
         }
     }
@@ -60,7 +54,7 @@ pub struct FactorView {
     pub id: Option<[u8; 16]>,
     /// Kind.
     pub kind: FactorKind,
-    /// This device holds the key (chips and devices).
+    /// This device holds the key (devices).
     pub owned: bool,
     /// Argon2id cost, for password wraps.
     pub cost: Option<(u32, u32, u32)>,
@@ -73,10 +67,6 @@ pub struct Presence {
     pub devices: usize,
     /// Devices whose keys this device holds.
     pub owned_devices: usize,
-    /// Chips.
-    pub chips: usize,
-    /// Chips this process owns.
-    pub owned_chips: usize,
     /// Hardware keys.
     pub hw_keys: usize,
     /// Recovery wrap present.
@@ -85,9 +75,10 @@ pub struct Presence {
     pub password: bool,
 }
 
-/// Views in file order.
+/// Views in file order. `owned` is the device wrap this machine holds a
+/// key file for.
 #[must_use]
-pub fn views(directory: &WrapDirectory, chips: &Chips) -> Vec<FactorView> {
+pub fn views(directory: &WrapDirectory, owned: Option<[u8; 16]>) -> Vec<FactorView> {
     directory
         .factors
         .iter()
@@ -104,16 +95,10 @@ pub fn views(directory: &WrapDirectory, chips: &Chips) -> Vec<FactorView> {
                 owned: false,
                 cost: Some((*m_kib, *t, *p)),
             },
-            Factor::Device { id } => FactorView {
-                id: Some(*id),
-                kind: FactorKind::Device,
-                owned: chips.keyring().owns(id),
-                cost: None,
-            },
             Factor::Chip(chip) => FactorView {
                 id: Some(chip.publics.id),
-                kind: FactorKind::Chip,
-                owned: chips.owns(&chip.publics.id),
+                kind: FactorKind::Device,
+                owned: owned == Some(chip.publics.id),
                 cost: None,
             },
             Factor::Prf { id } => FactorView {
@@ -128,8 +113,8 @@ pub fn views(directory: &WrapDirectory, chips: &Chips) -> Vec<FactorView> {
 
 /// Count factor kinds.
 #[must_use]
-pub fn presence(directory: &WrapDirectory, chips: &Chips) -> Presence {
-    views(directory, chips)
+pub fn presence(directory: &WrapDirectory, owned: Option<[u8; 16]>) -> Presence {
+    views(directory, owned)
         .iter()
         .fold(Presence::default(), |mut acc, view| {
             match view.kind {
@@ -138,10 +123,6 @@ pub fn presence(directory: &WrapDirectory, chips: &Chips) -> Presence {
                 FactorKind::Device => {
                     acc.devices += 1;
                     acc.owned_devices += usize::from(view.owned);
-                }
-                FactorKind::Chip => {
-                    acc.chips += 1;
-                    acc.owned_chips += usize::from(view.owned);
                 }
                 FactorKind::HwKey => acc.hw_keys += 1,
             }

@@ -11,7 +11,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kdf::KdfProfile;
-use local::{open_device_key, seal_device_key, DeviceKey, DEVICE_KEY_FILE_LEN};
+use local::{
+    device_key_info, open_device_key, seal_device_key, DeviceKey, DeviceKeyInfo,
+    DEVICE_KEY_FILE_LEN,
+};
 
 const VAULT: [u8; 16] = [7; 16];
 const PIN: &[u8] = b"271828";
@@ -44,6 +47,13 @@ fn open_err(path: &Path, vault: &[u8; 16], pin: &[u8]) -> String {
 fn round_trip_keeps_the_same_publics_and_ecdh() {
     let (path, key) = sealed("roundtrip");
     assert_eq!(fs::read(&path).unwrap().len(), DEVICE_KEY_FILE_LEN);
+    assert_eq!(
+        device_key_info(&path).unwrap(),
+        DeviceKeyInfo {
+            id: *key.id(),
+            profile: KdfProfile::Fast
+        }
+    );
     let opened = open_device_key(&path, &VAULT, PIN).unwrap();
     assert_eq!(opened.id(), key.id());
     assert_eq!(opened.publics().unwrap(), key.publics().unwrap());
@@ -61,8 +71,8 @@ fn wrong_pin_other_vault_and_every_tampered_region_fail_the_same_way() {
     assert_eq!(open_err(&path, &VAULT, b"314159"), AUTH);
     assert_eq!(open_err(&path, &[8; 16], PIN), AUTH);
     let original = fs::read(&path).unwrap();
-    // magic, version, profile, salt, frame header, frame body, last tag byte.
-    for offset in [0, 5, 6, 20, 40, 150, DEVICE_KEY_FILE_LEN - 1] {
+    // magic, version, profile, wrap id, salt, frame header, frame body, tag.
+    for offset in [0, 5, 6, 10, 30, 60, 170, DEVICE_KEY_FILE_LEN - 1] {
         let mut bytes = original.clone();
         bytes[offset] ^= 0x01;
         fs::write(&path, &bytes).unwrap();

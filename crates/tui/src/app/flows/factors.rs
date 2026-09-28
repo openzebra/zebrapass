@@ -42,14 +42,9 @@ pub struct FactorsState {
 pub const fn factor_ref(view: &FactorView) -> Option<FactorRef> {
     match (view.kind, view.id) {
         (FactorKind::Device, Some(id)) => Some(FactorRef::Device(id)),
-        (FactorKind::Chip, Some(id)) => Some(FactorRef::Chip(id)),
         (FactorKind::HwKey, Some(id)) => Some(FactorRef::HwKey(id)),
         (
-            FactorKind::Recovery
-            | FactorKind::Password
-            | FactorKind::Device
-            | FactorKind::Chip
-            | FactorKind::HwKey,
+            FactorKind::Recovery | FactorKind::Password | FactorKind::Device | FactorKind::HwKey,
             _,
         ) => None,
     }
@@ -65,15 +60,10 @@ pub fn factor_label(view: &FactorView) -> String {
         .to_owned()
 }
 
-fn devices(state: &Unlocked, ctx: &Ctx) -> Vec<FactorView> {
-    views(&state.info.directory, &ctx.chips)
+fn devices(state: &Unlocked) -> Vec<FactorView> {
+    views(&state.info.directory, state.info.owned_device())
         .into_iter()
-        .filter(|view| {
-            matches!(
-                view.kind,
-                FactorKind::Device | FactorKind::Chip | FactorKind::HwKey
-            )
-        })
+        .filter(|view| matches!(view.kind, FactorKind::Device | FactorKind::HwKey))
         .collect()
 }
 
@@ -88,8 +78,8 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         return Nav::Stay;
     };
     let list = match state.view {
-        View::Devices(_) => devices(state, ctx),
-        _ => views(&state.info.directory, &ctx.chips),
+        View::Devices(_) => devices(state),
+        _ => views(&state.info.directory, state.info.owned_device()),
     };
     let rows = list.len() + usize::from(scope == Scope::Factors);
     let cursor = match &mut state.view {
@@ -112,7 +102,7 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
 }
 
 fn act(state: &mut Unlocked, action: Action, selected: Option<&FactorView>, ctx: &mut Ctx) {
-    let has_password = presence(&state.info.directory, &ctx.chips).password;
+    let has_password = presence(&state.info.directory, state.info.owned_device()).password;
     let Some(view) = selected else {
         if action == Action::Confirm {
             state.dialog = Some(Box::new(Dialog::AddFactor(0)));
@@ -132,7 +122,7 @@ fn act(state: &mut Unlocked, action: Action, selected: Option<&FactorView>, ctx:
         ),
         (Action::RevokeFactor, _, None) => ctx.toast(
             Tone::Info,
-            "Revoke applies to devices, chips, and keys. Press Enter on the password to change it.",
+            "Revoke applies to devices and keys. Press Enter on the password to change it.",
         ),
         (Action::RemoveFactor, _, Some(target)) => {
             state.dialog = Some(Box::new(Dialog::Confirm(Confirm {
@@ -176,9 +166,9 @@ fn details(view: &FactorView) -> Dialog {
             "PQ: the KEK needs both the classical and the ML-KEM secret.",
         ));
     }
-    if view.kind == FactorKind::Chip && !view.owned {
+    if view.kind == FactorKind::Device && !view.owned {
         body.push(String::from(
-            "This process does not hold the chip key (software chip keys die on quit).",
+            "This machine has no key file for it: it belongs to another device.",
         ));
     }
     body.push(String::from(
@@ -204,7 +194,7 @@ fn enroll_guide() -> Dialog {
 
 /// Palette-only commands that open a vault dialog.
 pub fn palette_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
-    let found = presence(&state.info.directory, &ctx.chips);
+    let found = presence(&state.info.directory, state.info.owned_device());
     match action {
         Action::RotateVaultKey => form(state, Form::rotate(found.password)),
         Action::ChangePassword if found.password => form(state, Form::change_password()),

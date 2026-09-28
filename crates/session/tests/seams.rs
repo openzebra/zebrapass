@@ -3,11 +3,12 @@
 
 #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
+mod common;
+
 use session::{
-    add_device, add_human_password, check_seen, create, list_records, open_record, revoke,
-    rotate_vault_key, unlock, wrap_directory, write_record, BodyAlg, DevicePublics, Factor,
-    HumanPasswordPublics, KdfProfile, Revoke, RotateCreds, Seen, SessionError, UnlockCreds,
-    VaultFile,
+    add_human_password, check_seen, create, list_records, open_record, revoke, rotate_vault_key,
+    unlock, wrap_directory, write_record, BodyAlg, Factor, HumanPasswordPublics, KdfProfile,
+    Revoke, RotateCreds, Seen, SessionError, UnlockCreds, VaultFile,
 };
 
 const SEED: [u8; 64] = [0x5A; 64];
@@ -90,7 +91,6 @@ fn rotation_reseals_human_wrap_under_the_new_password() {
 
     let missing = RotateCreds {
         master: &SEED,
-        devices: &[],
         prfs: &[],
         human_password: None,
     };
@@ -117,31 +117,18 @@ fn rotation_reseals_human_wrap_under_the_new_password() {
     assert!(unlock(&VaultFile::new(before), &UnlockCreds::master(&SEED), None).is_ok());
 }
 
-fn device_publics(id_byte: u8) -> DevicePublics {
-    let (pq_bytes, _secret) = pq::keypair().unwrap();
-    let pq_pk: [u8; pq::PQ_PK_LEN] = pq_bytes.as_slice().try_into().unwrap();
-    let x_pk = x25519_dalek::x25519([id_byte; 32], x25519_dalek::X25519_BASEPOINT_BYTES);
-    DevicePublics {
-        id: [id_byte; 16],
-        x_pk,
-        pq_pk,
-    }
-}
-
 #[test]
 fn revoke_keeps_records_readable_in_every_body_mode() {
     for alg in [BodyAlg::Aegis256, BodyAlg::KuzCtrHmac, BodyAlg::Frames] {
         let (mut file, mut session) = create(&SEED, KdfProfile::Fast, alg).unwrap();
         let id = write_record(&mut session, &mut file, None, &titled("survives")).unwrap();
-        let lost = device_publics(0x61);
-        add_device(&mut session, &mut file, &lost).unwrap();
+        let lost = common::enroll(&mut session, &mut file);
         let creds = RotateCreds {
             master: &SEED,
-            devices: &[],
             prfs: &[],
             human_password: None,
         };
-        revoke(&mut session, &mut file, &Revoke::Device(&lost.id), &creds).unwrap();
+        revoke(&mut session, &mut file, &Revoke::Chip(lost.id()), &creds).unwrap();
 
         let live = open_record(&session, id).unwrap();
         assert_eq!(

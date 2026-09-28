@@ -39,14 +39,9 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, cursor: usize, 
             theme.muted(),
         )),
     ];
-    let devices: Vec<_> = views(&state.info.directory, &ctx.chips)
+    let devices: Vec<_> = views(&state.info.directory, state.info.owned_device())
         .into_iter()
-        .filter(|view| {
-            matches!(
-                view.kind,
-                FactorKind::Device | FactorKind::Chip | FactorKind::HwKey
-            )
-        })
+        .filter(|view| matches!(view.kind, FactorKind::Device | FactorKind::HwKey))
         .collect();
     lines.push(Line::from(vec![
         Span::styled(format!("  {:<22}", "this session"), theme.text()),
@@ -66,7 +61,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, cursor: usize, 
         let chosen = index == cursor;
         let id = view.id.unwrap_or_default();
         let name = match (view.kind, view.owned) {
-            (FactorKind::Chip, true) => String::from("this device (chip)"),
+            (FactorKind::Device, true) => String::from("this device"),
             (kind, _) => format!("{} {}", kind.noun(), grouped_hex(&id, 1)),
         };
         let mut spans = vec![
@@ -110,7 +105,6 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, cursor: usize, 
 const fn short(kind: FactorKind) -> &'static str {
     match kind {
         FactorKind::Device => "dev",
-        FactorKind::Chip => "chip",
         FactorKind::HwKey => "key",
         FactorKind::Password => "pw",
         FactorKind::Recovery => "seed",

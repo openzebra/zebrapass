@@ -17,7 +17,10 @@ use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
 pub use atomic::write_atomic;
-pub use device_key::{open_device_key, seal_device_key, DeviceKey, DEVICE_KEY_FILE_LEN};
+pub use device_key::{
+    device_key_info, open_device_key, seal_device_key, DeviceKey, DeviceKeyInfo,
+    DEVICE_KEY_FILE_LEN,
+};
 pub use limits::DEVICE_PIN_LEN;
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 

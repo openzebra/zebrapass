@@ -2,10 +2,10 @@
 
 use aead::{encrypt_body, BodyAlg};
 use container::{
-    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry,
-    encode_password_entry, encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry,
-    BODY_AEGIS256, BODY_FRAMES, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY,
-    KDF_ARGON2ID, WRAP_AEGIS256,
+    assemble, encode_chip_entry, encode_human_password_entry, encode_password_entry,
+    encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256,
+    BODY_FRAMES, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID,
+    WRAP_AEGIS256,
 };
 use frame::encode_frames;
 use hmac::{Hmac, KeyInit, Mac};
@@ -162,16 +162,6 @@ pub fn encode_entry(entry: &WrapEntry<'_>) -> anyhow::Result<Vec<u8>> {
         WrapEntry::Password(wrap) => {
             Ok(encode_password_entry(wrap.kid, wrap.nonce, wrap.ct, wrap.tag).to_vec())
         }
-        WrapEntry::Device(wrap) => Ok(encode_device_entry(
-            wrap.device_id,
-            wrap.kem_alg,
-            wrap.dev_x_pk,
-            wrap.eph_x_pk,
-            wrap.kem_ct,
-            wrap.nonce,
-            wrap.ct,
-            wrap.tag,
-        )?),
         WrapEntry::Chip(wrap) => Ok(encode_chip_entry(
             wrap.id,
             wrap.chip_pub,

@@ -2,6 +2,7 @@
 //! and every view. Dropping this state is what "lock" means.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use local::{device_key_info, DeviceKeyInfo};
 use session::WrapDirectory;
 
 use crate::app::ctx::{Ctx, Task};
@@ -37,6 +38,16 @@ pub struct VaultInfo {
     pub generation: u64,
     /// Wrap directory.
     pub directory: WrapDirectory,
+    /// Public header of this device's key file, when it has one.
+    pub device: Option<DeviceKeyInfo>,
+}
+
+impl VaultInfo {
+    /// The device wrap this machine holds a key file for.
+    #[must_use]
+    pub fn owned_device(&self) -> Option<[u8; 16]> {
+        self.device.map(|device| device.id)
+    }
 }
 
 impl From<&Vault> for VaultInfo {
@@ -48,6 +59,7 @@ impl From<&Vault> for VaultInfo {
             origin: vault.session.origin_device(),
             generation: vault.session.generation(),
             directory: vault.directory.clone(),
+            device: device_key_info(&vault.paths.device_key).ok(),
         }
     }
 }

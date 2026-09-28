@@ -1,43 +1,13 @@
-//! Add and remove device, chip, and PRF wraps. The body bytes stay as they are.
+//! Add and remove chip (device) and PRF wraps. The body bytes stay as they are.
 
-use container::{
-    VaultFile, WrapEntry, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF,
-};
+use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF};
 use wraps::{
-    seal_chip, seal_device, seal_human_password, seal_prf, ChipGrant, ChipPublics, DeviceGrant,
-    DevicePublics, HumanPasswordPublics, PrfGrant, PrfPublics,
+    seal_chip, seal_human_password, seal_prf, ChipGrant, ChipPublics, HumanPasswordPublics,
+    PrfGrant, PrfPublics,
 };
 
 use crate::create::{encode_entry, owned_entries, Session};
 use crate::rewrap::{id_in_use, rewrap};
-
-/// Append a device wrap of the session vault key.
-///
-/// The body is copied unchanged. Generation increases by one and the commit is
-/// recomputed. On error, `file` and `session` are left as they were.
-///
-/// # Errors
-///
-/// `corrupted length` when `dev_pks.id` is already in the directory.
-/// That check runs before the device is sealed, so the file is unchanged.
-/// `zero shared secret` when `dev_pks.x_pk` yields a zero X25519 secret.
-/// Parse and RNG failures use the same variants as [`crate::create`].
-pub fn add_device(
-    session: &mut Session,
-    file: &mut VaultFile,
-    dev_pks: &DevicePublics,
-) -> anyhow::Result<DeviceGrant> {
-    rewrap(session, file, |parsed, vk| {
-        // A repeated device id does not parse. Reject it before sealing.
-        if id_in_use(&parsed.entries, KIND_DEVICE, &dev_pks.id) {
-            return Err(anyhow::anyhow!("corrupted length"));
-        }
-        let (record, grant) = seal_device(&parsed.header, dev_pks, vk)?;
-        let mut records = owned_entries(&parsed.entries)?;
-        records.push(record);
-        Ok((records, grant))
-    })
-}
 
 /// Append a chip wrap of the session vault key.
 ///
@@ -124,31 +94,11 @@ fn remove_wrap_of_kind(
     Ok(records)
 }
 
-/// Drop the device wrap with `device_id`.
+/// Drop the chip wrap with `id` — the settings toggle for device unlock.
 ///
-/// This is wrap-only: the vault key does not rotate, so a device that was
-/// online at removal time keeps decrypting until [`revoke`] runs. Use
-/// [`revoke`] for a lost device. The password wrap is never removed. The
-/// body is copied unchanged. Generation increases by one. On error, `file`
-/// and `session` are left as they were.
-///
-/// # Errors
-///
-/// `wrap not found` when no device entry has `device_id`.
-pub fn remove_device(
-    session: &mut Session,
-    file: &mut VaultFile,
-    device_id: &[u8; 16],
-) -> anyhow::Result<()> {
-    rewrap(session, file, |parsed, _| {
-        let records = remove_wrap_of_kind(&parsed.entries, device_id, &[KIND_DEVICE])?;
-        Ok((records, ()))
-    })
-}
-
-/// Drop the chip wrap with `id` — the settings toggle for chip unlock.
-///
-/// The vault key does not change and the password wrap stays. Generation
+/// This is wrap-only: the vault key does not change, so a device that was
+/// online at removal time keeps decrypting until [`crate::revoke`] runs.
+/// The password wrap stays. Generation
 /// increases by one. On error, `file` and `session` are left as they were.
 ///
 /// # Errors
@@ -189,7 +139,7 @@ pub fn remove_prf_unlock(
 /// Drop the seed (recovery) wrap from a local copy: after onboarding, the
 /// phrase must not open this copy.
 ///
-/// Refuses while the copy has no human password and no device/chip/PRF wrap:
+/// Refuses while the copy has no human password and no chip/PRF wrap:
 /// a vault with no remaining factor could never be opened again. The vault
 /// key does not change, so the server/backup copy (which keeps the seed
 /// wrap) stays in sync. Generation increases by one. On error, `file` and
@@ -204,10 +154,7 @@ pub fn drop_recovery_wrap(session: &mut Session, file: &mut VaultFile) -> anyhow
         let has_other = parsed.entries.iter().any(|entry| {
             matches!(
                 entry,
-                WrapEntry::Device(_)
-                    | WrapEntry::Chip(_)
-                    | WrapEntry::Prf(_)
-                    | WrapEntry::HumanPassword(_)
+                WrapEntry::Chip(_) | WrapEntry::Prf(_) | WrapEntry::HumanPassword(_)
             )
         });
         if !has_other {
@@ -294,7 +241,7 @@ pub fn replace_human_password(
 
 /// Drop the human password wrap.
 ///
-/// Refuses when no other factor (phrase, device, chip, PRF) would remain.
+/// Refuses when no other factor (phrase, chip, PRF) would remain.
 /// The vault key does not change. Generation increases by one. On error,
 /// `file` and `session` are left as they were.
 ///

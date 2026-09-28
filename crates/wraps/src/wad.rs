@@ -1,9 +1,9 @@
-//! Associated data for password, device, chip, and PRF wraps, and AEGIS-256 over it.
+//! Associated data for password, chip, and PRF wraps, and AEGIS-256 over it.
 
 use aegis::aegis256::Aegis256;
 use container::{
-    StaticHeader, DOMAIN_WRAP_CHIP, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, DOMAIN_WRAP_PRF,
-    KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF,
+    StaticHeader, DOMAIN_WRAP_CHIP, DOMAIN_WRAP_PASSWORD, DOMAIN_WRAP_PRF, KIND_CHIP,
+    KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF,
 };
 use pq::PQ_PK_LEN;
 use secret::Secret;
@@ -40,45 +40,6 @@ pub fn human_password_wad(header: &StaticHeader, kid: [u8; 8], nonce: &[u8; 32])
     wad
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "each argument is one device-wrap associated-data field"
-)]
-pub fn device_wad(
-    header: &StaticHeader,
-    device_id: &[u8; 16],
-    kem_alg: u16,
-    dev_x_pk: &[u8; 32],
-    eph_x_pk: &[u8; 32],
-    kem_ct: &[u8],
-    nonce: &[u8; 32],
-) -> Vec<u8> {
-    let header_bytes = header.to_bytes();
-    let kind_le = KIND_DEVICE.to_le_bytes();
-    let kem_le = kem_alg.to_le_bytes();
-    let mut wad = Vec::with_capacity(
-        header_bytes.len()
-            + kind_le.len()
-            + device_id.len()
-            + kem_le.len()
-            + dev_x_pk.len()
-            + eph_x_pk.len()
-            + kem_ct.len()
-            + nonce.len()
-            + DOMAIN_WRAP_DEVICE.len(),
-    );
-    wad.extend_from_slice(&header_bytes);
-    wad.extend_from_slice(&kind_le);
-    wad.extend_from_slice(device_id);
-    wad.extend_from_slice(&kem_le);
-    wad.extend_from_slice(dev_x_pk);
-    wad.extend_from_slice(eph_x_pk);
-    wad.extend_from_slice(kem_ct);
-    wad.extend_from_slice(nonce);
-    wad.extend_from_slice(DOMAIN_WRAP_DEVICE);
-    wad
-}
-
 /// AEGIS-256, 32-byte tag. Plaintext is the 32-byte vault key.
 pub fn seal_vk(key: &[u8; 32], nonce: &[u8; 32], ad: &[u8], vk: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
     let mut ct = *vk;
@@ -112,26 +73,6 @@ pub fn random_array<const N: usize>() -> anyhow::Result<[u8; N]> {
     let mut bytes = [0u8; N];
     getrandom::fill(&mut bytes).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
     Ok(bytes)
-}
-
-pub fn device_ikm(
-    ss_x: &[u8; 32],
-    ss_pq: &[u8; 32],
-    dev_x_pk: &[u8; 32],
-    eph_pk: &[u8; 32],
-    kem_ct: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    // An empty ciphertext is not an `ML-KEM-768` blob. Do not feed it to HKDF.
-    if kem_ct.is_empty() {
-        return Err(anyhow::anyhow!("kem length"));
-    }
-    let mut ikm = Vec::with_capacity(32 + 32 + 32 + 32 + kem_ct.len());
-    ikm.extend_from_slice(ss_x);
-    ikm.extend_from_slice(ss_pq);
-    ikm.extend_from_slice(dev_x_pk);
-    ikm.extend_from_slice(eph_pk);
-    ikm.extend_from_slice(kem_ct);
-    Ok(ikm)
 }
 
 /// Concatenate IKM parts. Every part must be non-empty: an empty ciphertext is

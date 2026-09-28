@@ -10,7 +10,6 @@
 
 mod common;
 
-use tui::vault::chip::Chips;
 use tui::vault::discover::discover;
 use tui::vault::open::{unlock_vault, Credential};
 use tui::vault::ops::{apply, Op, Outcome};
@@ -33,23 +32,22 @@ fn change(current: &str) -> Op {
 
 #[test]
 fn password_changes_and_goes_without_the_phrase() {
-    let chips = Chips::default();
     let base = temp_dir("password");
     make_vault(&base);
     let paths = discover(&base).first().unwrap().paths.clone();
-    let mut vault = unlock_vault(paths.clone(), password(PASSWORD), &chips).unwrap();
+    let mut vault = unlock_vault(paths.clone(), password(PASSWORD)).unwrap();
     let generation = vault.session.generation();
 
-    let refused = apply(&mut vault, change("not-it"), &chips).unwrap_err();
+    let refused = apply(&mut vault, change("not-it")).unwrap_err();
     assert_eq!(refused.to_string(), "the current password is not correct");
     assert_eq!(vault.session.generation(), generation);
 
-    let outcome = apply(&mut vault, change(PASSWORD), &chips).unwrap();
+    let outcome = apply(&mut vault, change(PASSWORD)).unwrap();
     assert!(matches!(outcome, Outcome::PasswordChanged));
-    assert!(unlock_vault(paths.clone(), password(PASSWORD), &chips).is_err());
-    assert!(unlock_vault(paths.clone(), password(NEW), &chips).is_ok());
+    assert!(unlock_vault(paths.clone(), password(PASSWORD)).is_err());
+    assert!(unlock_vault(paths.clone(), password(NEW)).is_ok());
 
-    let outcome = apply(&mut vault, Op::RemovePassword, &chips).unwrap();
+    let outcome = apply(&mut vault, Op::RemovePassword).unwrap();
     assert!(matches!(outcome, Outcome::FactorRemoved));
-    assert!(unlock_vault(paths, password(NEW), &chips).is_err());
+    assert!(unlock_vault(paths, password(NEW)).is_err());
 }

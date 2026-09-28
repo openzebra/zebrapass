@@ -44,9 +44,7 @@ pub const TAG_SEEN_GENERATION: u16 = 0x0205;
 /// Last accepted vault commit tag, 32 bytes (`Bytes`).
 pub const TAG_SEEN_COMMIT: u16 = 0x0206;
 
-/// Enrolled device public keys in the vault metadata record:
-/// `id(16) ‖ x25519_pk(32) ‖ ml_kem_pk` per device (`Bytes`).
-pub const TAG_DEVICE_BOOK: u16 = 0x0207;
+// Tag `0x0207` (the retired X25519 device book) is never reused.
 
 /// First custom tag. Custom values carry `name_len ‖ name ‖ data`.
 pub const TAG_CUSTOM_MIN: u16 = 0x8000;

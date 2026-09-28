@@ -2,8 +2,6 @@
 //!
 //! Reads go through `get` so a short or hostile file yields an error, not a panic.
 
-use pq::KEM_CT_LEN;
-
 /// File magic `BRBY`.
 pub const MAGIC: [u8; 4] = *b"BRBY";
 
@@ -31,10 +29,11 @@ pub const WRAP_AEGIS256: u16 = 0xB001;
 /// Password wrap kind.
 pub const KIND_PASSWORD: u16 = 0x0001;
 
-/// Device wrap kind.
-pub const KIND_DEVICE: u16 = 0x0002;
+// Kind `0x0002` (the retired X25519 device wrap) is never reused; files that
+// carry it fail to parse.
 
-/// Chip (secure enclave) wrap kind.
+/// Device wrap kind: P-256 ECDH + ML-KEM-768, the private halves held by a
+/// secure chip or by this device's PIN-sealed key file.
 pub const KIND_CHIP: u16 = 0x0003;
 
 /// `YubiKey` PRF wrap kind.
@@ -43,20 +42,11 @@ pub const KIND_PRF: u16 = 0x0004;
 /// Human-chosen password wrap kind (the phrase stays the recovery wrap).
 pub const KIND_PASSWORD_HUMAN: u16 = 0x0005;
 
-/// Retired `ntrulp` id. Files that still carry it are rejected.
-pub const KEM_NTRULP: u16 = 0xC001;
-
-/// ML-KEM-768. Device and chip wraps use this KEM only.
-pub const KEM_MLKEM768: u16 = 0xC002;
-
 /// Body associated-data domain.
 pub const DOMAIN_BODY: &[u8] = b"brby/v2/body";
 
 /// Password-wrap associated-data domain.
 pub const DOMAIN_WRAP_PASSWORD: &[u8] = b"brby/v2/wrap-password";
-
-/// Device-wrap associated-data domain.
-pub const DOMAIN_WRAP_DEVICE: &[u8] = b"brby/v2/wrap-device";
 
 /// Chip-wrap associated-data domain.
 pub const DOMAIN_WRAP_CHIP: &[u8] = b"brby/v2/wrap-chip";
@@ -91,15 +81,6 @@ pub const HUMAN_PASSWORD_PAYLOAD_LEN: usize = 8 + 32 + 12 + 96;
 /// One human password record on the wire.
 pub const HUMAN_PASSWORD_RECORD_LEN: usize = ENTRY_HEADER_LEN + HUMAN_PASSWORD_PAYLOAD_LEN;
 
-/// Device fields before the ML-KEM ciphertext: id, kem, two X25519 keys.
-pub const DEVICE_PREFIX_LEN: usize = 82;
-
-/// Device fields after the ML-KEM ciphertext: nonce, AEGIS ct, AEGIS tag.
-pub const DEVICE_SUFFIX_LEN: usize = 96;
-
-/// Device payload length. The KEM ciphertext is exactly [`KEM_CT_LEN`] bytes.
-pub const DEVICE_PAYLOAD_MIN: usize = DEVICE_PREFIX_LEN + KEM_CT_LEN + DEVICE_SUFFIX_LEN;
-
 const BODY_MIN_AEGIS: usize = 64;
 const BODY_MIN_KUZ_MGM: usize = 32;
 const BODY_MIN_KUZ_CTR: usize = 40;
@@ -129,8 +110,6 @@ const _: () = {
     assert!(PASSWORD_RECORD_LEN == 110);
     assert!(HUMAN_PASSWORD_RECORD_LEN == 154);
     assert!(8 + 32 + 12 + 32 + 32 + 32 == HUMAN_PASSWORD_PAYLOAD_LEN);
-    assert!(DEVICE_PREFIX_LEN == 16 + 2 + 32 + 32);
-    assert!(DEVICE_SUFFIX_LEN == 32 + 32 + 32);
     assert!(8 + 32 + 32 + 32 == PASSWORD_PAYLOAD_LEN);
     assert!(BODY_MIN_AEGIS == 32 + 32);
     assert!(BODY_MIN_KUZ_MGM == 16 + 16);

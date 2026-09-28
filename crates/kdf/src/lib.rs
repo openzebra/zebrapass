@@ -12,5 +12,5 @@ pub use derive::{
     INFO_CLIENT_ID, INFO_DEVICE_KEY_FILE, INFO_FRAME_KEY, INFO_IDENTITY, INFO_LOCAL_META,
     INFO_SYNC_SIGN,
 };
-pub use hkdf::{derive_vault_keys, hkdf_sha512, INFO_CHIP_WRAP, INFO_DEVICE_WRAP, INFO_PRF_WRAP};
+pub use hkdf::{derive_vault_keys, hkdf_sha512, INFO_CHIP_WRAP, INFO_PRF_WRAP};
 pub use profile::KdfProfile;

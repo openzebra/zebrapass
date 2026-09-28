@@ -5,10 +5,7 @@ use container::{ChipWrap, VaultFile, WrapEntry, COMMIT_LEN};
 use frame::decode_frames;
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{
-    open_chip, open_device, open_human_password, open_password, open_prf, ChipKeys, DeviceKeys,
-    PrfPublics,
-};
+use wraps::{open_chip, open_human_password, open_password, open_prf, ChipKeys, PrfPublics};
 
 use crate::create::{
     body_ad, body_digest, commit_mode, mac_commit, verify_commit, CommitMode, Session,
@@ -19,14 +16,12 @@ use crate::error::{Seen, SessionError};
 ///
 /// Every field is optional and independent: [`unlock`] picks the first factor
 /// that is present both here and in the file, in the order chip → prf →
-/// device → master. A factor listed here but absent from the file is an
+/// human password → master. A factor listed here but absent from the file is an
 /// error, not a silent fallback.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnlockCreds<'a> {
     /// The 64-byte master seed (the BIP39 seed of the seed phrase).
     pub master: Option<&'a [u8; 64]>,
-    /// This phone's device wrap keys.
-    pub device: Option<&'a DeviceKeys>,
     /// This phone's chip keys and the P-256 shared secret the platform
     /// computes as `ECDH(chip_sk, wrap.eph_pub)`.
     pub chip: Option<(&'a ChipKeys, [u8; 32])>,
@@ -43,18 +38,10 @@ impl<'a> UnlockCreds<'a> {
     pub const fn master(master: &'a [u8; 64]) -> Self {
         Self {
             master: Some(master),
-            device: None,
             chip: None,
             prf: None,
             human: None,
         }
-    }
-
-    /// Present device keys as an additional factor.
-    #[must_use]
-    pub const fn with_device(mut self, keys: &'a DeviceKeys) -> Self {
-        self.device = Some(keys);
-        self
     }
 
     /// Present chip keys with the platform shared secret.
@@ -81,7 +68,7 @@ impl<'a> UnlockCreds<'a> {
 
 /// Open `file` with the factors in `creds`.
 ///
-/// Attempts go chip → prf → device → human password → master: the first
+/// Attempts go chip → prf → human password → master: the first
 /// factor present in `creds` is tried against its wrap. The body is decrypted once after the
 /// commit matches and its plaintext stays on the session: single frames
 /// are opened from it on demand with their per-record key.
@@ -90,8 +77,8 @@ impl<'a> UnlockCreds<'a> {
 ///
 /// Parse failures surface as `anyhow` errors with stable messages.
 /// `no chip wrap for this device` when the chip factor is present but the
-/// file has no chip wrap with that id; `wrap not found` for a missing device
-/// or master wrap.
+/// file has no chip wrap with that id; `wrap not found` for a missing
+/// password or master wrap.
 /// `wrap authentication failed` when the wrap tag does not match (wrong
 /// password included).
 /// `commit mismatch` when the HMAC over every byte except the
@@ -161,7 +148,7 @@ pub fn unlock(
     })
 }
 
-/// The vault key plus the device wrap id that produced it.
+/// The vault key plus the chip or PRF wrap id that produced it.
 type UnwrappedKey = (Secret<[u8; 32]>, Option<[u8; 16]>);
 
 fn unwrap_vk(
@@ -176,10 +163,6 @@ fn unwrap_vk(
     if let Some((publics, prf_out)) = creds.prf {
         let wrap = wraps::find_prf(entries, &publics.id)?;
         return open_prf(header, &wrap, prf_out).map(|vk| (vk, Some(wrap.id)));
-    }
-    if let Some(keys) = creds.device {
-        let wrap = find_device(entries, &keys.id)?;
-        return open_device(header, wrap, keys).map(|vk| (vk, Some(keys.id)));
     }
     if let Some(human) = creds.human {
         let wrap = find_human_password(entries)?;
@@ -226,20 +209,6 @@ fn find_human_password<'a>(
     for entry in entries {
         if let WrapEntry::HumanPassword(wrap) = entry {
             return Ok(*wrap);
-        }
-    }
-    Err(anyhow::anyhow!("wrap not found"))
-}
-
-fn find_device<'a>(
-    entries: &'a [WrapEntry<'a>],
-    device_id: &[u8; 16],
-) -> anyhow::Result<&'a container::DeviceWrap<'a>> {
-    for entry in entries {
-        if let WrapEntry::Device(wrap) = entry {
-            if wrap.device_id == *device_id {
-                return Ok(wrap);
-            }
         }
     }
     Err(anyhow::anyhow!("wrap not found"))

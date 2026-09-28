@@ -1,11 +1,13 @@
 //! The PIN-sealed device key file: this device's P-256 scalar and ML-KEM
 //! seed for the vault's device wrap (a chip-kind wrap on the wire).
 //!
-//! Layout: `"ZPDK" ‖ version u16 BE ‖ profile u8 ‖ salt[32] ‖ cascade frame`.
-//! The frame key is `HKDF(Argon2id(PIN, salt, profile), vault_id,
-//! INFO_DEVICE_KEY_FILE ‖ u16 len ‖ file header)`, so every header byte is
-//! bound into the key. The file lives next to the vault and never syncs:
-//! opening the vault this way takes both this disk and the PIN.
+//! Layout: `"ZPDK" ‖ version u16 BE ‖ profile u8 ‖ wrap id[16] ‖ salt[32] ‖
+//! cascade frame(p256 scalar ‖ ML-KEM seed)`. The frame key is
+//! `HKDF(Argon2id(PIN, salt, profile), vault_id, INFO_DEVICE_KEY_FILE ‖
+//! u16 len ‖ file header)`, so every header byte is bound into the key. The
+//! wrap id and profile are public (the id is in the vault file too) and can
+//! be read without the PIN. The file lives next to the vault and never
+//! syncs: opening the vault this way takes both this disk and the PIN.
 
 use std::fmt;
 use std::fs::File;
@@ -25,8 +27,8 @@ use crate::write_atomic;
 
 const MAGIC: [u8; 4] = *b"ZPDK";
 const VERSION: u16 = 1;
-const FILE_HEADER_LEN: usize = MAGIC.len() + 2 + 1 + 32;
-const PLAIN_LEN: usize = 16 + 32 + PQ_SK_LEN;
+const FILE_HEADER_LEN: usize = MAGIC.len() + 2 + 1 + 16 + 32;
+const PLAIN_LEN: usize = 32 + PQ_SK_LEN;
 
 /// Exact size of a device key file; any other length is rejected unread.
 pub const DEVICE_KEY_FILE_LEN: usize =
@@ -40,6 +42,15 @@ const FRAME_META: FrameMeta = FrameMeta {
     timestamp_ms: 0,
     alg: ALG_CASCADE,
 };
+
+/// The public header of a device key file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeviceKeyInfo {
+    /// The device wrap this file opens.
+    pub id: [u8; 16],
+    /// Argon2id preset the PIN is stretched with.
+    pub profile: KdfProfile,
+}
 
 /// This device's private half of its device wrap.
 pub struct DeviceKey {
@@ -135,14 +146,16 @@ pub fn seal_device_key(
     check_pin(pin)?;
     let mut salt = [0u8; 32];
     getrandom::fill(&mut salt).map_err(|_| entropy_failed())?;
-    let header = encode_header(profile, &salt);
+    let info = DeviceKeyInfo {
+        id: key.chip.id,
+        profile,
+    };
+    let header = encode_header(&info, &salt);
     let file_key = file_key(pin, vault_id, &header, profile, &salt)?;
     let mut plain = Zeroizing::new([0u8; PLAIN_LEN]);
-    let (id, rest) = plain
-        .split_first_chunk_mut::<16>()
+    let (scalar, seed) = plain
+        .split_first_chunk_mut::<32>()
         .ok_or_else(auth_failed)?;
-    id.copy_from_slice(&key.chip.id);
-    let (scalar, seed) = rest.split_first_chunk_mut::<32>().ok_or_else(auth_failed)?;
     scalar.copy_from_slice(key.p256_sk.expose());
     seed.copy_from_slice(key.chip.pq_sk.expose());
     let sealed = frame::seal(&file_key, &FRAME_META, plain.as_slice())?;
@@ -169,13 +182,33 @@ pub fn open_device_key(path: &Path, vault_id: &[u8; 16], pin: &[u8]) -> anyhow::
     let (header, sealed) = bytes
         .split_first_chunk::<FILE_HEADER_LEN>()
         .ok_or_else(auth_failed)?;
-    let (profile, salt) = parse_header(header)?;
+    let (info, salt) = parse_header(header)?;
     if frame::parse(sealed).map_err(|_| auth_failed())?.alg != ALG_CASCADE {
         return Err(auth_failed());
     }
-    let file_key = file_key(pin, vault_id, header, profile, &salt)?;
+    let file_key = file_key(pin, vault_id, header, info.profile, &salt)?;
     let plain = frame::open(&file_key, sealed).map_err(|_| auth_failed())?;
-    decode_plain(plain.expose())
+    decode_plain(info.id, plain.expose())
+}
+
+/// Read the public header of the device key file at `path` without the PIN.
+///
+/// Unauthenticated until [`open_device_key`] succeeds: use it to pick the
+/// wrap to try, never to decide trust.
+///
+/// # Errors
+///
+/// `device key unreadable` when the file cannot be read;
+/// `device key authentication failed` when it is not a device key file.
+pub fn device_key_info(path: &Path) -> anyhow::Result<DeviceKeyInfo> {
+    let bytes = read_bounded(path)?;
+    if bytes.len() != DEVICE_KEY_FILE_LEN {
+        return Err(auth_failed());
+    }
+    let header = bytes
+        .first_chunk::<FILE_HEADER_LEN>()
+        .ok_or_else(auth_failed)?;
+    parse_header(header).map(|(info, _)| info)
 }
 
 fn check_pin(pin: &[u8]) -> anyhow::Result<()> {
@@ -198,29 +231,31 @@ fn read_bounded(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn encode_header(profile: KdfProfile, salt: &[u8; 32]) -> [u8; FILE_HEADER_LEN] {
+fn encode_header(info: &DeviceKeyInfo, salt: &[u8; 32]) -> [u8; FILE_HEADER_LEN] {
     let mut header = [0u8; FILE_HEADER_LEN];
     MAGIC
         .iter()
         .chain(&VERSION.to_be_bytes())
-        .chain(&[u8::from(profile)])
+        .chain(&[u8::from(info.profile)])
+        .chain(&info.id)
         .chain(salt)
         .zip(header.iter_mut())
         .for_each(|(src, dst)| *dst = *src);
     header
 }
 
-fn parse_header(header: &[u8; FILE_HEADER_LEN]) -> anyhow::Result<(KdfProfile, [u8; 32])> {
+fn parse_header(header: &[u8; FILE_HEADER_LEN]) -> anyhow::Result<(DeviceKeyInfo, [u8; 32])> {
     let (magic, rest) = header.split_first_chunk::<4>().ok_or_else(auth_failed)?;
     let (version, rest) = rest.split_first_chunk::<2>().ok_or_else(auth_failed)?;
-    let (profile, salt) = rest.split_first().ok_or_else(auth_failed)?;
+    let (profile, rest) = rest.split_first().ok_or_else(auth_failed)?;
+    let (id, salt) = rest.split_first_chunk::<16>().ok_or_else(auth_failed)?;
     if *magic != MAGIC || u16::from_be_bytes(*version) != VERSION {
         return Err(auth_failed());
     }
     // The profile is checked against the allow-list before Argon2 runs.
     let profile = KdfProfile::try_from(*profile).map_err(|_| auth_failed())?;
     let salt = <[u8; 32]>::try_from(salt).map_err(|_| auth_failed())?;
-    Ok((profile, salt))
+    Ok((DeviceKeyInfo { id: *id, profile }, salt))
 }
 
 fn file_key(
@@ -234,9 +269,8 @@ fn file_key(
     device_key_file_key(stretched.expose(), vault_id, header)
 }
 
-fn decode_plain(plain: &[u8]) -> anyhow::Result<DeviceKey> {
-    let (id, rest) = plain.split_first_chunk::<16>().ok_or_else(auth_failed)?;
-    let (scalar, seed) = rest.split_first_chunk::<32>().ok_or_else(auth_failed)?;
+fn decode_plain(id: [u8; 16], plain: &[u8]) -> anyhow::Result<DeviceKey> {
+    let (scalar, seed) = plain.split_first_chunk::<32>().ok_or_else(auth_failed)?;
     if seed.len() != PQ_SK_LEN {
         return Err(auth_failed());
     }
@@ -246,7 +280,7 @@ fn decode_plain(plain: &[u8]) -> anyhow::Result<DeviceKey> {
     pq_sk.expose_mut().copy_from_slice(seed);
     Ok(DeviceKey {
         p256_sk,
-        chip: ChipKeys { id: *id, pq_sk },
+        chip: ChipKeys { id, pq_sk },
     })
 }
 

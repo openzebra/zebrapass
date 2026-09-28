@@ -97,55 +97,22 @@ fn draw_input(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
     let theme = &ctx.theme;
     match state.mode {
         Mode::Password => {
-            let [label, field] =
-                Layout::horizontal([Constraint::Length(12), Constraint::Length(36)])
-                    .flex(ratatui::layout::Flex::Center)
-                    .areas(area);
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(Span::styled("Password  ", theme.text())),
-                ])
-                .alignment(Alignment::Right),
-                label,
-            );
             let revealed = state.reveal.is_shown(REVEAL_PASSWORD);
-            boxed(
+            secret_box(
                 frame,
-                field,
+                area,
+                "Password  ",
                 secret_line(&state.password, true, revealed, theme),
-                true,
-                theme,
+                ctx,
             );
         }
         Mode::Device => {
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(
-                            "{}  Press Enter to unlock with this device ({})",
-                            theme.glyphs.device,
-                            ctx.chips.keyring().kind()
-                        ),
-                        theme.text(),
-                    )),
-                ])
-                .alignment(Alignment::Center),
+            secret_box(
+                frame,
                 area,
-            );
-        }
-        Mode::Chip => {
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!("{}  Press Enter to unlock with the secure chip (software backend, dev)", theme.glyphs.chip),
-                        theme.text(),
-                    )),
-                ])
-                .alignment(Alignment::Center),
-                area,
+                "Device PIN  ",
+                secret_line(&state.pin, true, false, theme),
+                ctx,
             );
         }
         Mode::Recovery => {
@@ -259,11 +226,28 @@ fn draw_card(frame: &mut Frame<'_>, header: Rect, title: &str, subtitle: &str, c
     );
 }
 
+/// A right-aligned label and a boxed secret, centered in `area`.
+fn secret_box(frame: &mut Frame<'_>, area: Rect, label: &str, line: Line<'_>, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    let [label_rect, field] = Layout::horizontal([Constraint::Length(14), Constraint::Length(36)])
+        .flex(ratatui::layout::Flex::Center)
+        .areas(area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(label.to_owned(), theme.text())),
+        ])
+        .alignment(Alignment::Right),
+        label_rect,
+    );
+    boxed(frame, field, line, true, theme);
+}
+
 /// Which factor kinds the vault has: glyph, word, and dot (never color alone).
 fn chips_line(state: &UnlockState, wide: bool, ctx: &Ctx) -> Line<'static> {
     let theme = &ctx.theme;
     let glyphs = theme.glyphs;
-    let found = state.presence(ctx);
+    let found = state.presence();
     let chip = |glyph: &'static str, name: &'static str, on: bool| {
         vec![
             Span::styled(
@@ -290,7 +274,6 @@ fn chips_line(state: &UnlockState, wide: bool, ctx: &Ctx) -> Line<'static> {
         if wide { "password" } else { "pw" },
         found.password,
     ));
-    spans.extend(chip(glyphs.chip, "chip", found.chips > 0));
     spans.extend(chip(
         glyphs.device,
         if wide { "device" } else { "dev" },

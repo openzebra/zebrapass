@@ -51,7 +51,7 @@ impl ChipGrant {
 /// A fresh software P-256 key pair is drawn for every seal. The first shared
 /// secret is `ECDH(ephemeral, chip.chip_pub)`; the ephemeral public half is
 /// stored in the record. The PQ half encrypts a second shared secret to
-/// `chip.pq_pk`, the same `ML-KEM-768` key the device wrap uses. The wrap key is
+/// `chip.pq_pk`. The wrap key is
 /// `HKDF(ss_p256 ‖ ss_pq ‖ chip_pub ‖ eph_pub ‖ pq_pk ‖ kem_ct, vault_id)`.
 ///
 /// Returns the chip record and the grant. The grant is the static header, the
