@@ -15,6 +15,7 @@ pub mod health;
 pub mod history;
 pub mod home;
 pub mod import;
+pub mod import_mapping;
 pub mod import_preview;
 pub mod locked;
 pub mod restore;
@@ -59,6 +60,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 View::Sync => sync::draw(frame, area, state, ctx),
                 View::Health(cursor) => health::draw(frame, area, state, *cursor, ctx),
                 View::History(history) => history::draw(frame, area, history, ctx),
+                View::Import(import) => import::draw(frame, area, import, ctx),
             }
             if let Some(generator) = state.generator.as_deref() {
                 generator::draw(frame, area, generator, ctx);

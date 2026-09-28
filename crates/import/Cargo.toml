@@ -16,9 +16,12 @@ kdbx = ["dep:keepass"]
 anyhow.workspace = true
 csv.workspace = true
 keepass = { workspace = true, optional = true }
+quick-xml.workspace = true
 record = { path = "../record" }
+secret = { path = "../secret" }
 serde.workspace = true
 serde_json.workspace = true
+session = { path = "../session" }
 zeroize.workspace = true
 
 [dev-dependencies]

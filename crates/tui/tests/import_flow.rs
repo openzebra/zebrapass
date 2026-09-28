@@ -211,3 +211,150 @@ fn keepass_database_opens_with_its_password() {
     assert_eq!(state.records.len(), 1);
     assert_eq!(state.imported, Some((1, "KeePass / KeePassXC")));
 }
+
+/// Chooser row → file → preview for a plain-text export.
+fn preview_of(downs: usize, file: &str, label: &str) -> App {
+    let base = temp_dir("import-source");
+    let mut app = app(&base);
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Enter);
+    for _ in 0..downs {
+        press(&mut app, KeyCode::Down);
+    }
+    press(&mut app, KeyCode::Enter);
+    type_text(&mut app, &fixture(file));
+    assert!(render(&app, 100, 30).contains(&format!("{label} export")));
+    press(&mut app, KeyCode::Enter);
+    wait(&mut app);
+    assert_eq!(step(&app), ImportStep::Preview);
+    app
+}
+
+#[test]
+fn keepass_xml_and_enpass_reach_the_review() {
+    let xml = render(&preview_of(3, "keepass.xml", "KeePass XML"), 120, 40);
+    assert!(xml.contains("GitHub") && xml.contains("Wifi"));
+    assert!(!xml.contains("xml-pw"));
+    let enpass = render(&preview_of(4, "enpass.json", "Enpass"), 120, 40);
+    assert!(enpass.contains("GitHub") && enpass.contains("Visa"));
+    assert!(!enpass.contains("enpass-pw-github"));
+}
+
+fn open_view_step(app: &App) -> Option<ImportStep> {
+    let Screen::Unlocked(state) = &app.screen else {
+        panic!("not unlocked")
+    };
+    match &state.view {
+        tui::app::flows::unlocked::View::Import(import) => Some(import.step),
+        _ => None,
+    }
+}
+
+/// `i` → Bitwarden → file → review → Enter, inside the open vault.
+fn import_into_open_vault(app: &mut App) {
+    press(app, KeyCode::Char('i'));
+    assert_eq!(open_view_step(app), Some(ImportStep::Source));
+    let chooser = render(app, 120, 40);
+    assert!(chooser.contains("Import into this vault"));
+    assert!(!chooser.contains("ZebraPass recovery phrase"));
+    press(app, KeyCode::Enter);
+    type_text(app, &fixture("bitwarden.json"));
+    press(app, KeyCode::Enter);
+    wait(app);
+    assert_eq!(open_view_step(app), Some(ImportStep::Preview));
+    assert!(render(app, 120, 40).contains("Review · Bitwarden"));
+    press(app, KeyCode::Enter);
+    wait(app);
+    assert_eq!(open_view_step(app), None, "back on home");
+}
+
+#[test]
+fn importing_into_an_open_vault_skips_duplicates() {
+    let base = temp_dir("import-open");
+    common::make_vault(&base);
+    let mut app = app(&base);
+    unlock(&mut app, PASSWORD);
+    import_into_open_vault(&mut app);
+    let Screen::Unlocked(state) = &app.screen else {
+        panic!("not unlocked")
+    };
+    assert_eq!(state.cache.len(), 5);
+    assert!(render(&app, 140, 40).contains("Imported 5 records"));
+
+    import_into_open_vault(&mut app);
+    let Screen::Unlocked(state) = &app.screen else {
+        panic!("not unlocked")
+    };
+    assert_eq!(state.cache.len(), 5, "the second import adds nothing");
+    assert!(render(&app, 140, 40).contains("5 already here"));
+}
+
+#[test]
+fn esc_leaves_the_open_vault_import() {
+    let base = temp_dir("import-open-esc");
+    common::make_vault(&base);
+    let mut app = app(&base);
+    unlock(&mut app, PASSWORD);
+    press(&mut app, KeyCode::Char('i'));
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(open_view_step(&app), None);
+    assert_eq!(app.screen.name(), "unlocked");
+}
+
+/// Welcome → import → CSV → `file` → Enter.
+fn csv_import(file: &str) -> App {
+    let base = temp_dir("import-csv");
+    let mut app = app(&base);
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Enter);
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Down);
+    }
+    press(&mut app, KeyCode::Enter);
+    type_text(&mut app, &fixture(file));
+    press(&mut app, KeyCode::Enter);
+    app
+}
+
+#[test]
+fn unknown_csv_columns_are_mapped_before_reading() {
+    let mut app = csv_import("generic.csv");
+    assert_eq!(step(&app), ImportStep::Mapping);
+    let screen = render(&app, 120, 40);
+    assert!(screen.contains("CSV columns") && screen.contains("Recovery PIN"));
+    assert!(screen.contains("dave"), "a username sample is shown");
+    assert!(
+        !screen.contains("pw4") && !screen.contains("9999"),
+        "secrets stay hidden"
+    );
+
+    // Account: Custom field → Custom secret → Bitwarden fields → Skip → Title.
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Right);
+    }
+    assert!(
+        render(&app, 120, 40).contains("Bank, Inc."),
+        "a title sample is shown"
+    );
+    press(&mut app, KeyCode::Enter);
+    wait(&mut app);
+    assert_eq!(step(&app), ImportStep::Preview);
+    assert!(render(&app, 120, 40).contains("Bank, Inc."));
+
+    press(&mut app, KeyCode::Char('m'));
+    assert_eq!(
+        step(&app),
+        ImportStep::Mapping,
+        "m goes back to the columns"
+    );
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(step(&app), ImportStep::File);
+}
+
+#[test]
+fn known_csv_exports_skip_the_column_step() {
+    let mut app = csv_import("chrome.csv");
+    wait(&mut app);
+    assert_eq!(step(&app), ImportStep::Preview);
+    assert!(render(&app, 120, 40).contains("Chrome export"));
+}

@@ -29,6 +29,8 @@ pub enum Scope {
     ImportFile,
     /// Opening a `.kdbx` database.
     ImportUnlock,
+    /// Mapping CSV columns.
+    ImportMapping,
     /// Reviewing what will be imported.
     ImportPreview,
     /// Choosing this device's factor.
@@ -85,6 +87,7 @@ impl Scope {
             Self::Import => "Restore or import",
             Self::ImportFile => "Import file",
             Self::ImportUnlock => "Open KeePass database",
+            Self::ImportMapping => "CSV columns",
             Self::ImportPreview => "Import preview",
             Self::Enroll => "Unlock factor",
             Self::Unlock => "Unlock",
@@ -206,7 +209,7 @@ pub fn in_scope(scope: Scope) -> impl Iterator<Item = &'static Binding> {
 }
 
 /// Every scope, in help-screen order.
-pub const SCOPES: [Scope; 29] = [
+pub const SCOPES: [Scope; 30] = [
     Scope::Global,
     Scope::Home,
     Scope::Search,
@@ -229,6 +232,7 @@ pub const SCOPES: [Scope; 29] = [
     Scope::Import,
     Scope::ImportFile,
     Scope::ImportUnlock,
+    Scope::ImportMapping,
     Scope::ImportPreview,
     Scope::Restore,
     Scope::Enroll,

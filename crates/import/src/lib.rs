@@ -1,9 +1,15 @@
-//! Read exports of other password managers into record documents.
+//! Import from other password managers: every step an application needs,
+//! so a terminal and a graphical interface share one implementation.
+//!
+//! 1. [`inspect`] a typed path for a live hint;
+//! 2. [`load`] it (on a background thread) into [`Parsed`] items;
+//! 3. wrap them in a [`Review`], let the user include or exclude items;
+//! 4. write [`Review::into_records`] into an open vault with
+//!    [`into_session`], or hand them to vault creation.
 //!
 //! Every reader fills a [`Draft`] per foreign item; [`Draft`] is the only
-//! code that builds a [`record::Document`]. This crate never touches vault
-//! keys: it turns untrusted bytes into documents plus a [`Report`] that
-//! holds no secret.
+//! code that builds a [`record::Document`]. Parsing never touches vault
+//! keys, and a [`Report`] holds no secret.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic, clippy::nursery, clippy::cargo)]
@@ -13,26 +19,35 @@
 )]
 
 mod bitwarden;
+mod csv_columns;
 mod csv_map;
 mod csv_read;
+mod enpass;
 mod item;
 #[cfg(feature = "kdbx")]
 mod kdbx;
 mod kdbx_header;
-#[cfg(feature = "kdbx")]
 mod keepass_keys;
+mod keepass_xml;
 mod limits;
+mod load;
+mod merge;
 mod report;
+mod review;
 mod source;
 mod text;
 
 use zeroize::Zeroizing;
 
+pub use csv_columns::{csv_columns, Column, TARGETS};
 pub use csv_map::{Mapping, Preset, Target};
 pub use item::{Draft, Item, ItemKind, Slot, CUSTOM_KIND};
 pub use kdbx_header::{check as check_kdf_cost, kdf_cost, KdfCost};
 pub use limits::{MAX_CSV_COLUMNS, MAX_CUSTOM, MAX_FIELD, MAX_IMPORT_FILE, MAX_ITEMS};
+pub use load::{expand_home, inspect, load, Credentials, FileHint, Load};
+pub use merge::{into_session, Merged};
 pub use report::{Report, Skip, SkipReason};
+pub use review::{Review, Row};
 pub use source::{read_file, read_head, sniff, Source};
 
 /// What to read.
@@ -110,9 +125,14 @@ pub fn parse(request: &Request) -> anyhow::Result<Parsed> {
         }
         #[cfg(not(feature = "kdbx"))]
         Source::Kdbx => anyhow::bail!("not supported yet"),
-        Source::KeepassXml | Source::EnpassJson => {
-            anyhow::bail!("not supported yet")
-        }
+        Source::KeepassXml => (
+            keepass_xml::read(&request.bytes, request.folders_as_tags, &mut report)?,
+            None,
+        ),
+        Source::EnpassJson => (
+            enpass::read(&request.bytes, request.folders_as_tags, &mut report)?,
+            None,
+        ),
     };
     Ok(Parsed {
         items,

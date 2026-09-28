@@ -16,6 +16,8 @@ pub mod history;
 pub mod home;
 pub mod home_keys;
 pub mod import;
+pub mod import_mapping;
+pub mod import_vault;
 pub mod palette;
 pub mod panels;
 pub mod restore;

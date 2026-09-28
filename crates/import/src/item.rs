@@ -216,6 +216,12 @@ impl Draft {
         self.favorite = on;
     }
 
+    /// The item kind so far.
+    #[must_use]
+    pub const fn kind(&self) -> ItemKind {
+        self.kind
+    }
+
     /// The item kind.
     pub const fn set_kind(&mut self, kind: ItemKind) {
         self.kind = kind;

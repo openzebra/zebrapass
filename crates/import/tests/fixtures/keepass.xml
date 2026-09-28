@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<KeePassFile>
+	<Meta>
+		<Generator>KeePass</Generator>
+		<DatabaseName>Personal</DatabaseName>
+		<RecycleBinEnabled>True</RecycleBinEnabled>
+		<RecycleBinUUID>YmluYmluYmluYmluYmluYg==</RecycleBinUUID>
+	</Meta>
+	<Root>
+		<Group>
+			<UUID>cm9vdHJvb3Ryb290cm9vdA==</UUID>
+			<Name>Personal</Name>
+			<Group>
+				<UUID>d29ya3dvcmt3b3Jrd29yaw==</UUID>
+				<Name>Work</Name>
+				<Group>
+					<UUID>ZGV2ZGV2ZGV2ZGV2ZGV2ZA==</UUID>
+					<Name>Dev &amp; Ops</Name>
+					<Entry>
+						<UUID>ZW50cnllbnRyeWVudHJ5ZQ==</UUID>
+						<Tags>code;infra</Tags>
+						<String><Key>Title</Key><Value>GitHub</Value></String>
+						<String><Key>UserName</Key><Value>octocat</Value></String>
+						<String><Key>Password</Key><Value ProtectInMemory="True">xml-pw-&lt;github&gt;</Value></String>
+						<String><Key>URL</Key><Value>https://github.com</Value></String>
+						<String><Key>Notes</Key><Value>line one
+line two</Value></String>
+						<String><Key>Recovery</Key><Value ProtectInMemory="True">xml-rc-1</Value></String>
+						<String><Key>Team</Key><Value>core</Value></String>
+						<String><Key>otp</Key><Value ProtectInMemory="True">otpauth://totp/GitHub?secret=JBSWY3DPEHPK3PXP</Value></String>
+						<Binary><Key>notes.txt</Key><Value Ref="0" /></Binary>
+						<History>
+							<Entry>
+								<String><Key>Title</Key><Value>GitHub</Value></String>
+								<String><Key>Password</Key><Value ProtectInMemory="True">xml-old-pw</Value></String>
+							</Entry>
+						</History>
+					</Entry>
+				</Group>
+			</Group>
+			<Entry>
+				<String><Key>Title</Key><Value>Wifi</Value></String>
+				<String><Key>Notes</Key><Value>router in the hallway</Value></String>
+			</Entry>
+			<Group>
+				<UUID>YmluYmluYmluYmluYmluYg==</UUID>
+				<Name>Recycle Bin</Name>
+				<Entry>
+					<String><Key>Title</Key><Value>Deleted login</Value></String>
+					<String><Key>Password</Key><Value>xml-trash-pw</Value></String>
+				</Entry>
+			</Group>
+		</Group>
+	</Root>
+</KeePassFile>

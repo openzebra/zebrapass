@@ -96,6 +96,8 @@ pub enum Op {
     DropRecovery,
     /// Analyze password health.
     Health,
+    /// Add reviewed records from another manager, skipping duplicates.
+    Import(Vec<Document>),
 }
 
 impl std::fmt::Debug for Op {
@@ -133,6 +135,8 @@ pub enum Outcome {
     RecoveryDropped,
     /// Health analysis.
     Health(Box<HealthReport>),
+    /// Records imported.
+    Imported(import::Merged),
 }
 
 /// Run `op` on `vault`.
@@ -172,21 +176,7 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
             add_password(&mut vault.session, &mut vault.file, &password, profile)?;
             Outcome::FactorAdded(FactorKind::Password)
         }
-        Op::ChangePassword { current, new } => {
-            check_password(vault, &current)?;
-            let cost = vault
-                .directory
-                .factors
-                .iter()
-                .find_map(|factor| match factor {
-                    Factor::Password { m_kib, t, p } => Some((*m_kib, *t, *p)),
-                    _ => None,
-                })
-                .ok_or_else(|| anyhow::anyhow!("this vault has no password factor"))?;
-            let publics = password_publics(&new, cost)?;
-            replace_human_password(&mut vault.session, &mut vault.file, &publics)?;
-            Outcome::PasswordChanged
-        }
+        Op::ChangePassword { current, new } => change_password(vault, &current, &new)?,
         Op::RemovePassword => {
             remove_human_password(&mut vault.session, &mut vault.file)?;
             Outcome::FactorRemoved
@@ -236,9 +226,32 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
             Outcome::RecoveryDropped
         }
         Op::Health => return Ok(Outcome::Health(Box::new(health(vault)?))),
+        Op::Import(records) => Outcome::Imported(import::into_session(
+            &mut vault.session,
+            &mut vault.file,
+            records,
+        )?),
     };
     vault.persist()?;
     Ok(outcome)
+}
+
+/// Replace the password wrap after checking the current password; the
+/// Argon2id cost stays.
+fn change_password(vault: &mut Vault, current: &[u8], new: &[u8]) -> anyhow::Result<Outcome> {
+    check_password(vault, current)?;
+    let cost = vault
+        .directory
+        .factors
+        .iter()
+        .find_map(|factor| match factor {
+            Factor::Password { m_kib, t, p } => Some((*m_kib, *t, *p)),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("this vault has no password factor"))?;
+    let publics = password_publics(new, cost)?;
+    replace_human_password(&mut vault.session, &mut vault.file, &publics)?;
+    Ok(Outcome::PasswordChanged)
 }
 
 fn rotate(vault: &mut Vault, rotation: &Rotation) -> anyhow::Result<Outcome> {

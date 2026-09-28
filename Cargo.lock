@@ -716,9 +716,12 @@ dependencies = [
  "anyhow",
  "csv",
  "keepass",
+ "quick-xml",
  "record",
+ "secret",
  "serde",
  "serde_json",
+ "session",
  "zeroize",
 ]
 

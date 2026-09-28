@@ -6,11 +6,8 @@
 //! no longer waits for (a cancelled unlock) is dropped on arrival, and with it
 //! any session or secret it holds.
 
-use std::path::PathBuf;
-
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
-use zeroize::Zeroizing;
 
 use local::Paths;
 use session::KdfProfile;
@@ -33,7 +30,7 @@ pub enum Job {
     /// Run an op on an unlocked vault; the vault comes back in the result.
     Vault(Box<Vault>, Op),
     /// Read and parse another manager's export.
-    ParseImport(Box<ImportJob>),
+    ParseImport(Box<import::Load>),
 }
 
 /// A finished job.
@@ -139,49 +136,10 @@ fn run(job: Job) -> JobResult {
             let result = apply(&mut vault, op).map_err(|error| describe(&error));
             JobResult::Vault(vault, result)
         }
-        Job::ParseImport(job) => JobResult::ImportParsed(parse_import(*job)),
+        Job::ParseImport(load) => {
+            JobResult::ImportParsed(load.run().map(Box::new).map_err(|error| error.to_string()))
+        }
     }
-}
-
-/// An export to read, with the credentials a `.kdbx` needs.
-pub struct ImportJob {
-    /// Export file.
-    pub path: PathBuf,
-    /// Its format.
-    pub source: import::Source,
-    /// `.kdbx` master password.
-    pub password: Option<Zeroizing<Vec<u8>>>,
-    /// `.kdbx` key file.
-    pub key_file: Option<PathBuf>,
-}
-
-impl std::fmt::Debug for ImportJob {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ImportJob")
-            .field("source", &self.source)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Read the export and parse it. Folder names always become tags.
-fn parse_import(job: ImportJob) -> Result<Box<import::Parsed>, String> {
-    let bytes = import::read_file(&job.path).map_err(|error| error.to_string())?;
-    let key_file = job
-        .key_file
-        .as_deref()
-        .map(import::read_file)
-        .transpose()
-        .map_err(|error| format!("key file: {error}"))?;
-    import::parse(&import::Request {
-        bytes,
-        source: job.source,
-        mapping: None,
-        folders_as_tags: true,
-        password: job.password,
-        key_file,
-    })
-    .map(Box::new)
-    .map_err(|error| error.to_string())
 }
 
 /// One Argon2id run over a fixed dummy input, timed.

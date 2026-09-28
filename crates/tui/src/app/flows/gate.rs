@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::create::CreateState;
+use crate::app::flows::import::{ImportState, Target};
 use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlock::UnlockState;
 use crate::app::screen::{Nav, Screen};
@@ -42,7 +43,9 @@ impl WelcomeState {
                 self.restore = !self.restore;
                 Nav::Stay
             }
-            Action::Confirm if self.restore => Nav::To(Screen::Import(Box::default())),
+            Action::Confirm if self.restore => {
+                Nav::To(Screen::Import(Box::new(ImportState::new(Target::NewVault))))
+            }
             Action::Confirm => Nav::To(Screen::Create(Box::new(CreateState::new(ctx)))),
             _ => Nav::Stay,
         }

@@ -62,9 +62,8 @@ impl Source {
     #[must_use]
     pub const fn supported(self) -> bool {
         match self {
-            Self::BitwardenJson | Self::Csv => true,
+            Self::BitwardenJson | Self::KeepassXml | Self::EnpassJson | Self::Csv => true,
             Self::Kdbx => cfg!(feature = "kdbx"),
-            Self::KeepassXml | Self::EnpassJson => false,
         }
     }
 

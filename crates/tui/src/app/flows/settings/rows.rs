@@ -107,6 +107,8 @@ pub enum Row {
     Generation,
     /// Record count.
     Records,
+    /// Import records from another manager.
+    Import,
     /// Vault file path.
     FilePath,
     /// Rotate the vault key.
@@ -126,7 +128,7 @@ pub enum Row {
 }
 
 /// Every row with its section, in display order.
-pub const ROWS: [(Section, Row); 32] = [
+pub const ROWS: [(Section, Row); 33] = [
     (Section::Security, Row::AutoLock),
     (Section::Security, Row::FocusLock),
     (Section::Security, Row::RevealHide),
@@ -151,6 +153,7 @@ pub const ROWS: [(Section, Row); 32] = [
     (Section::Vault, Row::Cipher),
     (Section::Vault, Row::Generation),
     (Section::Vault, Row::Records),
+    (Section::Vault, Row::Import),
     (Section::Vault, Row::FilePath),
     (Section::Danger, Row::RotateKey),
     (Section::Danger, Row::ForgetDevice),
@@ -193,6 +196,7 @@ impl Row {
             Self::Cipher => "Record cipher",
             Self::Generation => "Key generation",
             Self::Records => "Records",
+            Self::Import => "Import records",
             Self::FilePath => "File",
             Self::RotateKey => "Rotate the vault key",
             Self::ForgetDevice => "Revoke this device",
@@ -232,6 +236,7 @@ impl Row {
             Self::Cipher => "Each record is sealed on its own: AEGIS-256 inside Kuznyechik-CTR + HMAC, one key per layer.",
             Self::Generation => "Grows with every change to the wrap directory; an older file is refused as a rollback.",
             Self::Records => "Live records. Old revisions stay until history is cleared.",
+            Self::Import => "Bitwarden, KeePass (.kdbx or XML), Enpass, or CSV. Records already here are skipped.",
             Self::FilePath => "Back this file up. Without the recovery phrase it is useless to anyone.",
             Self::RotateKey => "Draws a new vault key, re-seals every record, and re-wraps every factor. Needs the phrase.",
             Self::ForgetDevice => "Removes this device's wrap, rotates the vault key, and deletes the key file.",

@@ -62,6 +62,13 @@ pub const KEYMAP: &[Binding] = bindings! {
     ImportUnlock: key(KeyCode::Enter) => Confirm, "open";
     ImportUnlock: key(KeyCode::Esc) => Back, "back";
 
+    ImportMapping: key(KeyCode::Up) => Up, "column";
+    ImportMapping: key(KeyCode::Down) => Down;
+    ImportMapping: key(KeyCode::Left) => Left, "change";
+    ImportMapping: key(KeyCode::Right) => Right;
+    ImportMapping: key(KeyCode::Enter) => Confirm, "read";
+    ImportMapping: key(KeyCode::Esc) => Back, "back";
+
     ImportPreview: key(KeyCode::Up) => Up, "move";
     ImportPreview: key(KeyCode::Down) => Down;
     ImportPreview: key(KeyCode::PageUp) => PageUp;
@@ -70,7 +77,8 @@ pub const KEYMAP: &[Binding] = bindings! {
     ImportPreview: key(KeyCode::End) => Bottom;
     ImportPreview: ch(' ') => ToggleInclude, "include";
     ImportPreview: ch('a') => ToggleAll, "all";
-    ImportPreview: key(KeyCode::Enter) => Confirm, "create vault";
+    ImportPreview: ch('m') => EditColumns, "columns";
+    ImportPreview: key(KeyCode::Enter) => Confirm, "import";
     ImportPreview: key(KeyCode::Esc) => Back, "back";
 
     Restore: key(KeyCode::Tab) => AcceptSuggestion, "accept / next field";
@@ -138,6 +146,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Home: ch('o') => ShowUrl;
     Home: ch(' ') => Reveal, "reveal";
     Home: ch('n') => NewRecord, "new";
+    Home: ch('i') => ImportRecords, "import";
     Home: ch('E') => EditRecord, "edit";
     Home: ch('d') => DeleteRecord, "delete";
     Home: ch('*') => ToggleFavorite;

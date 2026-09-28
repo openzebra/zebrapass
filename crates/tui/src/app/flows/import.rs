@@ -1,14 +1,15 @@
-//! Restore or import: pick the `ZebraPass` phrase or another manager, read
-//! its export, review it, then create a vault that receives it.
+//! The import wizard's screen state: which step is shown, what is typed,
+//! and where the cursor is. Every import decision lives in the `import`
+//! crate; this module only routes keys to it.
 //!
-//! The export is read and parsed on the worker thread. Parsed documents
-//! live in this state until they move into the create wizard; dropping the
-//! state (back, lock, quit) wipes them.
+//! The same state serves two targets: restoring into a new vault (where
+//! the `ZebraPass` phrase is also offered) and importing into the open
+//! vault. The caller turns an [`ImportEvent`] into navigation.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crossterm::event::KeyEvent;
-use import::{Parsed, Source};
+use import::{expand_home, inspect, Credentials, FileHint, Load, Parsed, Review, Source};
 use record::{Document, TAG_TOTP};
 
 use crate::app::action::Action;
@@ -16,21 +17,18 @@ use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::create::CreateState;
 use crate::app::flows::editing::{edit_secret, edit_text};
 use crate::app::flows::gate::initial_screen;
+use crate::app::flows::import_mapping::Columns;
 use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlock::MAX_PASSWORD;
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::{Nav, Screen};
-use crate::app::worker::{ImportJob, Job};
+use crate::app::worker::Job;
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::secure::totp::Totp;
 use crate::ui::input::TextInput;
 use crate::ui::widgets::toast::Tone;
 use crate::vault::limits::MAX_PATH_INPUT;
-use crate::vault::records::Summary;
-
-/// Bytes read from the export for the live format hint.
-const SNIFF_BYTES: u64 = 4096;
 
 /// Rows moved by Page Up / Page Down.
 const PAGE: usize = 10;
@@ -47,7 +45,7 @@ pub enum Choice {
     From(Source),
 }
 
-/// The first step, in display order.
+/// Every entry of the first step, in display order.
 pub const CHOICES: [Choice; 6] = [
     Choice::Phrase,
     Choice::From(Source::BitwardenJson),
@@ -56,6 +54,15 @@ pub const CHOICES: [Choice; 6] = [
     Choice::From(Source::EnpassJson),
     Choice::From(Source::Csv),
 ];
+
+/// Where the records go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// A vault created after the review.
+    NewVault,
+    /// The vault that is open now.
+    OpenVault,
+}
 
 /// Wizard step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,17 +73,10 @@ pub enum ImportStep {
     File,
     /// A `.kdbx` database's password and key file.
     Unlock,
+    /// Which CSV column feeds what.
+    Mapping,
     /// What will be imported.
     Preview,
-}
-
-/// What the path points at, from its first bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FileHint {
-    /// Nothing readable there.
-    Missing,
-    /// A file whose format was guessed (`None`: unknown), and its size.
-    Found(Option<Source>, u64),
 }
 
 /// Focus on the unlock step.
@@ -88,57 +88,54 @@ pub enum UnlockField {
     KeyFile,
 }
 
-/// The parsed export under review.
+/// What the wizard asks its owner to do.
+#[derive(Debug)]
+pub enum ImportEvent {
+    /// Nothing.
+    Stay,
+    /// Esc on the first step.
+    Leave,
+    /// The `ZebraPass` phrase was chosen.
+    Phrase,
+    /// The reviewed records to write.
+    Records(Vec<Document>),
+}
+
+/// The review with its cursor.
 #[derive(Debug)]
 pub struct Preview {
-    /// Parsed items and the report.
-    pub parsed: Box<Parsed>,
-    /// Text-only rows for the list (wiped on drop).
-    pub rows: Box<[Summary]>,
-    /// Per item: imported when `true`.
-    pub included: Vec<bool>,
+    /// Rows, report, and include marks.
+    pub review: Review,
     /// Selected row.
     pub cursor: usize,
-    /// TOTP fields that will not produce codes.
+    /// TOTP fields this application cannot produce codes for.
     pub bad_totp: usize,
 }
 
 impl Preview {
-    fn new(parsed: Box<Parsed>) -> Self {
-        let rows: Box<[Summary]> = parsed
-            .items
-            .iter()
-            .zip(0u32..)
-            .map(|(item, index)| Summary::of(index, 0, 0, &item.doc))
-            .collect();
-        let bad_totp = parsed
-            .items
+    fn new(review: Review) -> Self {
+        let bad_totp = review
+            .items()
             .iter()
             .filter_map(|item| item.doc.data(TAG_TOTP).ok().flatten())
             .filter(|field| Totp::try_from(*field).is_err())
             .count();
         Self {
-            included: vec![true; parsed.items.len()],
-            parsed,
-            rows,
+            review,
             cursor: 0,
             bad_totp,
         }
-    }
-
-    /// Items that will be imported.
-    #[must_use]
-    pub fn count(&self) -> usize {
-        self.included.iter().filter(|on| **on).count()
     }
 }
 
 /// Wizard state.
 #[derive(Debug)]
 pub struct ImportState {
+    /// Where the records go.
+    pub target: Target,
     /// Step.
     pub step: ImportStep,
-    /// Selected entry of [`CHOICES`].
+    /// Selected entry of [`Self::choices`].
     pub cursor: usize,
     /// Export file path as typed.
     pub path: TextInput,
@@ -146,6 +143,8 @@ pub struct ImportState {
     pub hint: FileHint,
     /// The export under review.
     pub preview: Option<Box<Preview>>,
+    /// CSV columns and their targets.
+    pub columns: Option<Box<Columns>>,
     /// `.kdbx` master password.
     pub password: SecretInput,
     /// `.kdbx` key-file path, optional.
@@ -161,13 +160,15 @@ pub struct ImportState {
 impl ImportState {
     /// Start on the first step.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(target: Target) -> Self {
         Self {
+            target,
             step: ImportStep::Source,
             cursor: 0,
             path: TextInput::new(MAX_PATH_INPUT),
             hint: FileHint::Missing,
             preview: None,
+            columns: None,
             password: SecretInput::new(MAX_PASSWORD),
             key_file: TextInput::new(MAX_PATH_INPUT),
             field: UnlockField::Password,
@@ -176,10 +177,19 @@ impl ImportState {
         }
     }
 
+    /// Entries of the first step: the phrase only when restoring.
+    #[must_use]
+    pub fn choices(&self) -> &'static [Choice] {
+        match self.target {
+            Target::NewVault => &CHOICES,
+            Target::OpenVault => CHOICES.get(1..).unwrap_or_default(),
+        }
+    }
+
     /// The selected source; `Bitwarden` while the phrase row is selected.
     #[must_use]
     pub fn source(&self) -> Source {
-        match CHOICES.get(self.cursor) {
+        match self.choices().get(self.cursor) {
             Some(Choice::From(source)) => *source,
             Some(Choice::Phrase) | None => Source::BitwardenJson,
         }
@@ -192,20 +202,20 @@ impl ImportState {
             ImportStep::Source => Scope::Import,
             ImportStep::File => Scope::ImportFile,
             ImportStep::Unlock => Scope::ImportUnlock,
+            ImportStep::Mapping => Scope::ImportMapping,
             ImportStep::Preview => Scope::ImportPreview,
         }
     }
 
     /// Handle a key.
-    pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
+    pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> ImportEvent {
         let action = resolve(self.scope(), event);
         match (self.step, action) {
-            (ImportStep::Source, Some(action)) => self.on_source(action, ctx),
+            (ImportStep::Source, Some(action)) => return self.on_source(action, ctx),
             (ImportStep::File, Some(action)) => self.on_file(action, ctx),
             (ImportStep::File, None) => {
                 edit_text(&mut self.path, event);
-                self.check_path();
-                Nav::Stay
+                self.hint = inspect(&self.resolved_path());
             }
             (ImportStep::Unlock, Some(action)) => self.on_unlock(action, ctx),
             (ImportStep::Unlock, None) => {
@@ -213,11 +223,12 @@ impl ImportState {
                     UnlockField::Password => edit_secret(&mut self.password, event),
                     UnlockField::KeyFile => edit_text(&mut self.key_file, event),
                 };
-                Nav::Stay
             }
-            (ImportStep::Preview, Some(action)) => self.on_preview(action, ctx),
-            (ImportStep::Source | ImportStep::Preview, None) => Nav::Stay,
+            (ImportStep::Mapping, Some(action)) => self.on_mapping(action, ctx),
+            (ImportStep::Preview, Some(action)) => return self.on_preview(action, ctx),
+            (ImportStep::Source | ImportStep::Mapping | ImportStep::Preview, None) => {}
         }
+        ImportEvent::Stay
     }
 
     /// Paste into the focused field.
@@ -226,7 +237,7 @@ impl ImportState {
         match (self.step, self.field) {
             (ImportStep::File, _) => {
                 self.path.insert_str(line);
-                self.check_path();
+                self.hint = inspect(&self.resolved_path());
             }
             (ImportStep::Unlock, UnlockField::Password) => {
                 self.password.insert_str(line);
@@ -234,7 +245,7 @@ impl ImportState {
             (ImportStep::Unlock, UnlockField::KeyFile) => {
                 self.key_file.insert_str(line);
             }
-            (ImportStep::Source | ImportStep::Preview, _) => {}
+            (ImportStep::Source | ImportStep::Mapping | ImportStep::Preview, _) => {}
         }
     }
 
@@ -246,7 +257,7 @@ impl ImportState {
             }
             Ok(parsed) => {
                 self.error = None;
-                self.preview = Some(Box::new(Preview::new(parsed)));
+                self.preview = Some(Box::new(Preview::new(Review::from(*parsed))));
                 self.step = ImportStep::Preview;
                 ctx.redraw();
             }
@@ -254,39 +265,56 @@ impl ImportState {
         }
     }
 
-    fn on_source(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
+    /// Hide a revealed password now.
+    pub const fn hide(&mut self, ctx: &mut Ctx) {
+        if self.reveal.hide() {
+            ctx.redraw();
+        }
+    }
+
+    /// The typed path with a leading `~` expanded.
+    #[must_use]
+    pub fn resolved_path(&self) -> PathBuf {
+        expand_home(self.path.value())
+    }
+
+    fn on_source(&mut self, action: Action, ctx: &mut Ctx) -> ImportEvent {
+        let last = self.choices().len().saturating_sub(1);
         match action {
             Action::Up => self.cursor = self.cursor.saturating_sub(1),
-            Action::Down => self.cursor = (self.cursor + 1).min(CHOICES.len() - 1),
-            Action::Back => return Nav::To(initial_screen(ctx)),
-            Action::Confirm => match CHOICES.get(self.cursor) {
-                Some(Choice::Phrase) => {
-                    return Nav::To(Screen::Restore(Box::new(RestoreState::new(None, ctx))));
-                }
+            Action::Down => self.cursor = (self.cursor + 1).min(last),
+            Action::Back => return ImportEvent::Leave,
+            Action::Confirm => match self.choices().get(self.cursor) {
+                Some(Choice::Phrase) => return ImportEvent::Phrase,
                 Some(Choice::From(source)) if source.supported() => {
                     self.error = None;
                     self.step = ImportStep::File;
-                    self.check_path();
+                    self.hint = inspect(&self.resolved_path());
                 }
                 Some(Choice::From(_)) => ctx.toast(
                     Tone::Info,
-                    "Not available yet. Export from that app as CSV and choose CSV.",
+                    "Not available in this build. Export from that app as CSV and choose CSV.",
                 ),
                 None => {}
             },
             _ => {}
         }
-        Nav::Stay
+        ImportEvent::Stay
     }
 
-    fn on_file(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
+    fn on_file(&mut self, action: Action, ctx: &mut Ctx) {
         match action {
             Action::Back => {
                 self.error = None;
+                self.columns = None;
                 self.step = ImportStep::Source;
             }
             Action::Confirm => match self.hint {
                 FileHint::Missing => self.error = Some("No readable file at that path.".into()),
+                FileHint::Found(..) if self.source() == Source::Csv => {
+                    self.error = None;
+                    self.open_columns(ctx);
+                }
                 FileHint::Found(..) if self.source() == Source::Kdbx => {
                     self.error = None;
                     self.field = UnlockField::Password;
@@ -294,15 +322,14 @@ impl ImportState {
                 }
                 FileHint::Found(..) => {
                     self.error = None;
-                    self.read(None, None, ctx);
+                    self.read(Credentials::default(), ctx);
                 }
             },
             _ => {}
         }
-        Nav::Stay
     }
 
-    fn on_unlock(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
+    fn on_unlock(&mut self, action: Action, ctx: &mut Ctx) {
         match action {
             Action::NextField | Action::PrevField => {
                 self.field = match self.field {
@@ -325,55 +352,54 @@ impl ImportState {
                 let key_file = self.key_file.value().trim();
                 if self.password.is_empty() && key_file.is_empty() {
                     self.error = Some("Enter the database password or its key file.".into());
-                    return Nav::Stay;
+                    return;
                 }
-                let key_file = (!key_file.is_empty()).then(|| expand_home(key_file));
-                let password = (!self.password.is_empty()).then(|| self.password.take());
+                let credentials = Credentials {
+                    key_file: (!key_file.is_empty()).then(|| expand_home(key_file)),
+                    password: (!self.password.is_empty()).then(|| self.password.take()),
+                };
                 self.hide(ctx);
                 self.error = None;
-                self.read(password, key_file, ctx);
+                self.read(credentials, ctx);
             }
             _ => {}
-        }
-        Nav::Stay
-    }
-
-    /// Hide a revealed password now.
-    pub const fn hide(&mut self, ctx: &mut Ctx) {
-        if self.reveal.hide() {
-            ctx.redraw();
         }
     }
 
     /// Queue the read of the export on the worker.
-    fn read(
-        &self,
-        password: Option<zeroize::Zeroizing<Vec<u8>>>,
-        key_file: Option<PathBuf>,
-        ctx: &mut Ctx,
-    ) {
-        let job = ImportJob {
+    pub(crate) fn read(&self, credentials: Credentials, ctx: &mut Ctx) {
+        let load = Load {
             path: self.resolved_path(),
             source: self.source(),
-            password,
-            key_file,
+            credentials,
+            mapping: self.mapping(),
         };
-        ctx.start(Job::ParseImport(Box::new(job)), Task::Import);
+        ctx.start(Job::ParseImport(Box::new(load)), Task::Import);
     }
 
-    fn on_preview(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
-        if action == Action::Back {
-            self.preview = None;
-            self.step = ImportStep::File;
-            return Nav::Stay;
-        }
-        if action == Action::Confirm {
-            return self.create_vault(ctx);
+    fn on_preview(&mut self, action: Action, ctx: &mut Ctx) -> ImportEvent {
+        match action {
+            Action::Back => {
+                self.preview = None;
+                self.step = if self.columns.is_some() {
+                    ImportStep::Mapping
+                } else {
+                    ImportStep::File
+                };
+                return ImportEvent::Stay;
+            }
+            Action::Confirm => return self.take_records(ctx),
+            Action::EditColumns if self.columns.is_some() => {
+                self.preview = None;
+                self.step = ImportStep::Mapping;
+                return ImportEvent::Stay;
+            }
+            _ => {}
         }
         let Some(preview) = self.preview.as_deref_mut() else {
-            return Nav::Stay;
+            return ImportEvent::Stay;
         };
-        let last = preview.rows.len().saturating_sub(1);
+        let last = preview.review.rows().len().saturating_sub(1);
         match action {
             Action::Up => preview.cursor = preview.cursor.saturating_sub(1),
             Action::Down => preview.cursor = (preview.cursor + 1).min(last),
@@ -381,84 +407,37 @@ impl ImportState {
             Action::PageDown => preview.cursor = (preview.cursor + PAGE).min(last),
             Action::Top => preview.cursor = 0,
             Action::Bottom => preview.cursor = last,
-            Action::ToggleInclude => {
-                if let Some(on) = preview.included.get_mut(preview.cursor) {
-                    *on = !*on;
-                }
-            }
-            Action::ToggleAll => {
-                let all = preview.included.iter().all(|on| *on);
-                preview.included.iter_mut().for_each(|on| *on = !all);
-            }
+            Action::ToggleInclude => preview.review.toggle(preview.cursor),
+            Action::ToggleAll => preview.review.toggle_all(),
             _ => {}
         }
-        Nav::Stay
+        ImportEvent::Stay
     }
 
-    /// Hand the included documents to the create wizard.
-    fn create_vault(&mut self, ctx: &mut Ctx) -> Nav {
-        if self
+    fn take_records(&mut self, ctx: &mut Ctx) -> ImportEvent {
+        let empty = self
             .preview
             .as_ref()
-            .is_none_or(|preview| preview.count() == 0)
-        {
+            .is_none_or(|preview| preview.review.included_count() == 0);
+        if empty {
             ctx.toast(Tone::Info, "Include at least one item (Space).");
-            return Nav::Stay;
+            return ImportEvent::Stay;
         }
-        let Some(preview) = self.preview.take() else {
-            return Nav::Stay;
-        };
-        let Preview {
-            parsed, included, ..
-        } = *preview;
-        let records: Vec<Document> = parsed
-            .items
-            .into_iter()
-            .zip(included)
-            .filter(|(_, on)| *on)
-            .map(|(item, _)| *item.doc)
-            .collect();
-        let source = self.source().label();
-        Nav::To(Screen::Create(Box::new(CreateState::with_records(
-            ctx, records, source,
-        ))))
-    }
-
-    /// The typed path with a leading `~` expanded.
-    #[must_use]
-    pub fn resolved_path(&self) -> PathBuf {
-        expand_home(self.path.value().trim())
-    }
-
-    /// Re-read the first bytes at the path for the live hint.
-    fn check_path(&mut self) {
-        let path = self.resolved_path();
-        self.hint = if self.path.value().trim().is_empty() {
-            FileHint::Missing
-        } else {
-            import::read_head(&path, SNIFF_BYTES).map_or(FileHint::Missing, |(head, size)| {
-                let extension = path.extension().and_then(|ext| ext.to_str());
-                FileHint::Found(import::sniff(&head, extension), size)
-            })
-        };
+        self.preview.take().map_or(ImportEvent::Stay, |preview| {
+            ImportEvent::Records(preview.review.into_records())
+        })
     }
 }
 
-impl Default for ImportState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// `~` and `~/…` resolved against `HOME`; anything else as typed.
-fn expand_home(typed: &str) -> PathBuf {
-    let home = || std::env::var_os("HOME").map(PathBuf::from);
-    match typed.strip_prefix('~') {
-        Some("") => home().unwrap_or_else(|| PathBuf::from(typed)),
-        Some(rest) if rest.starts_with('/') => home().map_or_else(
-            || PathBuf::from(typed),
-            |home| home.join(rest.trim_start_matches('/')),
-        ),
-        Some(_) | None => Path::new(typed).to_path_buf(),
+/// Navigation for the restore-or-import screen, where records become a
+/// new vault.
+pub fn new_vault_nav(event: ImportEvent, source: Source, ctx: &mut Ctx) -> Nav {
+    match event {
+        ImportEvent::Stay => Nav::Stay,
+        ImportEvent::Leave => Nav::To(initial_screen(ctx)),
+        ImportEvent::Phrase => Nav::To(Screen::Restore(Box::new(RestoreState::new(None, ctx)))),
+        ImportEvent::Records(records) => Nav::To(Screen::Create(Box::new(
+            CreateState::with_records(ctx, records, source.label()),
+        ))),
     }
 }

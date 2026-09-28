@@ -58,9 +58,11 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
         ),
         Row::ClientId => grouped_hex(info.client_id.get(..8).unwrap_or_default(), 2),
         Row::DeviceCert => String::from("none on file"),
-        Row::TestConnection | Row::RotateKey | Row::ForgetDevice | Row::ClearHistory => {
-            String::from("Enter")
-        }
+        Row::TestConnection
+        | Row::RotateKey
+        | Row::ForgetDevice
+        | Row::ClearHistory
+        | Row::Import => String::from("Enter"),
         Row::ClipClear => format!("{} s", draft.clip_clear_s),
         Row::ClipOnLock => String::from("always"),
         Row::Theme if ctx.no_color => format!("{} (NO_COLOR wins)", theme_of(draft.theme).label()),

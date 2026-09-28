@@ -1,0 +1,32 @@
+{
+  "folders": [
+    { "uuid": "f1", "parent_uuid": "", "title": "Work", "icon": "1008" },
+    { "uuid": "f2", "parent_uuid": "f1", "title": "Dev", "icon": "1008" }
+  ],
+  "items": [
+    {
+      "title": "GitHub", "subtitle": "octocat", "note": "dev account", "category": "login",
+      "favorite": 1, "trashed": 0, "archived": 0, "folders": ["f2"],
+      "fields": [
+        { "label": "Username", "type": "username", "value": "octocat", "sensitive": 0, "deleted": 0, "order": 1 },
+        { "label": "E-mail", "type": "email", "value": "octo@example.com", "sensitive": 0, "deleted": 0 },
+        { "label": "Password", "type": "password", "value": "enpass-pw-github", "sensitive": 1, "deleted": 0 },
+        { "label": "Website", "type": "url", "value": "https://github.com", "sensitive": 0, "deleted": 0 },
+        { "label": "One-time code", "type": "totp", "value": "JBSWY3DPEHPK3PXP", "sensitive": 1, "deleted": 0 },
+        { "label": "Details", "type": "section", "value": "", "sensitive": 0, "deleted": 0 },
+        { "label": "Security answer", "type": "text", "value": "enpass-answer", "sensitive": 1, "deleted": 0 },
+        { "label": "Old field", "type": "text", "value": "gone", "sensitive": 0, "deleted": 1 }
+      ],
+      "attachments": [{ "name": "a.png" }]
+    },
+    {
+      "title": "Visa", "category": "creditcard", "archived": 1,
+      "fields": [
+        { "label": "Cardholder", "type": "ccName", "value": "Jane Doe", "sensitive": 0 },
+        { "label": "Number", "type": "ccNumber", "value": "4111111111111111", "sensitive": 1 },
+        { "label": "CVC", "type": "ccCvc", "value": "123", "sensitive": 1 }
+      ]
+    },
+    { "title": "Old", "category": "login", "trashed": 1, "fields": [] }
+  ]
+}

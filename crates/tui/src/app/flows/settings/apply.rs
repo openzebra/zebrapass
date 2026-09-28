@@ -113,6 +113,7 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
             ctx.toast(Tone::Info, "This device is not enrolled for this vault.");
         }
         Row::ClearHistory => return palette_action(state, Action::ClearHistory, ctx),
+        Row::Import => crate::app::flows::import_vault::open(state),
         Row::DeviceFingerprint
         | Row::SecureEnclave
         | Row::ClientId

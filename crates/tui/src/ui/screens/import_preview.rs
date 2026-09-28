@@ -8,7 +8,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::import::{ImportState, Preview};
+use crate::app::flows::import::{ImportState, Preview, Target};
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::create::titled;
@@ -58,14 +58,18 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     .areas(inner);
     frame.render_widget(Paragraph::new(summary), head);
     draw_rows(frame, list, preview, ctx);
-    let count = preview.count();
+    let count = preview.review.included_count();
+    let action = match state.target {
+        Target::NewVault => "  ·  Enter creates a new vault with them",
+        Target::OpenVault => "  ·  Enter adds them to this vault; duplicates are skipped",
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                format!("  {count} of {} selected", preview.rows.len()),
+                format!("  {count} of {} selected", preview.review.rows().len()),
                 theme.muted(),
             ),
-            Span::styled("  ·  Enter creates a new vault with them", theme.muted()),
+            Span::styled(action, theme.muted()),
         ])),
         footer,
     );
@@ -74,9 +78,9 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
 
 fn summary_lines(preview: &Preview, theme: &Theme) -> Vec<Line<'static>> {
     let glyphs = theme.glyphs;
-    let report = &preview.parsed.report;
+    let report = preview.review.report();
     let mut kinds = vec![Span::styled(
-        format!("  {} items  ", preview.rows.len()),
+        format!("  {} items  ", preview.review.rows().len()),
         theme.strong(),
     )];
     for (kind, noun) in KINDS {
@@ -87,7 +91,7 @@ fn summary_lines(preview: &Preview, theme: &Theme) -> Vec<Line<'static>> {
         }
     }
     let mut lines = vec![Line::from(kinds)];
-    if let Some(mapping) = preview.parsed.mapping.as_ref() {
+    if let Some(mapping) = preview.review.mapping() {
         lines.push(note(
             &format!("columns read as a {} export", mapping.preset.label()),
             glyphs.ok,
@@ -155,13 +159,14 @@ fn draw_rows(frame: &mut Frame<'_>, area: Rect, preview: &Preview, ctx: &Ctx) {
     let user_width = width * 3 / 10;
     let tags_width = width.saturating_sub(title_width + user_width);
     let lines: Vec<Line<'_>> = preview
-        .rows
+        .review
+        .rows()
         .iter()
-        .zip(&preview.included)
         .enumerate()
         .skip(start)
         .take(height)
-        .map(|(position, (row, on))| {
+        .map(|(position, row)| {
+            let on = &preview.review.is_included(position);
             let chosen = position == preview.cursor;
             let pointer = if chosen { theme.glyphs.pointer } else { " " };
             let style = if *on {
@@ -174,7 +179,7 @@ fn draw_rows(frame: &mut Frame<'_>, area: Rect, preview: &Preview, ctx: &Ctx) {
             Line::from(vec![
                 Span::styled(format!(" {pointer} "), theme.accent()),
                 Span::styled(format!("{} ", checkbox(*on)), style),
-                Span::styled(fit(row.display_title(), title_width), style),
+                Span::styled(fit(&row.title, title_width), style),
                 Span::styled(fit(&row.username, user_width), theme.muted()),
                 Span::styled(fit(&row.tags, tags_width), theme.muted()),
             ])

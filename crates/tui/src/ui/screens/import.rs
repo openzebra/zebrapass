@@ -1,7 +1,7 @@
 //! Restore or import: the choice of source and the export file. The review
 //! step lives in `import_preview`.
 
-use import::Source;
+use import::{FileHint, Source};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::import::{
-    Choice, FileHint, ImportState, ImportStep, UnlockField, CHOICES, REVEAL_PASSWORD,
+    Choice, ImportState, ImportStep, Target, UnlockField, REVEAL_PASSWORD,
 };
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
@@ -29,6 +29,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
         ImportStep::Source => source(frame, area, state, ctx),
         ImportStep::File => file(frame, area, state, ctx),
         ImportStep::Unlock => unlock(frame, area, state, ctx),
+        ImportStep::Mapping => crate::ui::screens::import_mapping::draw(frame, area, state, ctx),
         ImportStep::Preview => crate::ui::screens::import_preview::draw(frame, area, state, ctx),
     }
 }
@@ -37,10 +38,17 @@ fn source(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     let theme = &ctx.theme;
     let [body, hints] = body_and_hints(area);
     let card = centered(body, body.width.min(100), 18);
-    let block = panel(
-        titled("Restore or import", (1, STEPS), card.width, ctx),
-        theme,
-    );
+    let (title, intro_text) = match state.target {
+        Target::NewVault => (
+            "Restore or import",
+            "  Bring back a ZebraPass vault, or start a new one from another password manager.",
+        ),
+        Target::OpenVault => (
+            "Import into this vault",
+            "  Records already in this vault are skipped, so importing twice adds nothing.",
+        ),
+    };
+    let block = panel(titled(title, (1, STEPS), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
     let [intro, _, main] = Layout::vertical([
@@ -50,15 +58,12 @@ fn source(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     ])
     .areas(inner);
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            "  Bring back a ZebraPass vault, or start a new one from another password manager.",
-            theme.muted(),
-        )),
+        Paragraph::new(Span::styled(intro_text, theme.muted())),
         intro,
     );
     let [list, guide] =
         Layout::horizontal([Constraint::Length(48), Constraint::Min(20)]).areas(main);
-    let rows = CHOICES.iter().enumerate().map(|(index, choice)| {
+    let rows = state.choices().iter().enumerate().map(|(index, choice)| {
         let chosen = index == state.cursor;
         let pointer = if chosen { theme.glyphs.pointer } else { " " };
         let (label, note, available) = match choice {
@@ -82,7 +87,7 @@ fn source(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     let with_gap: Vec<Line<'_>> = rows
         .enumerate()
         .flat_map(|(index, line)| {
-            let gap = (index == 0).then(|| Line::from(""));
+            let gap = (state.choices().get(index) == Some(&Choice::Phrase)).then(|| Line::from(""));
             std::iter::once(line).chain(gap)
         })
         .collect();
@@ -92,7 +97,11 @@ fn source(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
         .border_style(theme.muted());
     let guide_inner = guide_block.inner(guide);
     frame.render_widget(guide_block, guide);
-    let choice = CHOICES.get(state.cursor).copied().unwrap_or(Choice::Phrase);
+    let choice = state
+        .choices()
+        .get(state.cursor)
+        .copied()
+        .unwrap_or(Choice::Phrase);
     let lines: Vec<Line<'_>> = guidance(choice)
         .iter()
         .map(|(text, tone)| {
@@ -352,15 +361,22 @@ const fn guidance(choice: Choice) -> &'static [(&'static str, Tone)] {
         Choice::From(Source::KeepassXml) => &[
             ("From a KeePass XML export", Tone::Head),
             ("", Tone::Note),
-            ("XML import is coming soon.", Tone::Warn),
-            ("For now: export as CSV and choose CSV.", Tone::Step),
+            ("KeePass: File → Export →", Tone::Step),
+            ("KeePass XML (2.x)", Tone::Step),
+            ("KeePassXC: Database → Export → XML", Tone::Step),
+            ("", Tone::Note),
+            ("Have the .kdbx? Choose KeePass above:", Tone::Note),
+            ("no plain-text file needed.", Tone::Note),
         ],
         Choice::From(Source::EnpassJson) => &[
             ("From Enpass", Tone::Head),
             ("", Tone::Note),
-            ("Enpass .json import is coming soon.", Tone::Warn),
-            ("For now: File → Export → .csv,", Tone::Step),
-            ("then choose CSV here.", Tone::Step),
+            ("File → Export → .json", Tone::Step),
+            ("Confirm with your master password.", Tone::Step),
+            ("", Tone::Note),
+            ("Logins, cards, identities, notes,", Tone::Note),
+            ("custom fields, TOTP and folders come", Tone::Note),
+            ("along. Attachments stay behind.", Tone::Note),
         ],
         Choice::From(Source::Csv) => &[
             ("From a CSV export", Tone::Head),

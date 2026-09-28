@@ -22,8 +22,9 @@ use crate::app::action::Action;
 use crate::app::ctx::{Caps, Ctx};
 use crate::app::flows::create::CreateState;
 use crate::app::flows::gate::{initial_screen, AlertState, LockReason, LockedState};
+use crate::app::flows::import::{ImportState, Target};
 use crate::app::flows::palette::{Overlay, PaletteEvent, PaletteState};
-use crate::app::flows::unlocked::Unlocked;
+use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::{Nav, Screen};
 use crate::app::worker::JobResult;
@@ -170,7 +171,11 @@ impl App {
                 .map_or(Nav::Stay, |action| state.on_action(action, &mut self.ctx)),
             Screen::Create(state) => state.on_key(event, &mut self.ctx),
             Screen::Restore(state) => state.on_key(event, &mut self.ctx),
-            Screen::Import(state) => state.on_key(event, &mut self.ctx),
+            Screen::Import(state) => {
+                let source = state.source();
+                let event = state.on_key(event, &mut self.ctx);
+                flows::import::new_vault_nav(event, source, &mut self.ctx)
+            }
             Screen::Unlock(state) => state.on_key(event, &mut self.ctx),
             Screen::Unlocked(state) => state.on_key(event, &mut self.ctx),
             Screen::Alert(state) => resolve(Scope::Alert, event)
@@ -234,7 +239,7 @@ impl App {
                     return;
                 }
                 self.close_vault();
-                self.screen = Screen::Import(Box::default());
+                self.screen = Screen::Import(Box::new(ImportState::new(Target::NewVault)));
             }
             other => {
                 let nav = match &mut self.screen {
@@ -407,6 +412,11 @@ impl App {
             },
             (JobResult::ImportParsed(outcome), Screen::Import(state)) if waited => {
                 state.parsed(outcome, &mut self.ctx);
+            }
+            (JobResult::ImportParsed(outcome), Screen::Unlocked(state)) if waited => {
+                if let View::Import(import) = &mut state.view {
+                    import.parsed(outcome, &mut self.ctx);
+                }
             }
             (JobResult::Created(outcome), Screen::Create(state)) if waited => match outcome {
                 Ok(vault) => {

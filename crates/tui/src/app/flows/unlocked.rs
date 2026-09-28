@@ -12,6 +12,7 @@ use crate::app::flows::factors::{Anim, FactorsState};
 use crate::app::flows::generator::{GenEvent, GeneratorState};
 use crate::app::flows::history::HistoryState;
 use crate::app::flows::home::{visible, Detail, Home};
+use crate::app::flows::import::ImportState;
 use crate::app::flows::settings::SettingsModal;
 use crate::app::keymap::Scope;
 use crate::app::screen::Nav;
@@ -84,6 +85,8 @@ pub enum View {
     Health(usize),
     /// History.
     History(Box<HistoryState>),
+    /// Import from another manager.
+    Import(Box<ImportState>),
 }
 
 /// Unlocked state.
@@ -111,6 +114,8 @@ pub struct Unlocked {
     pub settings: Option<Box<SettingsModal>>,
     /// Last health report.
     pub health: Option<Box<HealthReport>>,
+    /// The running import read a plain-text export.
+    pub import_plaintext: bool,
 }
 
 impl Unlocked {
@@ -131,6 +136,7 @@ impl Unlocked {
             generator: None,
             settings: None,
             health: None,
+            import_plaintext: false,
         };
         state.load_detail();
         state
@@ -157,6 +163,7 @@ impl Unlocked {
             View::Sync => Scope::Sync,
             View::Health(_) => Scope::Health,
             View::History(_) => Scope::History,
+            View::Import(import) => import.scope(),
         }
     }
 
@@ -244,6 +251,7 @@ impl Unlocked {
             }
             View::Sync | View::Health(_) => crate::app::flows::panels::on_key(self, event, ctx),
             View::History(_) => crate::app::flows::history::on_key(self, event, ctx),
+            View::Import(_) => crate::app::flows::import_vault::on_key(self, event, ctx),
         }
     }
 
@@ -271,6 +279,8 @@ impl Unlocked {
             crate::app::flows::settings::on_paste(settings, text);
         } else if let View::Editor(editor) = &mut self.view {
             editor.on_paste(text);
+        } else if let View::Import(import) = &mut self.view {
+            import.on_paste(text);
         } else if self.home.searching {
             self.home.query.insert_str(text);
         }
@@ -284,6 +294,9 @@ impl Unlocked {
         }
         if let View::Editor(editor) = &mut self.view {
             hid |= editor.reveal.tick(ctx.now, ctx.reveal_after);
+        }
+        if let View::Import(import) = &mut self.view {
+            hid |= import.reveal.tick(ctx.now, ctx.reveal_after);
         }
         if hid {
             ctx.redraw();
@@ -375,6 +388,9 @@ impl Unlocked {
             }
             Outcome::RecoveryDropped => {
                 ctx.toast(Tone::Warn, "Recovery wrap dropped from this copy.");
+            }
+            Outcome::Imported(merged) => {
+                crate::app::flows::import_vault::done(self, &merged, ctx);
             }
             Outcome::Health(report) => {
                 self.health = Some(report);
