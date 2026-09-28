@@ -34,5 +34,9 @@ sha1.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+# Builds .kdbx databases for the import tests.
+keepass = { workspace = true, features = ["save_kdbx4"] }
+
 [lints]
 workspace = true

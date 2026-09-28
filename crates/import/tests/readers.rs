@@ -30,6 +30,8 @@ fn run(name: &str, source: Source) -> anyhow::Result<Parsed> {
         source,
         mapping: None,
         folders_as_tags: true,
+        password: None,
+        key_file: None,
     })
 }
 
@@ -115,6 +117,8 @@ fn garbage_is_not_a_bitwarden_export_and_the_error_echoes_nothing() {
         source: Source::BitwardenJson,
         mapping: None,
         folders_as_tags: true,
+        password: None,
+        key_file: None,
     })
     .unwrap_err()
     .to_string();
@@ -179,6 +183,8 @@ fn csv_without_known_headers_is_refused() {
         source: Source::Csv,
         mapping: None,
         folders_as_tags: true,
+        password: None,
+        key_file: None,
     })
     .unwrap_err();
     assert!(error.to_string().starts_with("no known columns"));

@@ -38,7 +38,12 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
         body.height.saturating_sub(2).max(12),
     );
     let title = format!("Review · {}", state.source().label());
-    let block = panel(titled(&title, (3, 3), card.width, ctx), theme);
+    let total = if state.source() == import::Source::Kdbx {
+        4
+    } else {
+        3
+    };
+    let block = panel(titled(&title, (total, total), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
     let summary = summary_lines(preview, theme);

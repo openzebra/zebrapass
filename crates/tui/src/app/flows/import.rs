@@ -14,12 +14,15 @@ use record::{Document, TAG_TOTP};
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::create::CreateState;
-use crate::app::flows::editing::edit_text;
+use crate::app::flows::editing::{edit_secret, edit_text};
 use crate::app::flows::gate::initial_screen;
 use crate::app::flows::restore::RestoreState;
+use crate::app::flows::unlock::MAX_PASSWORD;
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::{Nav, Screen};
-use crate::app::worker::Job;
+use crate::app::worker::{ImportJob, Job};
+use crate::secure::reveal::{RevealGuard, RevealKey};
+use crate::secure::secret_input::SecretInput;
 use crate::secure::totp::Totp;
 use crate::ui::input::TextInput;
 use crate::ui::widgets::toast::Tone;
@@ -31,6 +34,9 @@ const SNIFF_BYTES: u64 = 4096;
 
 /// Rows moved by Page Up / Page Down.
 const PAGE: usize = 10;
+
+/// Reveal slot of the database password.
+pub const REVEAL_PASSWORD: RevealKey = RevealKey(1);
 
 /// One entry of the first step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +64,8 @@ pub enum ImportStep {
     Source,
     /// The export file.
     File,
+    /// A `.kdbx` database's password and key file.
+    Unlock,
     /// What will be imported.
     Preview,
 }
@@ -69,6 +77,15 @@ pub enum FileHint {
     Missing,
     /// A file whose format was guessed (`None`: unknown), and its size.
     Found(Option<Source>, u64),
+}
+
+/// Focus on the unlock step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnlockField {
+    /// Master password.
+    Password,
+    /// Key-file path.
+    KeyFile,
 }
 
 /// The parsed export under review.
@@ -129,6 +146,14 @@ pub struct ImportState {
     pub hint: FileHint,
     /// The export under review.
     pub preview: Option<Box<Preview>>,
+    /// `.kdbx` master password.
+    pub password: SecretInput,
+    /// `.kdbx` key-file path, optional.
+    pub key_file: TextInput,
+    /// Focus on the unlock step.
+    pub field: UnlockField,
+    /// Password reveal timer.
+    pub reveal: RevealGuard,
     /// Why the last read failed.
     pub error: Option<Box<str>>,
 }
@@ -136,13 +161,17 @@ pub struct ImportState {
 impl ImportState {
     /// Start on the first step.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             step: ImportStep::Source,
             cursor: 0,
             path: TextInput::new(MAX_PATH_INPUT),
             hint: FileHint::Missing,
             preview: None,
+            password: SecretInput::new(MAX_PASSWORD),
+            key_file: TextInput::new(MAX_PATH_INPUT),
+            field: UnlockField::Password,
+            reveal: RevealGuard::default(),
             error: None,
         }
     }
@@ -162,6 +191,7 @@ impl ImportState {
         match self.step {
             ImportStep::Source => Scope::Import,
             ImportStep::File => Scope::ImportFile,
+            ImportStep::Unlock => Scope::ImportUnlock,
             ImportStep::Preview => Scope::ImportPreview,
         }
     }
@@ -177,16 +207,34 @@ impl ImportState {
                 self.check_path();
                 Nav::Stay
             }
+            (ImportStep::Unlock, Some(action)) => self.on_unlock(action, ctx),
+            (ImportStep::Unlock, None) => {
+                match self.field {
+                    UnlockField::Password => edit_secret(&mut self.password, event),
+                    UnlockField::KeyFile => edit_text(&mut self.key_file, event),
+                };
+                Nav::Stay
+            }
             (ImportStep::Preview, Some(action)) => self.on_preview(action, ctx),
             (ImportStep::Source | ImportStep::Preview, None) => Nav::Stay,
         }
     }
 
-    /// Paste into the path field.
+    /// Paste into the focused field.
     pub fn on_paste(&mut self, text: &str) {
-        if self.step == ImportStep::File {
-            self.path.insert_str(text.trim_end_matches(['\n', '\r']));
-            self.check_path();
+        let line = text.trim_end_matches(['\n', '\r']);
+        match (self.step, self.field) {
+            (ImportStep::File, _) => {
+                self.path.insert_str(line);
+                self.check_path();
+            }
+            (ImportStep::Unlock, UnlockField::Password) => {
+                self.password.insert_str(line);
+            }
+            (ImportStep::Unlock, UnlockField::KeyFile) => {
+                self.key_file.insert_str(line);
+            }
+            (ImportStep::Source | ImportStep::Preview, _) => {}
         }
     }
 
@@ -239,15 +287,78 @@ impl ImportState {
             }
             Action::Confirm => match self.hint {
                 FileHint::Missing => self.error = Some("No readable file at that path.".into()),
+                FileHint::Found(..) if self.source() == Source::Kdbx => {
+                    self.error = None;
+                    self.field = UnlockField::Password;
+                    self.step = ImportStep::Unlock;
+                }
                 FileHint::Found(..) => {
                     self.error = None;
-                    let job = Job::ParseImport(self.resolved_path(), self.source());
-                    ctx.start(job, Task::Import);
+                    self.read(None, None, ctx);
                 }
             },
             _ => {}
         }
         Nav::Stay
+    }
+
+    fn on_unlock(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
+        match action {
+            Action::NextField | Action::PrevField => {
+                self.field = match self.field {
+                    UnlockField::Password => UnlockField::KeyFile,
+                    UnlockField::KeyFile => UnlockField::Password,
+                };
+            }
+            Action::RevealField if self.field == UnlockField::Password => {
+                if self.reveal.toggle(REVEAL_PASSWORD, ctx.now) {
+                    ctx.redraw();
+                }
+            }
+            Action::Back => {
+                self.password.clear();
+                self.hide(ctx);
+                self.error = None;
+                self.step = ImportStep::File;
+            }
+            Action::Confirm => {
+                let key_file = self.key_file.value().trim();
+                if self.password.is_empty() && key_file.is_empty() {
+                    self.error = Some("Enter the database password or its key file.".into());
+                    return Nav::Stay;
+                }
+                let key_file = (!key_file.is_empty()).then(|| expand_home(key_file));
+                let password = (!self.password.is_empty()).then(|| self.password.take());
+                self.hide(ctx);
+                self.error = None;
+                self.read(password, key_file, ctx);
+            }
+            _ => {}
+        }
+        Nav::Stay
+    }
+
+    /// Hide a revealed password now.
+    pub const fn hide(&mut self, ctx: &mut Ctx) {
+        if self.reveal.hide() {
+            ctx.redraw();
+        }
+    }
+
+    /// Queue the read of the export on the worker.
+    fn read(
+        &self,
+        password: Option<zeroize::Zeroizing<Vec<u8>>>,
+        key_file: Option<PathBuf>,
+        ctx: &mut Ctx,
+    ) {
+        let job = ImportJob {
+            path: self.resolved_path(),
+            source: self.source(),
+            password,
+            key_file,
+        };
+        ctx.start(Job::ParseImport(Box::new(job)), Task::Import);
     }
 
     fn on_preview(&mut self, action: Action, ctx: &mut Ctx) -> Nav {

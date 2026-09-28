@@ -8,21 +8,27 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::import::{Choice, FileHint, ImportState, ImportStep, CHOICES};
+use crate::app::flows::import::{
+    Choice, FileHint, ImportState, ImportStep, UnlockField, CHOICES, REVEAL_PASSWORD,
+};
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::create::titled;
 use crate::ui::widgets::chrome::{hint_bar, panel, row_style};
-use crate::ui::widgets::field::{boxed, text_line};
+use crate::ui::widgets::field::{boxed, secret_line, text_line};
 
 /// Steps shown in the title dots.
 const STEPS: usize = 3;
+
+/// Steps shown in the title dots for a `.kdbx`, which adds the unlock step.
+const KDBX_STEPS: usize = 4;
 
 /// Draw the wizard.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     match state.step {
         ImportStep::Source => source(frame, area, state, ctx),
         ImportStep::File => file(frame, area, state, ctx),
+        ImportStep::Unlock => unlock(frame, area, state, ctx),
         ImportStep::Preview => crate::ui::screens::import_preview::draw(frame, area, state, ctx),
     }
 }
@@ -113,7 +119,12 @@ fn file(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     let card = centered(body, body.width.min(90), 14);
     let chosen = state.source();
     let title = format!("Import from {}", chosen.label());
-    let block = panel(titled(&title, (2, STEPS), card.width, ctx), theme);
+    let total = if chosen == Source::Kdbx {
+        KDBX_STEPS
+    } else {
+        STEPS
+    };
+    let block = panel(titled(&title, (2, total), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
     let [label, input, status, error, _, notes] = Layout::vertical([
@@ -144,7 +155,41 @@ fn file(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
         true,
         theme,
     );
-    let hint = match state.hint {
+    let hint = file_hint(state, chosen, theme);
+    frame.render_widget(Paragraph::new(hint), status);
+    if let Some(message) = state.error.as_deref() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!("    {} {message}", glyphs.fail),
+                theme.danger(),
+            )),
+            error,
+        );
+    }
+    let after = if chosen.plaintext() {
+        "  The file is only read. Delete it afterwards: it holds your passwords in plain text."
+    } else {
+        "  The database is only read: nothing in it changes."
+    };
+    let lines = vec![
+        Line::from(Span::styled(
+            "  Nothing is written yet: you review every item first, then create the vault.",
+            theme.muted(),
+        )),
+        Line::from(Span::styled(after, theme.muted())),
+    ];
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), notes);
+    hint_bar(frame, hints, Scope::ImportFile, "", ctx);
+}
+
+/// What the typed path points at.
+fn file_hint(
+    state: &ImportState,
+    chosen: Source,
+    theme: &crate::ui::theme::Theme,
+) -> Span<'static> {
+    let glyphs = theme.glyphs;
+    match state.hint {
         FileHint::Missing if state.path.is_empty() => Span::styled(
             "    type or paste the path · ~ means your home folder",
             theme.muted(),
@@ -179,12 +224,72 @@ fn file(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
             ),
             theme.warn(),
         ),
+    }
+}
+
+fn unlock(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    let [body, hints] = body_and_hints(area);
+    let card = centered(body, body.width.min(90), 16);
+    let block = panel(
+        titled("Open KeePass database", (3, KDBX_STEPS), card.width, ctx),
+        theme,
+    );
+    let inner = block.inner(card);
+    frame.render_widget(block, card);
+    let [pw_label, pw_box, _, kf_label, kf_box, error, notes] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(inner);
+    let indent = |rect: Rect| Rect {
+        x: rect.x + 2,
+        width: rect.width.saturating_sub(4),
+        ..rect
     };
-    frame.render_widget(Paragraph::new(hint), status);
+    let on_password = state.field == UnlockField::Password;
+    let label = |text: &str, focused: bool| {
+        Paragraph::new(Span::styled(
+            format!("  {text}"),
+            if focused {
+                theme.accent()
+            } else {
+                theme.strong()
+            },
+        ))
+    };
+    frame.render_widget(label("Master password", on_password), pw_label);
+    let revealed = state.reveal.is_shown(REVEAL_PASSWORD);
+    boxed(
+        frame,
+        indent(pw_box),
+        secret_line(&state.password, on_password, revealed, theme),
+        on_password,
+        theme,
+    );
+    frame.render_widget(label("Key file (optional)", !on_password), kf_label);
+    let kf_rect = indent(kf_box);
+    boxed(
+        frame,
+        kf_rect,
+        text_line(
+            &state.key_file,
+            kf_rect.width.saturating_sub(2),
+            !on_password,
+            theme,
+        ),
+        !on_password,
+        theme,
+    );
     if let Some(message) = state.error.as_deref() {
         frame.render_widget(
             Paragraph::new(Span::styled(
-                format!("    {} {message}", glyphs.fail),
+                format!("    {} {message}", theme.glyphs.fail),
                 theme.danger(),
             )),
             error,
@@ -192,16 +297,16 @@ fn file(frame: &mut Frame<'_>, area: Rect, state: &ImportState, ctx: &Ctx) {
     }
     let lines = vec![
         Line::from(Span::styled(
-            "  Nothing is written yet: you review every item first, then create the vault.",
+            "  Opening takes as long as in KeePass: the database sets its own unlock cost.",
             theme.muted(),
         )),
         Line::from(Span::styled(
-            "  The file is only read. Delete it afterwards: it holds your passwords in plain text.",
+            "  YubiKey challenge-response databases are not supported yet.",
             theme.muted(),
         )),
     ];
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), notes);
-    hint_bar(frame, hints, Scope::ImportFile, "", ctx);
+    hint_bar(frame, hints, Scope::ImportUnlock, "", ctx);
 }
 
 #[derive(Clone, Copy)]
@@ -236,9 +341,13 @@ const fn guidance(choice: Choice) -> &'static [(&'static str, Tone)] {
         Choice::From(Source::Kdbx) => &[
             ("From KeePass / KeePassXC", Tone::Head),
             ("", Tone::Note),
-            ("Opening .kdbx directly is coming soon.", Tone::Warn),
-            ("For now: Database → Export → CSV,", Tone::Step),
-            ("then choose CSV here.", Tone::Step),
+            ("Choose your .kdbx file, then enter its", Tone::Step),
+            ("master password and/or key file.", Tone::Step),
+            ("No export needed: the database is", Tone::Step),
+            ("only read, never changed.", Tone::Step),
+            ("", Tone::Note),
+            ("Groups become tags. The recycle bin,", Tone::Note),
+            ("history and attachments stay behind.", Tone::Note),
         ],
         Choice::From(Source::KeepassXml) => &[
             ("From a KeePass XML export", Tone::Head),

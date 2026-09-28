@@ -20,7 +20,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.85.1"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
@@ -54,6 +54,10 @@ crossterm = "=0.28.1"
 serde = { version = "=1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = { version = "=1.0.151", default-features = false, features = ["std"] }
 csv = "=1.4.0"
+# Reads KeePass .kdbx (import only). 0.13.0 is the last release on MSRV 1.85.1.
+# It brings its own AES, ChaCha20, Twofish, Salsa20, Argon2d and AES-KDF, used
+# only to open a foreign database; never for ZebraPass keys.
+keepass = { version = "=0.13.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

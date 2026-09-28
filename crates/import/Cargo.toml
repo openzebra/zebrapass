@@ -7,13 +7,22 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["kdbx"]
+# Open KeePass .kdbx databases directly.
+kdbx = ["dep:keepass"]
+
 [dependencies]
 anyhow.workspace = true
 csv.workspace = true
+keepass = { workspace = true, optional = true }
 record = { path = "../record" }
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+keepass = { workspace = true, features = ["save_kdbx4"] }
 
 [lints]
 workspace = true

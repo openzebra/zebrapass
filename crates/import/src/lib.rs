@@ -7,11 +7,20 @@
 
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic, clippy::nursery, clippy::cargo)]
+#![allow(
+    clippy::multiple_crate_versions,
+    reason = "keepass transitively pulls a second syn major"
+)]
 
 mod bitwarden;
 mod csv_map;
 mod csv_read;
 mod item;
+#[cfg(feature = "kdbx")]
+mod kdbx;
+mod kdbx_header;
+#[cfg(feature = "kdbx")]
+mod keepass_keys;
 mod limits;
 mod report;
 mod source;
@@ -21,6 +30,7 @@ use zeroize::Zeroizing;
 
 pub use csv_map::{Mapping, Preset, Target};
 pub use item::{Draft, Item, ItemKind, Slot, CUSTOM_KIND};
+pub use kdbx_header::{check as check_kdf_cost, kdf_cost, KdfCost};
 pub use limits::{MAX_CSV_COLUMNS, MAX_CUSTOM, MAX_FIELD, MAX_IMPORT_FILE, MAX_ITEMS};
 pub use report::{Report, Skip, SkipReason};
 pub use source::{read_file, read_head, sniff, Source};
@@ -35,6 +45,10 @@ pub struct Request {
     pub mapping: Option<Mapping>,
     /// Folder, group, and collection names become tags.
     pub folders_as_tags: bool,
+    /// `.kdbx` only: the master password.
+    pub password: Option<Zeroizing<Vec<u8>>>,
+    /// `.kdbx` only: the key file's bytes.
+    pub key_file: Option<Zeroizing<Vec<u8>>>,
 }
 
 impl std::fmt::Debug for Request {
@@ -78,7 +92,25 @@ pub fn parse(request: &Request) -> anyhow::Result<Parsed> {
             )?;
             (items, Some(mapping))
         }
-        Source::Kdbx | Source::KeepassXml | Source::EnpassJson => {
+        #[cfg(feature = "kdbx")]
+        Source::Kdbx => {
+            let credentials = kdbx::Credentials {
+                password: request.password.as_deref().map(Vec::as_slice),
+                key_file: request.key_file.as_deref().map(Vec::as_slice),
+            };
+            (
+                kdbx::read(
+                    &request.bytes,
+                    &credentials,
+                    request.folders_as_tags,
+                    &mut report,
+                )?,
+                None,
+            )
+        }
+        #[cfg(not(feature = "kdbx"))]
+        Source::Kdbx => anyhow::bail!("not supported yet"),
+        Source::KeepassXml | Source::EnpassJson => {
             anyhow::bail!("not supported yet")
         }
     };

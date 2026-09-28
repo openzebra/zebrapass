@@ -342,9 +342,13 @@ impl App {
                 }
                 Nav::Stay
             }
-            Screen::Welcome(_) | Screen::Import(_) | Screen::Alert(_) | Screen::Locked(_) => {
+            Screen::Import(state) => {
+                if state.reveal.tick(now, self.ctx.reveal_after) {
+                    self.ctx.redraw();
+                }
                 Nav::Stay
             }
+            Screen::Welcome(_) | Screen::Alert(_) | Screen::Locked(_) => Nav::Stay,
         };
         self.apply(nav);
     }

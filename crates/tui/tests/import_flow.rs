@@ -13,6 +13,7 @@
 mod common;
 
 use crossterm::event::KeyCode;
+use keepass::{Database, DatabaseKey};
 use tui::app::flows::create::Step;
 use tui::app::flows::import::ImportStep;
 use tui::app::screen::Screen;
@@ -148,4 +149,65 @@ fn locking_during_review_drops_the_parsed_export() {
     app.on_key(&common::ctrl('z'));
     assert_eq!(app.screen.name(), "locked");
     assert!(!render(&app, 120, 40).contains("GitHub"));
+}
+
+const KDBX_PASSWORD: &str = "kdbx-master-pass";
+
+/// A small `.kdbx` written under `base`; returns its path.
+fn kdbx_file(base: &std::path::Path) -> String {
+    let mut db = Database::new();
+    {
+        let mut root = db.root_mut();
+        let mut work = root.add_group();
+        work.name = "Work".into();
+        let mut entry = work.add_entry();
+        entry.set_unprotected("Title", "Router");
+        entry.set_unprotected("UserName", "admin");
+        entry.set_protected("Password", "kdbx-pw-router");
+    }
+    let mut bytes = Vec::new();
+    db.save(&mut bytes, DatabaseKey::new().with_password(KDBX_PASSWORD))
+        .unwrap();
+    let path = base.join("vault.kdbx");
+    std::fs::write(&path, bytes).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn keepass_database_opens_with_its_password() {
+    let base = temp_dir("import-kdbx");
+    let file = kdbx_file(&base);
+    let mut app = app(&base);
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    assert!(render(&app, 120, 40).contains("master password and/or key file"));
+    press(&mut app, KeyCode::Enter);
+    type_text(&mut app, &file);
+    assert!(render(&app, 100, 30).contains("KeePass / KeePassXC export"));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(step(&app), ImportStep::Unlock);
+
+    type_text(&mut app, "wrong-password");
+    assert!(!render(&app, 100, 30).contains("wrong-password"), "masked");
+    press(&mut app, KeyCode::Enter);
+    wait(&mut app);
+    assert_eq!(step(&app), ImportStep::Unlock);
+    assert!(render(&app, 120, 40).contains("wrong password or key file"));
+
+    type_text(&mut app, KDBX_PASSWORD);
+    press(&mut app, KeyCode::Enter);
+    wait(&mut app);
+    assert_eq!(step(&app), ImportStep::Preview);
+    let screen = render(&app, 120, 40);
+    assert!(screen.contains("Router"));
+    assert!(screen.contains("Work"));
+    assert!(!screen.contains("kdbx-pw-router"));
+    press(&mut app, KeyCode::Enter);
+    let Screen::Create(state) = &app.screen else {
+        panic!("not create")
+    };
+    assert_eq!(state.records.len(), 1);
+    assert_eq!(state.imported, Some((1, "KeePass / KeePassXC")));
 }

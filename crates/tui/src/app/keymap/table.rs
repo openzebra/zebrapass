@@ -54,6 +54,14 @@ pub const KEYMAP: &[Binding] = bindings! {
     ImportFile: key(KeyCode::Enter) => Confirm, "read file";
     ImportFile: key(KeyCode::Esc) => Back, "back";
 
+    ImportUnlock: key(KeyCode::Tab) => NextField, "field";
+    ImportUnlock: key(KeyCode::BackTab) => PrevField;
+    ImportUnlock: key(KeyCode::Down) => NextField;
+    ImportUnlock: key(KeyCode::Up) => PrevField;
+    ImportUnlock: ctrl('r') => RevealField, "reveal";
+    ImportUnlock: key(KeyCode::Enter) => Confirm, "open";
+    ImportUnlock: key(KeyCode::Esc) => Back, "back";
+
     ImportPreview: key(KeyCode::Up) => Up, "move";
     ImportPreview: key(KeyCode::Down) => Down;
     ImportPreview: key(KeyCode::PageUp) => PageUp;

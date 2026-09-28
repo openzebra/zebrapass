@@ -16,3 +16,19 @@ pub const MAX_IMPORT_FILE: u64 = 64 * 1024 * 1024;
 
 /// Most CSV columns.
 pub const MAX_CSV_COLUMNS: usize = 64;
+
+/// Largest Argon2 memory a `KeePass` database may ask for, in bytes
+/// (the vault's own Strong profile).
+pub const MAX_KDBX_ARGON2_MEMORY: u64 = 1 << 30;
+
+/// Most Argon2 passes a `KeePass` database may ask for.
+pub const MAX_KDBX_ARGON2_ITERATIONS: u64 = 256;
+
+/// Most Argon2 lanes a `KeePass` database may ask for.
+pub const MAX_KDBX_ARGON2_LANES: u32 = 16;
+
+/// Largest Argon2 memory × passes, in MiB: 1 GiB × 16 or 64 MiB × 256.
+pub const MAX_KDBX_ARGON2_WORK_MIB: u64 = 16 * 1024;
+
+/// Most AES-KDF rounds a `KeePass` database may ask for.
+pub const MAX_KDBX_AES_ROUNDS: u64 = 300_000_000;
