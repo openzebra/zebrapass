@@ -13,6 +13,7 @@ use crate::secure::reveal::RevealKey;
 use crate::secure::strength::estimate;
 use crate::secure::totp::Totp;
 use crate::ui::widgets::chrome::ago;
+use crate::ui::widgets::list::fit;
 use crate::ui::widgets::meter::strength_spans;
 use crate::ui::widgets::stripes::{mask, MASK_CELLS};
 use crate::vault::create::unix_ms;
@@ -71,6 +72,26 @@ fn totp_span(field: &[u8], shown: bool, ctx: &Ctx) -> Span<'static> {
     }
 }
 
+/// Cells of the copy hint column.
+const HINT_CELLS: usize = 10;
+
+/// Narrowest and widest label column.
+const LABEL_CELLS: std::ops::RangeInclusive<usize> = 8..=18;
+
+/// The label column: as wide as the longest label, within [`LABEL_CELLS`]
+/// and a third of the pane.
+fn label_width(detail: &Detail, width: usize) -> usize {
+    let longest = detail
+        .rows
+        .iter()
+        .map(|row| row.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    longest
+        .clamp(*LABEL_CELLS.start(), *LABEL_CELLS.end())
+        .min((width / 3).max(*LABEL_CELLS.start()))
+}
+
 /// Draw the rows of `detail`. `copy_hints` adds the copy keys on the right.
 pub fn draw_rows(
     frame: &mut Frame<'_>,
@@ -83,7 +104,8 @@ pub fn draw_rows(
     let theme = &ctx.theme;
     let glyphs = theme.glyphs;
     let width = usize::from(area.width);
-    let value_width = width.saturating_sub(24).max(8);
+    let label_width = label_width(detail, width);
+    let value_width = width.saturating_sub(label_width + HINT_CELLS + 4).max(8);
     let mut lines = vec![Line::from("")];
     for (index, row) in detail.rows.iter().enumerate() {
         let chosen = focused && index == detail.cursor;
@@ -94,13 +116,18 @@ pub fn draw_rows(
             (RowKind::Totp, _) => totp_span(data, shown, ctx),
             (RowKind::Text, _) | (RowKind::Secret, true) => {
                 let text = String::from_utf8_lossy(data);
-                let clipped: String = text.chars().take(value_width).collect();
+                let clipped: String = text
+                    .chars()
+                    .map(|ch| if ch.is_control() { ' ' } else { ch })
+                    .take(value_width)
+                    .collect();
                 Span::styled(clipped, if shown { theme.warn() } else { theme.text() })
             }
             (RowKind::Secret, false) => Span::styled(mask(glyphs, MASK_CELLS), theme.zebra()),
         };
         let used = value.content.chars().count();
         let hint = match (copy_hints, row.copy_key, row.kind) {
+            (true, _, _) if chosen => String::from("Enter copy"),
             (true, Some(key), RowKind::Text) if key == 'o' => format!("{key} show"),
             (true, Some(key), _) => format!("{key} copy"),
             (true, None, RowKind::Secret | RowKind::Totp) => String::from("Space show"),
@@ -108,7 +135,7 @@ pub fn draw_rows(
         };
         lines.push(Line::from(vec![
             Span::styled(
-                format!("{pointer} {:<10} ", row.label),
+                format!("{pointer} {} ", fit(&row.label, label_width)),
                 if chosen {
                     theme.accent()
                 } else {
@@ -120,7 +147,7 @@ pub fn draw_rows(
             Span::styled(hint, theme.muted()),
         ]));
         if row.tag == record::TAG_PASSWORD && !data.is_empty() {
-            let mut spans = vec![Span::raw("             ")];
+            let mut spans = vec![Span::raw(" ".repeat(label_width + 3))];
             spans.extend(strength_spans(estimate(data), 10, theme));
             lines.push(Line::from(spans));
         }

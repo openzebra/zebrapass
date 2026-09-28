@@ -12,11 +12,15 @@ use zeroize::Zeroizing;
 /// First allocation for a non-empty buffer.
 const INITIAL_CAPACITY: usize = 32;
 
+/// Positions of the typing wave: one per mask cell.
+pub const PHASES: u8 = 12;
+
 /// A UTF-8 secret being typed. No `Clone`, no `Display`, redacted `Debug`.
 pub struct SecretInput {
     buf: Zeroizing<Vec<u8>>,
     cursor: usize,
     max: usize,
+    phase: u8,
 }
 
 impl fmt::Debug for SecretInput {
@@ -33,6 +37,25 @@ impl SecretInput {
             buf: Zeroizing::new(Vec::new()),
             cursor: 0,
             max,
+            phase: 0,
+        }
+    }
+
+    /// Where the typing wave of the mask sits. It jumps to a random other
+    /// place on every edit, so it shows each keystroke without counting
+    /// them: its position says nothing about the length.
+    #[must_use]
+    pub const fn phase(&self) -> u8 {
+        self.phase
+    }
+
+    /// Move the typing wave. Cosmetic: when the OS RNG fails the wave just
+    /// stays where it is.
+    fn stir(&mut self) {
+        let mut byte = [0u8; 1];
+        if getrandom::fill(&mut byte).is_ok() {
+            let hop = 1 + byte[0] % (PHASES - 1);
+            self.phase = (self.phase + hop) % PHASES;
         }
     }
 
@@ -77,6 +100,9 @@ impl SecretInput {
         let encoded = ch.encode_utf8(&mut utf8).as_bytes();
         let inserted = self.insert_bytes(encoded);
         zeroize::Zeroize::zeroize(&mut utf8);
+        if inserted {
+            self.stir();
+        }
         inserted
     }
 
@@ -128,6 +154,7 @@ impl SecretInput {
         if start < self.cursor {
             self.buf.drain(start..self.cursor);
             self.cursor = start;
+            self.stir();
         }
     }
 
@@ -136,6 +163,7 @@ impl SecretInput {
         let end = self.next_boundary();
         if end > self.cursor {
             self.buf.drain(self.cursor..end);
+            self.stir();
         }
     }
 
@@ -216,7 +244,7 @@ impl SecretInput {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use super::SecretInput;
+    use super::{SecretInput, PHASES};
 
     #[test]
     fn edits_at_the_cursor_on_char_boundaries() {
@@ -261,5 +289,37 @@ mod tests {
         let taken = input.take();
         assert_eq!(taken.as_slice(), b"abc");
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn every_edit_moves_the_typing_wave() {
+        let mut input = SecretInput::new(64);
+        for ch in "correct horse".chars() {
+            let before = input.phase();
+            assert!(input.insert_char(ch));
+            assert_ne!(input.phase(), before, "typing moves the wave");
+            assert!(input.phase() < PHASES);
+        }
+        let before = input.phase();
+        input.backspace();
+        assert_ne!(input.phase(), before, "backspace moves the wave");
+        let before = input.phase();
+        input.left();
+        assert_eq!(input.phase(), before, "cursor moves are not edits");
+    }
+
+    #[test]
+    fn the_wave_does_not_count_characters() {
+        let phases: std::collections::BTreeSet<u8> = (0..64)
+            .map(|_| {
+                let mut input = SecretInput::new(16);
+                input.insert_str("abc");
+                input.phase()
+            })
+            .collect();
+        assert!(
+            phases.len() > 1,
+            "the same length lands on different phases"
+        );
     }
 }

@@ -119,6 +119,8 @@ const MONO: Palette = Palette {
 pub struct Glyphs {
     /// One cell of a masked secret.
     pub mask: &'static str,
+    /// The moving cells of a masked input while it is typed into.
+    pub mask_alt: &'static str,
     /// Vault key.
     pub vk: &'static str,
     /// Key-encryption key / wrap.
@@ -183,6 +185,7 @@ pub struct Glyphs {
 
 const UNICODE: Glyphs = Glyphs {
     mask: "▚",
+    mask_alt: "▞",
     vk: "◆",
     kek: "◇",
     device: "⌁",
@@ -217,6 +220,7 @@ const UNICODE: Glyphs = Glyphs {
 
 const ASCII: Glyphs = Glyphs {
     mask: "#",
+    mask_alt: "=",
     vk: "<>",
     kek: "<>",
     device: "[D]",

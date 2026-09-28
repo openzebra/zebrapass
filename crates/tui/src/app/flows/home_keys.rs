@@ -2,7 +2,7 @@
 //! to the other views.
 
 use crossterm::event::KeyEvent;
-use record::{TAG_EMAIL, TAG_PASSWORD, TAG_TOTP, TAG_URL, TAG_USERNAME};
+use record::{TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TOTP, TAG_URL, TAG_USERNAME};
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
@@ -12,7 +12,7 @@ use crate::app::flows::editor::EditorState;
 use crate::app::flows::factors::FactorsState;
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::history::HistoryState;
-use crate::app::flows::home::{filter_entries, Pane};
+use crate::app::flows::home::{filter_entries, Pane, RowKind};
 use crate::app::flows::settings::SettingsModal;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
@@ -162,7 +162,7 @@ fn cycle_pane(state: &mut Unlocked, forward: bool, ctx: &Ctx) {
     state.home.pane = order.get(next % order.len()).copied().unwrap_or(Pane::List);
 }
 
-fn confirm(state: &mut Unlocked, ctx: &Ctx) {
+fn confirm(state: &mut Unlocked, ctx: &mut Ctx) {
     match state.home.pane {
         Pane::Filters => {
             let entries = filter_entries(&state.cache, state.health.as_deref());
@@ -176,7 +176,51 @@ fn confirm(state: &mut Unlocked, ctx: &Ctx) {
             state.home.pane = Pane::Detail;
             state.home.stacked = width(ctx) == Breakpoint::Narrow;
         }
-        Pane::Detail => {}
+        Pane::Detail => copy_focused(state, ctx),
+    }
+}
+
+/// Copy the focused detail row: any field, standard or custom. A TOTP row
+/// copies the current code, never the secret.
+fn copy_focused(state: &Unlocked, ctx: &mut Ctx) {
+    let Some(detail) = state.home.detail.as_ref() else {
+        return;
+    };
+    let Some(row) = detail.rows.get(detail.cursor) else {
+        return;
+    };
+    if row.kind == RowKind::Totp {
+        copy_totp(state, ctx);
+        return;
+    }
+    let data = detail
+        .doc
+        .data(row.tag)
+        .ok()
+        .flatten()
+        .filter(|data| !data.is_empty());
+    let Some(bytes) = data else {
+        ctx.toast(
+            Tone::Info,
+            format!("\u{201c}{}\u{201d} is empty.", row.label),
+        );
+        return;
+    };
+    let label = match row.tag {
+        TAG_PASSWORD => "password",
+        TAG_USERNAME => "username",
+        TAG_EMAIL => "email",
+        TAG_URL => "URL",
+        TAG_NOTES => "notes",
+        _ if row.kind == RowKind::Secret => "secret field",
+        _ => "field",
+    };
+    ctx.copy(bytes, label);
+    if record::is_custom(row.tag) {
+        ctx.toast(
+            Tone::Success,
+            format!("Copied \u{201c}{}\u{201d}.", row.label),
+        );
     }
 }
 

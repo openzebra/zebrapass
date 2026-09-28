@@ -11,10 +11,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::secure::secret_input::SecretInput;
+use crate::secure::secret_input::{SecretInput, PHASES};
 use crate::ui::input::TextInput;
-use crate::ui::theme::Theme;
-use crate::ui::widgets::stripes::{mask, MASK_CELLS};
+use crate::ui::theme::{Glyphs, Theme};
+use crate::ui::widgets::stripes::MASK_CELLS;
 
 /// A text input as one line, scrolled so the cursor stays visible.
 #[must_use]
@@ -57,12 +57,33 @@ pub fn secret_line<'a>(
         let shown: Cow<'a, str> = String::from_utf8_lossy(input.expose());
         spans.push(Span::styled(shown, theme.warn()));
     } else if !input.is_empty() {
-        spans.push(Span::styled(mask(theme.glyphs, MASK_CELLS), theme.zebra()));
+        spans.push(Span::styled(
+            typing_mask(theme.glyphs, input.phase()),
+            theme.zebra(),
+        ));
     }
     if focused {
         spans.push(block_cursor("", theme));
     }
     Line::from(spans)
+}
+
+const _: () = assert!(PHASES as usize == MASK_CELLS);
+
+/// The fixed-width mask of an input with a two-cell wave at `phase`: the
+/// wave moves on every edit, the width never changes.
+#[must_use]
+pub fn typing_mask(glyphs: &Glyphs, phase: u8) -> String {
+    let at = usize::from(phase) % MASK_CELLS;
+    (0..MASK_CELLS)
+        .map(|cell| {
+            if cell == at || cell == (at + 1) % MASK_CELLS {
+                glyphs.mask_alt
+            } else {
+                glyphs.mask
+            }
+        })
+        .collect()
 }
 
 /// The vim-style block cursor over `under`, or over an empty cell at the end
@@ -85,4 +106,26 @@ pub fn boxed(frame: &mut Frame<'_>, area: Rect, line: Line<'_>, focused: bool, t
         .border_type(BorderType::Rounded)
         .border_style(border);
     frame.render_widget(Paragraph::new(line).block(block), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::typing_mask;
+    use crate::ui::theme::{Theme, ThemeName};
+    use crate::ui::widgets::stripes::MASK_CELLS;
+
+    #[test]
+    fn typing_mask_keeps_its_width_at_every_phase() {
+        for ascii in [false, true] {
+            let theme = Theme::new(ThemeName::Mono, ascii, false);
+            let masks: Vec<String> = (0..12)
+                .map(|phase| typing_mask(theme.glyphs, phase))
+                .collect();
+            for mask in &masks {
+                assert_eq!(mask.chars().count(), MASK_CELLS);
+                assert_eq!(mask.matches(theme.glyphs.mask_alt).count(), 2);
+            }
+            assert_ne!(masks[0], masks[1]);
+        }
+    }
 }
