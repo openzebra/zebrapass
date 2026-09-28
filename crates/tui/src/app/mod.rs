@@ -23,7 +23,6 @@ use crate::app::ctx::{Caps, Ctx};
 use crate::app::flows::create::CreateState;
 use crate::app::flows::gate::{initial_screen, AlertState, LockReason, LockedState};
 use crate::app::flows::palette::{Overlay, PaletteEvent, PaletteState};
-use crate::app::flows::panels::{adjust, Setting};
 use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::{resolve, Scope};
@@ -219,9 +218,9 @@ impl App {
             Action::Palette => self.overlay = Some(Overlay::Palette(PaletteState::default())),
             Action::Quit => self.quit(),
             Action::Lock => self.lock(LockReason::Manual),
-            Action::CycleTheme => adjust(Setting::Theme, 1, &mut self.ctx),
-            Action::ToggleAnimation => adjust(Setting::Animation, 1, &mut self.ctx),
-            Action::ToggleAscii => adjust(Setting::Ascii, 1, &mut self.ctx),
+            Action::CycleTheme => self.ctx.cycle_theme(),
+            Action::ToggleAnimation => self.ctx.toggle_flag(Flags::ANIM),
+            Action::ToggleAscii => self.ctx.toggle_flag(Flags::ASCII),
             Action::CreateVault => {
                 self.close_vault();
                 self.screen = Screen::Create(Box::new(CreateState::new(&mut self.ctx)));

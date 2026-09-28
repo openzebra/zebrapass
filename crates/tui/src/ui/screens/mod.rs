@@ -56,10 +56,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 View::Sync => sync::draw(frame, area, state, ctx),
                 View::Health(cursor) => health::draw(frame, area, state, *cursor, ctx),
                 View::History(history) => history::draw(frame, area, history, ctx),
-                View::Settings(settings) => settings::draw(frame, area, state, settings, ctx),
             }
             if let Some(generator) = state.generator.as_deref() {
                 generator::draw(frame, area, generator, ctx);
+            }
+            if let Some(modal) = state.settings.as_deref() {
+                settings::draw(frame, area, state, modal, ctx);
             }
             if let Some(dialog) = state.dialog.as_deref() {
                 dialog::draw(frame, area, dialog, ctx);

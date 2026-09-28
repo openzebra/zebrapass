@@ -95,6 +95,18 @@ impl Form {
                 Task::Factor,
             )),
             FormKind::AddDevice => Ok((Op::AddDevice(self.new_pin()?, PIN_PROFILE), Task::Factor)),
+            FormKind::ChangePin => {
+                let new = self.new_pin()?;
+                let current = self.current_password()?.ok_or("Enter the current PIN.")?;
+                Ok((
+                    Op::ChangePin {
+                        current,
+                        new,
+                        profile: PIN_PROFILE,
+                    },
+                    Task::Factor,
+                ))
+            }
             FormKind::DropRecovery => {
                 if self.text.as_ref().map(TextInput::value) == Some("DROP") {
                     Ok((Op::DropRecovery, Task::Factor))

@@ -12,7 +12,7 @@ use crate::app::flows::factors::{Anim, FactorsState};
 use crate::app::flows::generator::{GenEvent, GeneratorState};
 use crate::app::flows::history::HistoryState;
 use crate::app::flows::home::{visible, Detail, Home};
-use crate::app::flows::panels::SettingsState;
+use crate::app::flows::settings::SettingsModal;
 use crate::app::keymap::Scope;
 use crate::app::screen::Nav;
 use crate::app::worker::Job;
@@ -84,8 +84,6 @@ pub enum View {
     Health(usize),
     /// History.
     History(Box<HistoryState>),
-    /// Settings.
-    Settings(SettingsState),
 }
 
 /// Unlocked state.
@@ -109,6 +107,8 @@ pub struct Unlocked {
     pub dialog: Option<Box<Dialog>>,
     /// Generator overlay.
     pub generator: Option<Box<GeneratorState>>,
+    /// Settings modal over the view.
+    pub settings: Option<Box<SettingsModal>>,
     /// Last health report.
     pub health: Option<Box<HealthReport>>,
 }
@@ -129,6 +129,7 @@ impl Unlocked {
             home: Home::default(),
             dialog: None,
             generator: None,
+            settings: None,
             health: None,
         };
         state.load_detail();
@@ -137,12 +138,15 @@ impl Unlocked {
 
     /// Keymap scope of the focus.
     #[must_use]
-    pub const fn scope(&self) -> Scope {
+    pub fn scope(&self) -> Scope {
         if self.dialog.is_some() {
             return Scope::Dialog;
         }
         if self.generator.is_some() {
             return Scope::Generator;
+        }
+        if let Some(settings) = self.settings.as_deref() {
+            return settings.scope();
         }
         match &self.view {
             View::Home if self.home.searching => Scope::Search,
@@ -153,7 +157,6 @@ impl Unlocked {
             View::Sync => Scope::Sync,
             View::Health(_) => Scope::Health,
             View::History(_) => Scope::History,
-            View::Settings(_) => Scope::Settings,
         }
     }
 
@@ -230,15 +233,16 @@ impl Unlocked {
             }
             return Nav::Stay;
         }
+        if self.settings.is_some() {
+            return crate::app::flows::settings::on_key(self, event, ctx);
+        }
         match &mut self.view {
             View::Home => crate::app::flows::home_keys::on_key(self, event, ctx),
             View::Editor(_) => crate::app::flows::editor_keys::on_key(self, event, ctx),
             View::Factors(_) | View::Devices(_) => {
                 crate::app::flows::factors::on_key(self, event, ctx)
             }
-            View::Sync | View::Health(_) | View::Settings(_) => {
-                crate::app::flows::panels::on_key(self, event, ctx)
-            }
+            View::Sync | View::Health(_) => crate::app::flows::panels::on_key(self, event, ctx),
             View::History(_) => crate::app::flows::history::on_key(self, event, ctx),
         }
     }
@@ -263,6 +267,8 @@ impl Unlocked {
     pub fn on_paste(&mut self, text: &str) {
         if let Some(dialog) = self.dialog.as_mut() {
             dialog.on_paste(text);
+        } else if let Some(settings) = self.settings.as_deref_mut() {
+            crate::app::flows::settings::on_paste(settings, text);
         } else if let View::Editor(editor) = &mut self.view {
             editor.on_paste(text);
         } else if self.home.searching {
@@ -329,6 +335,9 @@ impl Unlocked {
             Outcome::PrefsSaved => {
                 if let Some(prefs) = self.info.prefs.as_ref() {
                     ctx.apply_prefs(prefs);
+                    if let Some(settings) = self.settings.as_deref_mut() {
+                        settings.saved = prefs.clone();
+                    }
                 }
                 ctx.toast(
                     Tone::Success,
@@ -344,6 +353,12 @@ impl Unlocked {
             }
             Outcome::PasswordChanged => {
                 ctx.toast(Tone::Success, "Password changed.");
+            }
+            Outcome::PinChanged => {
+                ctx.toast(
+                    Tone::Success,
+                    "Device PIN changed. The vault did not change.",
+                );
             }
             Outcome::Rotated(revoked) => {
                 self.refresh();

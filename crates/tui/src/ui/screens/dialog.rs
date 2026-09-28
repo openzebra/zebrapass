@@ -84,6 +84,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
                     | ConfirmKind::RemoveWrap(_)
                     | ConfirmKind::RemovePassword
                     | ConfirmKind::ClearHistory
+                    | ConfirmKind::DiscardSettings
             );
             let rect = fitted(area, &confirm.title, &confirm.body, 3);
             let body: Vec<String> = confirm
@@ -209,17 +210,16 @@ fn draw_form(frame: &mut Frame<'_>, area: Rect, form: &Form, ctx: &Ctx) {
         ));
     }
     if let Some(input) = form.current.as_ref() {
-        lines.push(secret_row(
-            "current password",
-            input,
-            FormFocus::Current,
-            form,
-            ctx,
-        ));
+        let label = if form.kind == FormKind::ChangePin {
+            "current PIN"
+        } else {
+            "current password"
+        };
+        lines.push(secret_row(label, input, FormFocus::Current, form, ctx));
     }
     if let Some(input) = form.new.as_ref() {
-        let label = if form.kind == FormKind::AddDevice {
-            "device PIN"
+        let label = if matches!(form.kind, FormKind::AddDevice | FormKind::ChangePin) {
+            "new PIN"
         } else {
             "new password"
         };
@@ -278,6 +278,7 @@ fn confirm_line(form: &Form, ctx: &Ctx) -> Line<'static> {
                 | FormKind::ChangePassword
                 | FormKind::AddPassword
                 | FormKind::AddDevice
+                | FormKind::ChangePin
                 | FormKind::Rename => "rotate",
             };
             let how = if ctx.caps.key_release {

@@ -29,6 +29,8 @@ pub enum FormKind {
     AddPassword,
     /// Enroll this device under a new PIN.
     AddDevice,
+    /// Re-seal this device's key file under a new PIN.
+    ChangePin,
     /// Drop the recovery wrap (type `DROP`).
     DropRecovery,
     /// Rename the vault on this device.
@@ -228,6 +230,19 @@ impl Form {
         .focus_first()
     }
 
+    /// Change this device's PIN.
+    #[must_use]
+    pub fn change_pin() -> Self {
+        let mut form = Self::blank(
+            FormKind::ChangePin,
+            "Change the device PIN",
+            &["Only this device's key file is re-sealed; the vault does not change."],
+        )
+        .with_new_pin();
+        form.current = Some(secret(*DEVICE_PIN_LEN.end()));
+        form.focus_first()
+    }
+
     /// Drop the recovery wrap.
     #[must_use]
     pub fn drop_recovery() -> Self {
@@ -363,6 +378,7 @@ pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
             state.run(Op::RestoreRevision(id, revision), Task::Save, ctx);
         }
         ConfirmKind::Discard => crate::app::flows::editor_keys::close(state, ctx),
+        ConfirmKind::DiscardSettings => crate::app::flows::settings::apply::discard(state, ctx),
     }
 }
 

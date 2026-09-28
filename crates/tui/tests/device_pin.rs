@@ -205,3 +205,44 @@ fn unlock_screen_offers_the_device_pin_first() {
     wait(&mut app);
     assert_eq!(app.screen.name(), "unlocked");
 }
+
+#[test]
+fn changing_the_pin_reseals_only_the_key_file() {
+    let base = temp_dir("device-change-pin");
+    let (mut vault, _) = device_vault(&base);
+    let paths = vault.paths.clone();
+    let generation = vault.session.generation();
+    let vault_before = std::fs::read(&paths.vault_file).unwrap();
+
+    let refused = apply(
+        &mut vault,
+        Op::ChangePin {
+            current: secret("000000"),
+            new: secret("246810"),
+            profile: KdfProfile::Fast,
+        },
+    );
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "the current PIN is not correct"
+    );
+    let outcome = apply(
+        &mut vault,
+        Op::ChangePin {
+            current: secret(PIN),
+            new: secret("246810"),
+            profile: KdfProfile::Fast,
+        },
+    )
+    .unwrap();
+    assert!(matches!(outcome, Outcome::PinChanged));
+    assert_eq!(
+        vault.session.generation(),
+        generation,
+        "the vault is untouched"
+    );
+    drop(vault);
+    assert_eq!(std::fs::read(&paths.vault_file).unwrap(), vault_before);
+    assert!(unlock_vault(paths.clone(), pin(PIN)).is_err());
+    assert!(unlock_vault(paths, pin("246810")).is_ok());
+}

@@ -78,8 +78,9 @@ pub fn unlock(file: &VaultFile, paths: &Paths, pin: &[u8]) -> anyhow::Result<Ses
 ///
 /// # Errors
 ///
-/// Key-file errors: a wrong `current` PIN is `device key authentication
-/// failed`.
+/// `the current PIN is not correct` when `current` does not open the key
+/// file (or the file is damaged); `device PIN length` and storage errors
+/// when re-sealing fails.
 pub fn change_pin(
     paths: &Paths,
     vault_id: &[u8; 16],
@@ -87,7 +88,8 @@ pub fn change_pin(
     new_pin: &[u8],
     profile: KdfProfile,
 ) -> anyhow::Result<()> {
-    let key = open_device_key(&paths.device_key, vault_id, current)?;
+    let key = open_device_key(&paths.device_key, vault_id, current)
+        .map_err(|_| anyhow::anyhow!("the current PIN is not correct"))?;
     seal_device_key(&paths.device_key, vault_id, &key, new_pin, profile)
 }
 

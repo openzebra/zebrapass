@@ -79,6 +79,15 @@ pub enum Op {
     RemovePassword,
     /// Add this device's factor, its key file sealed under this PIN.
     AddDevice(Zeroizing<Vec<u8>>, KdfProfile),
+    /// Re-seal this device's key file under a new PIN.
+    ChangePin {
+        /// The PIN that opens the key file now.
+        current: Zeroizing<Vec<u8>>,
+        /// Its replacement.
+        new: Zeroizing<Vec<u8>>,
+        /// Argon2id preset the new PIN is stretched with.
+        profile: KdfProfile,
+    },
     /// Drop one wrap without rotating the vault key.
     RemoveWrap(FactorRef),
     /// Rotate the vault key.
@@ -118,6 +127,8 @@ pub enum Outcome {
     Rotated(bool),
     /// The password wrap was replaced.
     PasswordChanged,
+    /// The device key file was re-sealed.
+    PinChanged,
     /// The recovery wrap is gone from this copy.
     RecoveryDropped,
     /// Health analysis.
@@ -192,6 +203,20 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
                 profile,
             )?;
             Outcome::FactorAdded(FactorKind::Device)
+        }
+        Op::ChangePin {
+            current,
+            new,
+            profile,
+        } => {
+            device::change_pin(
+                &vault.paths,
+                vault.session.vault_id(),
+                &current,
+                &new,
+                profile,
+            )?;
+            Outcome::PinChanged
         }
         Op::RemoveWrap(factor) => {
             match factor {

@@ -30,6 +30,8 @@ pub enum ConfirmKind {
     RestoreRevision(u32, u64),
     /// Leave the editor without saving.
     Discard,
+    /// Close settings and drop the staged changes.
+    DiscardSettings,
 }
 
 /// A yes/no question.

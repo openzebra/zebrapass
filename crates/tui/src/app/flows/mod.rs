@@ -18,5 +18,6 @@ pub mod home_keys;
 pub mod palette;
 pub mod panels;
 pub mod restore;
+pub mod settings;
 pub mod unlock;
 pub mod unlocked;

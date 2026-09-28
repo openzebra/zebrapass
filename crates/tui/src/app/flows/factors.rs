@@ -148,7 +148,8 @@ fn act(state: &mut Unlocked, action: Action, selected: Option<&FactorView>, ctx:
     }
 }
 
-fn form(state: &mut Unlocked, form: Form) {
+/// Open `form` as the dialog.
+pub fn form(state: &mut Unlocked, form: Form) {
     state.dialog = Some(Box::new(Dialog::Form(Box::new(form))));
 }
 

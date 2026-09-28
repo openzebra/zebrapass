@@ -13,7 +13,7 @@ use crate::app::flows::factors::FactorsState;
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::history::HistoryState;
 use crate::app::flows::home::{filter_entries, Pane};
-use crate::app::flows::panels::SettingsState;
+use crate::app::flows::settings::SettingsModal;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::Nav;
@@ -102,7 +102,9 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
             Some(_) => state.view = View::Health(0),
             None => state.run(Op::Health, Task::Health, ctx),
         },
-        Action::OpenSettings => state.view = View::Settings(SettingsState::default()),
+        Action::OpenSettings => {
+            state.settings = Some(Box::new(SettingsModal::open(state, ctx)));
+        }
         Action::Lock => return Nav::Lock,
         Action::Quit => return Nav::Quit,
         _ => return crate::app::flows::factors::palette_action(state, action, ctx),
