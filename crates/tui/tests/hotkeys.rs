@@ -80,32 +80,32 @@ fn restore_hides_the_typed_word_with_ctrl_e() {
     assert!(KEYMAP
         .iter()
         .any(|binding| binding.scope == Scope::Ceremony && binding.key.code == KeyCode::Tab));
+}
 
-    #[test]
-    fn restore_tab_leaves_a_finished_phrase_and_shift_tab_returns() {
-        let mut app = app(&temp_dir("keys-restore-tab"));
-        press(&mut app, KeyCode::Right);
-        press(&mut app, KeyCode::Enter);
-        let field = |app: &tui::App| {
-            let Screen::Restore(state) = &app.screen else {
-                panic!("not restore: {}", app.screen.name())
-            };
-            state.field
+#[test]
+fn restore_tab_leaves_a_finished_phrase_and_shift_tab_returns() {
+    let mut app = app(&temp_dir("keys-restore-tab"));
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Enter);
+    let field = |app: &tui::App| {
+        let Screen::Restore(state) = &app.screen else {
+            panic!("not restore: {}", app.screen.name())
         };
-        type_text(&mut app, "aban");
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(field(&app), RestoreField::Phrase, "Tab completes a prefix");
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(
-            field(&app),
-            RestoreField::Source,
-            "nothing to complete: next field"
-        );
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(field(&app), RestoreField::Name);
-        press(&mut app, KeyCode::BackTab);
-        assert_eq!(field(&app), RestoreField::Source);
-        press(&mut app, KeyCode::BackTab);
-        assert_eq!(field(&app), RestoreField::Phrase);
-    }
+        state.field
+    };
+    type_text(&mut app, "ab");
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(field(&app), RestoreField::Phrase, "Tab completes a prefix");
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(
+        field(&app),
+        RestoreField::Source,
+        "nothing to complete: next field"
+    );
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(field(&app), RestoreField::Name);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(field(&app), RestoreField::Source);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(field(&app), RestoreField::Phrase);
 }

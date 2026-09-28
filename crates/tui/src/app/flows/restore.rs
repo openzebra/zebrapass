@@ -183,7 +183,8 @@ impl RestoreState {
             RestoreField::Source | RestoreField::Name | RestoreField::Passphrase
         );
         match resolve(Scope::Restore, event) {
-            Some(Action::NextWord | Action::AcceptSuggestion) if text_field => {}
+            // Space types into text fields; Tab still moves between them.
+            Some(Action::NextWord) if text_field => {}
             Some(action) => return self.on_action(action, ctx),
             None => {}
         }
