@@ -3,8 +3,8 @@
 use anyhow::anyhow;
 use ml_kem::kem::{Decapsulate, DecapsulationKey, EncapsulationKey};
 use ml_kem::{KeyExport, MlKem768, Seed, TryKeyInit};
-use zeroize::Zeroizing;
 use secret::Secret;
+use zeroize::Zeroizing;
 
 /// ML-KEM-768 encapsulation key length (FIPS 203).
 pub const KEM_EK_LEN: usize = 1184;

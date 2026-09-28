@@ -47,10 +47,18 @@ pub fn meta_document(meta: &LocalMeta) -> Document {
     let mut doc = Document::new();
     doc.set_data(TAG_DEVICE_ID, ValueType::Bytes, &meta.device_id);
     doc.set_data(TAG_CLIENT_ID, ValueType::Bytes, &meta.client_id);
-    doc.set_data(TAG_CREATED_AT_MS, ValueType::Bytes, &meta.created_at_ms.to_le_bytes());
+    doc.set_data(
+        TAG_CREATED_AT_MS,
+        ValueType::Bytes,
+        &meta.created_at_ms.to_le_bytes(),
+    );
     doc.set_text(TAG_NAME, &meta.name);
     if let Some(seen) = meta.seen {
-        doc.set_data(TAG_SEEN_GENERATION, ValueType::Bytes, &seen.generation.to_le_bytes());
+        doc.set_data(
+            TAG_SEEN_GENERATION,
+            ValueType::Bytes,
+            &seen.generation.to_le_bytes(),
+        );
         doc.set_data(TAG_SEEN_COMMIT, ValueType::Bytes, &seen.commit_tag);
     }
     doc
@@ -76,16 +84,13 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
         .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let name = doc.text(TAG_NAME)?.unwrap_or_default().to_owned();
-    let seen = match (
-        doc.data(TAG_SEEN_GENERATION)?,
-        doc.data(TAG_SEEN_COMMIT)?,
-    ) {
+    let seen = match (doc.data(TAG_SEEN_GENERATION)?, doc.data(TAG_SEEN_COMMIT)?) {
         (None, None) => None,
         (Some(gen), Some(tag)) => {
-            let generation = <[u8; 8]>::try_from(gen)
-                .map_err(|_| anyhow::anyhow!("corrupted length"))?;
-            let commit_tag = <[u8; 32]>::try_from(tag)
-                .map_err(|_| anyhow::anyhow!("corrupted length"))?;
+            let generation =
+                <[u8; 8]>::try_from(gen).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+            let commit_tag =
+                <[u8; 32]>::try_from(tag).map_err(|_| anyhow::anyhow!("corrupted length"))?;
             Some(SeenCursor {
                 generation: u64::from_le_bytes(generation),
                 commit_tag,
@@ -133,8 +138,7 @@ pub fn save_local_meta(
 /// errors as in [`frame::open`]; `corrupted length` when the document is
 /// missing a metadata field.
 pub fn load_local_meta(path: &Path, key: &Secret<[u8; 32]>) -> anyhow::Result<LocalMeta> {
-    let bytes =
-        std::fs::read(path).map_err(|_| anyhow::anyhow!("local metadata unreadable"))?;
+    let bytes = std::fs::read(path).map_err(|_| anyhow::anyhow!("local metadata unreadable"))?;
     let plaintext = frame::open(key, &bytes)?;
     let doc = Document::parse(plaintext.expose())?;
     meta_from_document(&doc)

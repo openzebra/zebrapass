@@ -64,7 +64,8 @@ pub(super) fn parse_chip(
     payload: usize,
     entry_len: u32,
 ) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+    let payload_len =
+        usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
     if payload_len != CHIP_PAYLOAD_MIN {
         return Err(anyhow::anyhow!("corrupted length"));
     }

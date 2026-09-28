@@ -10,6 +10,9 @@ mod identity;
 mod phrase;
 mod rng;
 
+/// The canonical BIP39 English wordlist. Public data: autocomplete and
+/// decoy words may read it; only [`SeedPhrase`] validates phrases.
+pub use en_words::EN;
 pub use identity::ec_identity_pk;
 
 /// Opaque 64-byte sync client id. Not [`ec_identity_pk`]: that value is a P-256 point, not an authenticator.

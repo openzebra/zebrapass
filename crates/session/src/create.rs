@@ -3,9 +3,9 @@
 use aead::{encrypt_body, BodyAlg};
 use container::{
     assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry,
-    encode_password_entry, encode_prf_entry,
-    encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256, BODY_FRAMES,
-    BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID, WRAP_AEGIS256,
+    encode_password_entry, encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry,
+    BODY_AEGIS256, BODY_FRAMES, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY,
+    KDF_ARGON2ID, WRAP_AEGIS256,
 };
 use frame::encode_frames;
 use hmac::{Hmac, KeyInit, Mac};
@@ -16,7 +16,6 @@ use wraps::seal_password;
 use zeroize::Zeroize;
 
 use crate::error::SessionError;
-
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -118,7 +117,8 @@ pub fn create(
     let mode = commit_mode(body_alg);
     let records = [password];
     let wrap_dir = dir_bytes(1, &records)?;
-    let (file, commit_tag) = assemble_committed(k_commit.expose(), &header, &wrap_dir, &body, mode)?;
+    let (file, commit_tag) =
+        assemble_committed(k_commit.expose(), &header, &wrap_dir, &body, mode)?;
     let frames_digest = match mode {
         CommitMode::Folded => body_digest(&body)?,
         CommitMode::Whole => [0u8; 32],
@@ -378,7 +378,8 @@ pub fn publish(
 ) -> anyhow::Result<()> {
     let wrap_dir = dir_bytes(generation, records)?;
     let mode = commit_mode(session.body_alg);
-    let (updated, tag) = assemble_committed(session.k_commit.expose(), header, &wrap_dir, body, mode)?;
+    let (updated, tag) =
+        assemble_committed(session.k_commit.expose(), header, &wrap_dir, body, mode)?;
     *file = updated;
     session.generation = generation;
     session.commit_tag = tag;
@@ -401,16 +402,14 @@ pub fn mac_commit(key: &[u8; 32], parts: &[&[u8]]) -> anyhow::Result<[u8; 32]> {
     Ok(out)
 }
 
-pub fn verify_commit(
-    bytes: &[u8],
-    key: &[u8; 32],
-    expected: &[u8; 32],
-) -> anyhow::Result<()> {
+pub fn verify_commit(bytes: &[u8], key: &[u8; 32], expected: &[u8; 32]) -> anyhow::Result<()> {
     let end = bytes
         .len()
         .checked_sub(COMMIT_LEN)
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let prefix = bytes.get(..end).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let prefix = bytes
+        .get(..end)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
     let actual = mac_commit(key, &[prefix])?;
     if secret::ct_eq_32(&actual, expected) {
         Ok(())

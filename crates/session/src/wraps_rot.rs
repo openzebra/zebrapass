@@ -53,27 +53,23 @@ pub fn rotate_all(
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
         let sealed = reseal(&entries, &parsed.header, vk.expose(), creds)?;
         let generation = next_generation(parsed.generation)?;
-        let (body, raw, digest) = match session.body_alg {
+        // Frame keys derive from the vault key in every body mode, so the log
+        // is re-keyed before the body is encoded, whole-body modes included.
+        let raw = reseal_frames(
+            session.vk.expose(),
+            vk.expose(),
+            &session.vault_id,
+            session.records.expose(),
+        )?;
+        let (body, digest) = match session.body_alg {
             BodyAlg::Frames => {
-                let raw = reseal_frames(
-                    session.vk.expose(),
-                    vk.expose(),
-                    &session.vault_id,
-                    session.records.expose(),
-                )?;
                 let digest = fold_log(&raw)?;
-                (encode_frames(&raw)?, raw, digest)
+                (encode_frames(&raw)?, digest)
             }
             alg => {
-                let raw = Vec::from(&session.records.expose()[..]);
-                let body = encrypt_records(
-                    alg,
-                    &parsed.header,
-                    k_body.expose(),
-                    k_bmac.expose(),
-                    &raw,
-                )?;
-                (body, raw, [0u8; 32])
+                let body =
+                    encrypt_records(alg, &parsed.header, k_body.expose(), k_bmac.expose(), &raw)?;
+                (body, [0u8; 32])
             }
         };
         (
@@ -263,7 +259,9 @@ pub fn reseal(
             // profile is carried over from the stored record, and the stored
             // values are ≥ floor (parse enforces it).
             WrapEntry::HumanPassword(human) => {
-                let pw = creds.human_password.ok_or(SessionError::HumanFactorRequired)?;
+                let pw = creds
+                    .human_password
+                    .ok_or(SessionError::HumanFactorRequired)?;
                 seal_human_password(
                     header,
                     human.kid,
@@ -284,7 +282,8 @@ pub fn reseal(
                 record
             }
             WrapEntry::Chip(chip) => {
-                let (publics, _) = creds.chips
+                let (publics, _) = creds
+                    .chips
                     .iter()
                     .find(|(item, _)| item.id == chip.id)
                     .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
@@ -292,7 +291,8 @@ pub fn reseal(
                 record
             }
             WrapEntry::Prf(wrap) => {
-                let (publics, prf_out) = creds.prfs
+                let (publics, prf_out) = creds
+                    .prfs
                     .iter()
                     .find(|(item, _)| item.id == wrap.id)
                     .ok_or(SessionError::PrfFactorRequired)?;

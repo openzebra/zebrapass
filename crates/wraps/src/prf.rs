@@ -92,10 +92,7 @@ pub fn open_prf(
 /// # Errors
 ///
 /// `no prf wrap for this grant` when the file has no matching entry.
-pub fn find_prf<'a>(
-    entries: &'a [WrapEntry<'a>],
-    id: &[u8; 16],
-) -> anyhow::Result<PrfWrap<'a>> {
+pub fn find_prf<'a>(entries: &'a [WrapEntry<'a>], id: &[u8; 16]) -> anyhow::Result<PrfWrap<'a>> {
     for entry in entries {
         if let WrapEntry::Prf(wrap) = entry {
             if wrap.id == *id {

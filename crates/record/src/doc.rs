@@ -132,7 +132,8 @@ impl Document {
         for _ in 0..count {
             let tag = read_u16(bytes, &mut pos)?;
             let byte = read_u8(bytes, &mut pos)?;
-            let vtype = ValueType::from_u8(byte).ok_or_else(|| anyhow::anyhow!("unknown value type"))?;
+            let vtype =
+                ValueType::from_u8(byte).ok_or_else(|| anyhow::anyhow!("unknown value type"))?;
             let len = read_u16(bytes, &mut pos)? as usize;
             let value = read_bytes(bytes, &mut pos, len)?.to_vec();
             validate_field(tag, vtype, &value)?;
@@ -156,10 +157,12 @@ impl Document {
         }
         let mut out = Vec::new();
         out.extend_from_slice(&SCHEMA_VERSION.to_le_bytes());
-        let count = u16::try_from(self.fields.len()).map_err(|_| anyhow::anyhow!("too many fields"))?;
+        let count =
+            u16::try_from(self.fields.len()).map_err(|_| anyhow::anyhow!("too many fields"))?;
         out.extend_from_slice(&count.to_le_bytes());
         for field in &self.fields {
-            let len = u16::try_from(field.value.len()).map_err(|_| anyhow::anyhow!("value too long"))?;
+            let len =
+                u16::try_from(field.value.len()).map_err(|_| anyhow::anyhow!("value too long"))?;
             out.extend_from_slice(&field.tag.to_le_bytes());
             out.push(field.vtype.to_u8());
             out.extend_from_slice(&len.to_le_bytes());
@@ -184,7 +187,8 @@ impl Document {
     ///
     /// `corrupted length` when a custom value does not carry a name prefix.
     pub fn data(&self, tag: u16) -> anyhow::Result<Option<&[u8]>> {
-        self.get(tag).map_or(Ok(None), |field| field_data(field).map(Some))
+        self.get(tag)
+            .map_or(Ok(None), |field| field_data(field).map(Some))
     }
 
     /// The UTF-8 data of a `Text` field.
@@ -229,20 +233,23 @@ impl Document {
     /// # Errors
     ///
     /// `custom name too long` when `name` exceeds [`MAX_CUSTOM_NAME`].
-    pub fn set_custom(&mut self, tag: u16, name: &str, vtype: ValueType, data: &[u8]) -> anyhow::Result<()> {
+    pub fn set_custom(
+        &mut self,
+        tag: u16,
+        name: &str,
+        vtype: ValueType,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
         if name.len() > MAX_CUSTOM_NAME {
             anyhow::bail!("custom name too long");
         }
-        let name_len = u8::try_from(name.len()).map_err(|_| anyhow::anyhow!("custom name too long"))?;
+        let name_len =
+            u8::try_from(name.len()).map_err(|_| anyhow::anyhow!("custom name too long"))?;
         let mut value = Vec::with_capacity(1 + name.len() + data.len());
         value.push(name_len);
         value.extend_from_slice(name.as_bytes());
         value.extend_from_slice(data);
-        self.replace(Field {
-            tag,
-            vtype,
-            value,
-        });
+        self.replace(Field { tag, vtype, value });
         Ok(())
     }
 

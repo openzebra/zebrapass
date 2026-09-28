@@ -8,15 +8,16 @@
 
 pub(crate) mod create;
 mod devices;
+mod directory;
 mod error;
 mod records;
 mod rewrap;
-mod sync_import;
-mod wraps_rot;
 mod rotate;
 mod sync_export;
+mod sync_import;
 mod sync_sig;
 mod unlock;
+mod wraps_rot;
 
 pub use aead::BodyAlg;
 pub use container::VaultFile;
@@ -25,19 +26,26 @@ pub use devices::{
     add_chip_unlock, add_device, add_human_password, add_prf_unlock, drop_recovery_wrap,
     remove_chip_unlock, remove_device, remove_prf_unlock,
 };
-pub use error::Seen;
+pub use directory::{wrap_directory, ChipFactor, Factor, WrapDirectory};
+pub use error::{Seen, SessionError};
 pub use kdf::KdfProfile;
+pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN};
 pub use records::{
     clear_history, delete_record, history, list_records, open_record, open_revision,
     restore_revision, vault_meta, write_record, write_vault_meta, RecordSummary, RevisionInfo,
 };
-pub use rotate::{change_master, reencrypt_body, rewrite_body, revoke, write_records, Revoke, RotateCreds};
-pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN};
+pub use rotate::{
+    change_master, reencrypt_body, revoke, rewrite_body, rotate_vault_key, write_records, Revoke,
+    RotateCreds,
+};
 pub use sync_export::{check_fresh, export_record, newer, verify_sync_record};
 pub use sync_import::{accept_record, Accepted, TrustedKeys};
 pub use sync_sig::{
     ct_len_prefix, issue_device_cert, record_message, sign_record, sync_verifying_key,
     verify_record, DeviceCert, DeviceSignKey, SyncRecord, MSG_VERSION,
 };
-pub use unlock::{unlock, UnlockCreds};
-pub use wraps::{ChipGrant, ChipKeys, ChipPublics, DeviceGrant, DeviceKeys, DevicePublics};
+pub use unlock::{check_seen, unlock, UnlockCreds};
+pub use wraps::{
+    ChipGrant, ChipKeys, ChipPublics, DeviceGrant, DeviceKeys, DevicePublics, HumanPasswordPublics,
+    PrfPublics,
+};

@@ -20,7 +20,11 @@ const MAX_SEALED_FRAME: usize = HEADER_LEN + MAX_FRAME_PLAINTEXT + TAG_LEN;
 /// longer than [`MAX_SEALED_FRAME`].
 pub fn encode_frames(records: &[u8]) -> anyhow::Result<Vec<u8>> {
     let spans = spans(records)?;
-    let mut out = Vec::with_capacity(records.len().saturating_add(spans.len().saturating_mul(LEN_LEN)));
+    let mut out = Vec::with_capacity(
+        records
+            .len()
+            .saturating_add(spans.len().saturating_mul(LEN_LEN)),
+    );
     for (start, len) in spans {
         let frame = records
             .get(start..start + len)

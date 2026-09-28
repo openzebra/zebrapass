@@ -120,9 +120,7 @@ pub fn latest(frames: &[FrameRef], record_id: u32) -> Option<&FrameRef> {
     frames
         .iter()
         .filter(|frame| frame.record_id == record_id)
-        .max_by(|a, b| {
-            (a.revision, a.origin_device).cmp(&(b.revision, b.origin_device))
-        })
+        .max_by(|a, b| (a.revision, a.origin_device).cmp(&(b.revision, b.origin_device)))
 }
 
 #[cfg(test)]
@@ -187,15 +185,24 @@ mod tests {
         let frame = seal(&key(1), &meta(1, 1, KIND_REVISION), b"data").unwrap();
         // Cut into the frame: header intact, but the body runs past the end.
         let short = frame.get(..frame.len() - 1).expect("one byte less");
-        assert_eq!(parse_index(short).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(
+            parse_index(short).unwrap_err().to_string(),
+            "corrupted length"
+        );
         // Trailing bytes that cannot be a header.
         let mut extended = short.to_vec();
         extended.extend_from_slice(&[0u8; 10]);
-        assert_eq!(parse_index(&extended).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(
+            parse_index(&extended).unwrap_err().to_string(),
+            "corrupted length"
+        );
         // A header-sized prefix with a length that overruns the body.
         let mut overrun = short.to_vec();
         overrun.extend_from_slice(&[0xFF; 75]);
-        assert_eq!(parse_index(&overrun).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(
+            parse_index(&overrun).unwrap_err().to_string(),
+            "corrupted length"
+        );
     }
 
     #[test]

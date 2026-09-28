@@ -48,7 +48,9 @@ impl VaultFile {
             .checked_sub(COMMIT_LEN)
             .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let commit = read_array(bytes, commit_at)?;
-        let prefix = bytes.get(..commit_at).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+        let prefix = bytes
+            .get(..commit_at)
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         let dir_and_body = prefix
             .get(HEADER_LEN..)
             .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
@@ -59,8 +61,9 @@ impl VaultFile {
         if !dir.entries.iter().any(WrapEntry::is_human_class) {
             return Err(anyhow::anyhow!("no password wrap"));
         }
-        let min_body = limits::min_body_len(header.body_alg)
-            .ok_or_else(|| anyhow::anyhow!("unsupported body algorithm {:#06x}", header.body_alg))?;
+        let min_body = limits::min_body_len(header.body_alg).ok_or_else(|| {
+            anyhow::anyhow!("unsupported body algorithm {:#06x}", header.body_alg)
+        })?;
         if body.len() < min_body {
             return Err(anyhow::anyhow!("corrupted length"));
         }

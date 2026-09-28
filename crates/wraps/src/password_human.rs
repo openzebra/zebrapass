@@ -13,11 +13,13 @@ use container::{
 };
 use kdf::{argon2id, hkdf_sha512};
 use secret::Secret;
+use zeroize::Zeroize;
 
 use crate::wad::{human_password_wad, open_vk, random_array, seal_vk};
 
 /// Human password wrap input: the password bytes and the cost profile.
-#[derive(Debug)]
+///
+/// `Debug` never prints the password, and the password is wiped on drop.
 pub struct HumanPasswordPublics {
     /// Key id (key-rotation label).
     pub kid: [u8; 8],
@@ -29,6 +31,24 @@ pub struct HumanPasswordPublics {
     pub t: u32,
     /// Argon2id lanes (raised to the wire floor).
     pub p: u32,
+}
+
+impl std::fmt::Debug for HumanPasswordPublics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HumanPasswordPublics")
+            .field("kid", &self.kid)
+            .field("password", &"[REDACTED]")
+            .field("m_kib", &self.m_kib)
+            .field("t", &self.t)
+            .field("p", &self.p)
+            .finish()
+    }
+}
+
+impl Drop for HumanPasswordPublics {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
 }
 
 /// Wrap-key derivation splits the salt: the first 16 bytes seed the Argon2
@@ -61,7 +81,9 @@ pub fn seal_human_password(
     // Separate the wrap key from the raw Argon2 output; the salt ties it to
     // this exact record.
     let (_, salt_hi) = salt.split_at(SALT_HALF);
-    let info: [u8; 16] = salt_hi.try_into().map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    let info: [u8; 16] = salt_hi
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
     let wrap_key = hkdf_sha512(kek.expose(), &info, DOMAIN_WRAP_PASSWORD)?;
     let ad = human_password_wad(header, kid, &nonce);
     let (ct, tag) = seal_vk(wrap_key.expose(), &nonce, &ad, vk);
@@ -84,8 +106,30 @@ pub fn open_human_password(
 ) -> anyhow::Result<Secret<[u8; 32]>> {
     let kek = argon2id(password, &wrap.salt, wrap.kdf.m_kib, wrap.kdf.t, wrap.kdf.p)?;
     let (_, salt_hi) = wrap.salt.split_at(SALT_HALF);
-    let info: [u8; 16] = salt_hi.try_into().map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    let info: [u8; 16] = salt_hi
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
     let wrap_key = hkdf_sha512(kek.expose(), &info, DOMAIN_WRAP_PASSWORD)?;
     let ad = human_password_wad(header, wrap.kid, &wrap.nonce);
     open_vk(wrap_key.expose(), &wrap.nonce, &ad, &wrap.ct, &wrap.tag)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HumanPasswordPublics;
+
+    #[test]
+    fn debug_never_prints_the_password() {
+        let publics = HumanPasswordPublics {
+            kid: [1; 8],
+            password: b"hunter2-secret".to_vec(),
+            m_kib: 65_536,
+            t: 3,
+            p: 2,
+        };
+        let printed = format!("{publics:?}");
+        assert!(!printed.contains("hunter2"));
+        assert!(!printed.contains("104, 117, 110"));
+        assert!(printed.contains("[REDACTED]"));
+    }
 }

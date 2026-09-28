@@ -1,8 +1,8 @@
 //! Device wrap: X25519 and ML-KEM-768.
 
 use container::{encode_device_entry, DeviceWrap, StaticHeader, KEM_MLKEM768};
-use pq::{decrypt_shared, encrypt_shared, PQ_PK_LEN, PQ_SK_LEN};
 use kdf::{hkdf_sha512, INFO_DEVICE_WRAP};
+use pq::{decrypt_shared, encrypt_shared, PQ_PK_LEN, PQ_SK_LEN};
 use secret::Secret;
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use zeroize::Zeroize;
@@ -207,8 +207,8 @@ fn derive_k_dev(
 )]
 mod tests {
     use container::{
-        StaticHeader, WrapEntry, BODY_AEGIS256, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MIN,
-        KDF_P_MIN, KDF_T_MIN, KEM_MLKEM768, WRAP_AEGIS256,
+        StaticHeader, WrapEntry, BODY_AEGIS256, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN,
+        KDF_T_MIN, KEM_MLKEM768, WRAP_AEGIS256,
     };
     use pq::PQ_PK_LEN;
     use secret::Secret;
@@ -216,7 +216,7 @@ mod tests {
     use zeroize::Zeroize;
 
     use super::{open_device, seal_device, DeviceKeys, DevicePublics};
-    
+
     fn floor_header() -> StaticHeader {
         StaticHeader {
             kdf_alg: KDF_ARGON2ID,
@@ -303,13 +303,17 @@ mod tests {
         let mut mismatched = parsed;
         mismatched.device_id = [0xFF; 16];
         assert_eq!(
-            open_device(&header, &mismatched, &keys).unwrap_err().to_string(),
+            open_device(&header, &mismatched, &keys)
+                .unwrap_err()
+                .to_string(),
             "wrap not found"
         );
         let mut bad_kem = parsed;
         bad_kem.kem_alg = 0xC001;
         assert_eq!(
-            open_device(&header, &bad_kem, &keys).unwrap_err().to_string(),
+            open_device(&header, &bad_kem, &keys)
+                .unwrap_err()
+                .to_string(),
             "unsupported kem 0xc001"
         );
     }

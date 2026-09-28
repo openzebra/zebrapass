@@ -53,8 +53,8 @@ impl SeedPhrase {
         let mut normalized = Cow::Borrowed(phrase.expose_secret());
         Mnemonic::normalize_utf8_cow(&mut normalized);
         let normalized = SecretString::new(normalized.into_owned().into_boxed_str());
-        let mnemonic =
-            Mnemonic::parse_str(&EN, &normalized).map_err(|_| anyhow::anyhow!("invalid seed phrase"))?;
+        let mnemonic = Mnemonic::parse_str(&EN, &normalized)
+            .map_err(|_| anyhow::anyhow!("invalid seed phrase"))?;
         Self::from_mnemonic(&mnemonic, passphrase)
     }
 
@@ -111,8 +111,8 @@ mod tests {
 
     #[test]
     fn zero_entropy_expands_to_twenty_four_words() {
-        let mnemonic = pqbip39::mnemonic::Mnemonic::from_entropy(&crate::en_words::EN, &[0u8; 32])
-            .unwrap();
+        let mnemonic =
+            pqbip39::mnemonic::Mnemonic::from_entropy(&crate::en_words::EN, &[0u8; 32]).unwrap();
         let phrase = mnemonic.to_phrase();
         assert_eq!(phrase.expose_secret(), ABANDON_24);
         // The derived phrase parses back to the same seed.
@@ -142,21 +142,27 @@ mod tests {
         let bad_checksum =
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
         assert_eq!(
-            SeedPhrase::parse(&secret(bad_checksum), &secret("")).unwrap_err().to_string(),
+            SeedPhrase::parse(&secret(bad_checksum), &secret(""))
+                .unwrap_err()
+                .to_string(),
             "invalid seed phrase"
         );
         // A word outside the wordlist.
         let not_a_word =
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon zebraa";
         assert_eq!(
-            SeedPhrase::parse(&secret(not_a_word), &secret("")).unwrap_err().to_string(),
+            SeedPhrase::parse(&secret(not_a_word), &secret(""))
+                .unwrap_err()
+                .to_string(),
             "invalid seed phrase"
         );
         // Too few words (11).
         let too_few =
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         assert_eq!(
-            SeedPhrase::parse(&secret(too_few), &secret("")).unwrap_err().to_string(),
+            SeedPhrase::parse(&secret(too_few), &secret(""))
+                .unwrap_err()
+                .to_string(),
             "invalid seed phrase"
         );
     }

@@ -15,9 +15,9 @@
 use aead::BodyAlg;
 use kdf::{client_id, KdfProfile};
 use session::{
-    add_device, check_fresh, create, export_record, issue_device_cert, newer, sign_record,
-    unlock, verify_sync_record, write_record, DeviceCert, DeviceSignKey, SyncRecord,
-    UnlockCreds, VaultFile, DEVICE_CERT_CTX, SYNC_VK_LEN,
+    add_device, check_fresh, create, export_record, issue_device_cert, newer, sign_record, unlock,
+    verify_sync_record, write_record, DeviceCert, DeviceSignKey, SyncRecord, UnlockCreds,
+    VaultFile, DEVICE_CERT_CTX, SYNC_VK_LEN,
 };
 
 const SEED: [u8; 64] = [0x42; 64];
@@ -37,10 +37,18 @@ fn round_trip() -> (VaultFile, session::Session) {
     add_device(
         &mut session,
         &mut file,
-        &wraps::DevicePublics { id, x_pk, pq_pk: ntru_pk },
+        &wraps::DevicePublics {
+            id,
+            x_pk,
+            pq_pk: ntru_pk,
+        },
     )
     .unwrap();
-    let keys = wraps::DeviceKeys { id, x_sk: secret::Secret::new(scalar), pq_sk: kem_secret };
+    let keys = wraps::DeviceKeys {
+        id,
+        x_sk: secret::Secret::new(scalar),
+        pq_sk: kem_secret,
+    };
     let session = unlock(&file, &UnlockCreds::master(&SEED).with_device(&keys), None).unwrap();
     (file, session)
 }
@@ -71,7 +79,10 @@ fn export_verify_round_trip() {
 
     assert_eq!(record.record_id, record_id);
     assert_eq!(record.revision, 1);
-    assert_eq!(u32::try_from(session.generation()), Ok(record.key_generation));
+    assert_eq!(
+        u32::try_from(session.generation()),
+        Ok(record.key_generation)
+    );
     let vault_id = file.parse().unwrap().header.vault_id;
     verify_sync_record(&record, &device_vk, &vault_id).unwrap();
     record.verify(&device_vk, &vault_id).unwrap();
@@ -158,14 +169,26 @@ fn cert_tampering_is_rejected() {
 
     // A different root rejects outright.
     let alt_root = [0x08u8; 32];
-    let alt_vk = issue_device_cert(&alt_root, &client_id(&SEED).unwrap(), &device_vk, NOT_AFTER_MS, 7)
-        .unwrap()
-        .verify(&root_vk, NOW_MS);
+    let alt_vk = issue_device_cert(
+        &alt_root,
+        &client_id(&SEED).unwrap(),
+        &device_vk,
+        NOT_AFTER_MS,
+        7,
+    )
+    .unwrap()
+    .verify(&root_vk, NOW_MS);
     assert!(alt_vk.is_err());
 
     // The honest pair still verifies.
-    let cert = issue_device_cert(&ROOT_SEED, &client_id(&SEED).unwrap(), &device_vk, NOT_AFTER_MS, 7)
-        .unwrap();
+    let cert = issue_device_cert(
+        &ROOT_SEED,
+        &client_id(&SEED).unwrap(),
+        &device_vk,
+        NOT_AFTER_MS,
+        7,
+    )
+    .unwrap();
     cert.verify(&root_vk, NOW_MS).unwrap();
     let _ = device_vk;
 }
@@ -187,7 +210,10 @@ fn record_message_rejects_oversize_ciphertext() {
     // u32::MAX + 1 cannot be a length prefix.
     let err = session::ct_len_prefix(u32::MAX as usize + 1).unwrap_err();
     assert!(err.to_string().contains("ciphertext too large"));
-    assert_eq!(session::ct_len_prefix(u32::MAX as usize).unwrap(), [0xFF; 4]);
+    assert_eq!(
+        session::ct_len_prefix(u32::MAX as usize).unwrap(),
+        [0xFF; 4]
+    );
 }
 
 #[test]
@@ -219,11 +245,14 @@ fn demo_doc() -> record::Document {
 
 // ---- Phase 5: the receive/apply side -------------------------------------
 
-use session::{accept_record, open_record, TrustedKeys, Accepted};
+use session::{accept_record, open_record, Accepted, TrustedKeys};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now_ms() -> u64 {
-    #[allow(clippy::cast_possible_truncation, reason = "wall clock fits u64 until year 586M")]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "wall clock fits u64 until year 586M"
+    )]
     {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -237,7 +266,12 @@ fn trust<'a>(
     root_vk: &'a [u8; SYNC_VK_LEN],
     devices: &'a [([u8; 16], DeviceCert)],
 ) -> TrustedKeys<'a> {
-    TrustedKeys { client_id: *client, root_vk: *root_vk, devices, now_ms: now_ms() }
+    TrustedKeys {
+        client_id: *client,
+        root_vk: *root_vk,
+        devices,
+        now_ms: now_ms(),
+    }
 }
 
 fn enroll(
@@ -270,7 +304,13 @@ fn valid_record_is_applied() {
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let sync_rec = export_record(&sender, &device, record_id).unwrap();
-    let enrolled = [enroll(&root.seed(), &client, &device, origin_of(&sync_rec), 1)];
+    let enrolled = [enroll(
+        &root.seed(),
+        &client,
+        &device,
+        origin_of(&sync_rec),
+        1,
+    )];
 
     let mut receiver = unlock(&rfile, &UnlockCreds::master(&SEED), None).unwrap();
     let mut rfile = rfile;
@@ -300,7 +340,13 @@ fn replayed_revision_is_rejected() {
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let sync_rec = export_record(&sender, &device, record_id).unwrap();
-    let enrolled = [enroll(&root.seed(), &client, &device, origin_of(&sync_rec), 1)];
+    let enrolled = [enroll(
+        &root.seed(),
+        &client,
+        &device,
+        origin_of(&sync_rec),
+        1,
+    )];
 
     let mut receiver = unlock(&rfile, &UnlockCreds::master(&SEED), None).unwrap();
     let mut rfile = rfile;
@@ -308,8 +354,7 @@ fn replayed_revision_is_rejected() {
     accept_record(&mut receiver, &mut rfile, &sync_rec, &keys, |_| None).unwrap();
 
     // The exact same frame a second time: not strictly newer.
-    let err = accept_record(&mut receiver, &mut rfile, &sync_rec, &keys, |_| None)
-        .unwrap_err();
+    let err = accept_record(&mut receiver, &mut rfile, &sync_rec, &keys, |_| None).unwrap_err();
     assert_eq!(err.to_string(), "stale revision");
 
     // A local write raced ahead: the stale remote copy still loses.
@@ -339,19 +384,34 @@ fn revoked_and_foreign_devices_are_rejected() {
     // Revoked: the device is no longer in the cert table.
     let empty: [([u8; 16], DeviceCert); 0] = [];
     assert_eq!(
-        accept_record(&mut receiver, &mut rfile, &sync_rec, &trust(&client, &root_vk, &empty), |_| None)
-            .unwrap_err()
-            .to_string(),
+        accept_record(
+            &mut receiver,
+            &mut rfile,
+            &sync_rec,
+            &trust(&client, &root_vk, &empty),
+            |_| None
+        )
+        .unwrap_err()
+        .to_string(),
         "device not enrolled"
     );
 
     // Enrolled under a different account: rejected.
     let other_client = [9u8; 64];
-    let wrong_account = [enroll(&root.seed(), &other_client, &device, origin_of(&sync_rec), 1)];
+    let wrong_account = [enroll(
+        &root.seed(),
+        &other_client,
+        &device,
+        origin_of(&sync_rec),
+        1,
+    )];
     assert_eq!(
         accept_record(
-            &mut receiver, &mut rfile, &sync_rec,
-            &trust(&client, &root_vk, &wrong_account), |_| None,
+            &mut receiver,
+            &mut rfile,
+            &sync_rec,
+            &trust(&client, &root_vk, &wrong_account),
+            |_| None,
         )
         .unwrap_err()
         .to_string(),
@@ -375,11 +435,21 @@ fn revoked_and_foreign_devices_are_rejected() {
     );
 
     // Honest enrollment still passes the trust gate and applies.
-    let good = [enroll(&root.seed(), &client, &device, origin_of(&sync_rec), 1)];
-    assert!(
-        accept_record(&mut receiver, &mut rfile, &sync_rec, &trust(&client, &root_vk, &good), |_| None)
-            .is_ok()
-    );
+    let good = [enroll(
+        &root.seed(),
+        &client,
+        &device,
+        origin_of(&sync_rec),
+        1,
+    )];
+    assert!(accept_record(
+        &mut receiver,
+        &mut rfile,
+        &sync_rec,
+        &trust(&client, &root_vk, &good),
+        |_| None
+    )
+    .is_ok());
 }
 
 #[test]
@@ -393,7 +463,13 @@ fn forged_outer_fields_are_rejected() {
     let (mut sfile, mut sender) = round_trip();
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let honest = export_record(&sender, &device, record_id).unwrap();
-    let enrolled = [enroll(&root.seed(), &client, &device, origin_of(&honest), 1)];
+    let enrolled = [enroll(
+        &root.seed(),
+        &client,
+        &device,
+        origin_of(&honest),
+        1,
+    )];
 
     // The frame is record 1's; the outer claim says record 2, revision 9.
     let forged = SyncRecord {
@@ -404,15 +480,21 @@ fn forged_outer_fields_are_rejected() {
     };
     // Signed by the honest device, so the signature check alone passes.
     let sig = sign_record(&device, &forged).unwrap();
-    let forged = SyncRecord { signature: sig, ..forged };
+    let forged = SyncRecord {
+        signature: sig,
+        ..forged
+    };
 
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let mut receiver = unlock(&rfile, &UnlockCreds::master(&SEED), None).unwrap();
     let mut rfile = rfile;
     assert_eq!(
         accept_record(
-            &mut receiver, &mut rfile, &forged,
-            &trust(&client, &root_vk, &enrolled), |_| None,
+            &mut receiver,
+            &mut rfile,
+            &forged,
+            &trust(&client, &root_vk, &enrolled),
+            |_| None,
         )
         .unwrap_err()
         .to_string(),
@@ -423,11 +505,17 @@ fn forged_outer_fields_are_rejected() {
     let mut foreign = honest;
     foreign.vault_id = [0xEE; 16];
     let sig = sign_record(&device, &foreign).unwrap();
-    let foreign = SyncRecord { signature: sig, ..foreign };
+    let foreign = SyncRecord {
+        signature: sig,
+        ..foreign
+    };
     assert_eq!(
         accept_record(
-            &mut receiver, &mut rfile, &foreign,
-            &trust(&client, &root_vk, &enrolled), |_| None,
+            &mut receiver,
+            &mut rfile,
+            &foreign,
+            &trust(&client, &root_vk, &enrolled),
+            |_| None,
         )
         .unwrap_err()
         .to_string(),
@@ -440,7 +528,11 @@ fn forged_outer_fields_are_rejected() {
 
 #[test]
 fn accepted_type_round_trips() {
-    let a = Accepted { record_id: 1, revision: 2, origin_device: [3; 16] };
+    let a = Accepted {
+        record_id: 1,
+        revision: 2,
+        origin_device: [3; 16],
+    };
     let b = a;
     assert_eq!(a, b);
     let _ = format!("{a:?}");

@@ -163,7 +163,6 @@ impl WrapEntry<'_> {
     }
 }
 
-
 /// Encode one device record. `kem_ct` is the ML-KEM-768 ciphertext.
 ///
 /// # Errors
@@ -198,15 +197,13 @@ pub fn parse_entry(bytes: &[u8], offset: usize) -> anyhow::Result<(WrapEntry<'_>
         KIND_DEVICE => parse_device(bytes, header_end, entry_len),
         KIND_CHIP => parse_chip(bytes, header_end, entry_len),
         KIND_PRF => parse_prf(bytes, header_end, entry_len),
-        KIND_PASSWORD_HUMAN => crate::wrap_human::parse_human_password(bytes, header_end, entry_len),
+        KIND_PASSWORD_HUMAN => {
+            crate::wrap_human::parse_human_password(bytes, header_end, entry_len)
+        }
         // Unknown kinds are corruption. This version does not skip them.
         _ => Err(anyhow::anyhow!("corrupted length")),
     }
 }
-
-
-
-
 
 impl<'a> TryFrom<&'a [u8]> for WrapEntry<'a> {
     type Error = anyhow::Error;

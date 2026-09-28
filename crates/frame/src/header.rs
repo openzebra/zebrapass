@@ -4,7 +4,6 @@
     reason = "wire offsets are const-asserted to fit HEADER_LEN"
 )]
 
-
 /// Frame header size in bytes.
 pub const HEADER_LEN: usize = 75;
 

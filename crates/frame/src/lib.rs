@@ -13,8 +13,8 @@ mod seal;
 
 pub use header::{aad, encode_header, parse, FrameMeta, Header, DOMAIN_FRAME, HEADER_LEN};
 pub use index::{frame_at, latest, parse_index, FrameRef};
-pub use log::{decode_frames, encode_frames, spans};
 pub use limits::MAX_FRAME_PLAINTEXT;
+pub use log::{decode_frames, encode_frames, spans};
 pub use seal::{open, seal};
 
 /// Frame kind: a record revision. Plaintext is an encoded document.

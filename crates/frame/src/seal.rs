@@ -66,7 +66,11 @@ pub fn open(key: &Secret<[u8; 32]>, frame_bytes: &[u8]) -> anyhow::Result<Secret
         .get(doc_len..)
         .and_then(|tail| tail.try_into().ok())
         .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let ad = aad(&encode_header(&header.meta(), &header.nonce, header.doc_len));
+    let ad = aad(&encode_header(
+        &header.meta(),
+        &header.nonce,
+        header.doc_len,
+    ));
     // Decrypt reports every failure, including a bad tag, as one error.
     Aegis256::<32>::new(key.expose(), &header.nonce)
         .decrypt(ct, &tag, &ad)
@@ -140,7 +144,10 @@ mod tests {
             }
             let mut bytes = sealed.clone();
             *bytes.get_mut(idx).unwrap() ^= 0x01;
-            assert!(open(&key(), &bytes).is_err(), "flipped header byte {idx} accepted");
+            assert!(
+                open(&key(), &bytes).is_err(),
+                "flipped header byte {idx} accepted"
+            );
         }
         // The algorithm bytes are bound through the AAD the same way; they
         // fail with their own stable error.
@@ -156,11 +163,17 @@ mod tests {
         let mut bytes = sealed.clone();
         let mid = bytes.len() / 2;
         *bytes.get_mut(mid).unwrap() ^= 0x01;
-        assert_eq!(open(&key(), &bytes).unwrap_err().to_string(), "frame authentication failed");
+        assert_eq!(
+            open(&key(), &bytes).unwrap_err().to_string(),
+            "frame authentication failed"
+        );
         let mut bytes = sealed;
         let last = bytes.len() - 1;
         *bytes.get_mut(last).unwrap() ^= 0x01;
-        assert_eq!(open(&key(), &bytes).unwrap_err().to_string(), "frame authentication failed");
+        assert_eq!(
+            open(&key(), &bytes).unwrap_err().to_string(),
+            "frame authentication failed"
+        );
     }
 
     #[test]
@@ -169,15 +182,26 @@ mod tests {
         let short = sealed
             .get(..sealed.len() - 1)
             .expect("one byte less than the frame");
-        assert_eq!(open(&key(), short).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(
+            open(&key(), short).unwrap_err().to_string(),
+            "corrupted length"
+        );
         let mut long = sealed.clone();
         long.push(0);
-        assert_eq!(open(&key(), &long).unwrap_err().to_string(), "corrupted length");
+        assert_eq!(
+            open(&key(), &long).unwrap_err().to_string(),
+            "corrupted length"
+        );
     }
 
     #[test]
     fn oversized_plaintext_rejected() {
         let blob = vec![0u8; crate::limits::MAX_FRAME_PLAINTEXT + 1];
-        assert_eq!(seal(&key(), &meta(KIND_REVISION), &blob).unwrap_err().to_string(), "frame too large");
+        assert_eq!(
+            seal(&key(), &meta(KIND_REVISION), &blob)
+                .unwrap_err()
+                .to_string(),
+            "frame too large"
+        );
     }
 }

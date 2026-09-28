@@ -1,17 +1,15 @@
 //! Master change, record rewrite, and vault-key rotation.
 
 use aead::BodyAlg;
-use container::{KIND_CHIP, KIND_DEVICE, KIND_PRF, VaultFile, WrapEntry};
+use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_DEVICE, KIND_PRF};
 use frame::encode_frames;
 use secret::Secret;
 use wraps::{seal_prf, ChipPublics, DevicePublics, PrfPublics};
 
-use crate::create::{
-    encrypt_records, fold_log, fold_new_spans, next_generation, publish, Session,
-};
+use crate::create::{encrypt_records, fold_log, fold_new_spans, next_generation, publish, Session};
 use crate::error::SessionError;
-use crate::wraps_rot::{replace_password, rotate_all};
 use crate::rewrap::rewrap;
+use crate::wraps_rot::{replace_password, rotate_all};
 
 /// Replace the master wrap: re-seal the same vault key under a new master
 /// seed.
@@ -46,9 +44,7 @@ pub fn change_master(
         let mut records = replace_password(&kept, &parsed.header, new_master, vk)?;
         for entry in &parsed.entries {
             if let WrapEntry::Prf(wrap) = entry {
-                if let Some((publics, prf_out)) =
-                    prfs.iter().find(|(item, _)| item.id == wrap.id)
-                {
+                if let Some((publics, prf_out)) = prfs.iter().find(|(item, _)| item.id == wrap.id) {
                     let (record, _grant) = seal_prf(&parsed.header, publics, prf_out, vk)?;
                     records.push(record);
                 }
@@ -84,8 +80,7 @@ pub fn write_records(
         raw.extend_from_slice(records);
         let body = match session.body_alg {
             BodyAlg::Frames => {
-                session.frames_digest =
-                    fold_new_spans(session.frames_digest, existing_len, &raw)?;
+                session.frames_digest = fold_new_spans(session.frames_digest, existing_len, &raw)?;
                 encode_frames(&raw)?
             }
             alg => encrypt_records(
@@ -250,3 +245,21 @@ pub fn revoke(
     }
 }
 
+/// Rotate the vault key and keep every wrap: draw a fresh vault key, re-key
+/// the record log, and re-seal each wrap from `creds`.
+///
+/// Unlike [`reencrypt_body`], a human password wrap is re-sealed under
+/// `creds.human_password`, so passing a new password here is how a password
+/// change also retires the old vault key. On error, `file` and `session` are
+/// left as they were.
+///
+/// # Errors
+///
+/// As in [`revoke`], without the target lookup.
+pub fn rotate_vault_key(
+    session: &mut Session,
+    file: &mut VaultFile,
+    creds: &RotateCreds<'_>,
+) -> anyhow::Result<()> {
+    rotate_all(session, file, creds, None)
+}

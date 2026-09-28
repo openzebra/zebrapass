@@ -105,11 +105,15 @@ impl TryFrom<&[u8]> for StaticHeader {
         }
         let wrap_alg = read_u16(bytes, OFF_WRAP_ALG)?;
         if wrap_alg != WRAP_AEGIS256 {
-            return Err(anyhow::anyhow!("unsupported wrap algorithm {wrap_alg:#06x}"));
+            return Err(anyhow::anyhow!(
+                "unsupported wrap algorithm {wrap_alg:#06x}"
+            ));
         }
         let body_alg = read_u16(bytes, OFF_BODY_ALG)?;
         if !limits::known_body_alg(body_alg) {
-            return Err(anyhow::anyhow!("unsupported body algorithm {body_alg:#06x}"));
+            return Err(anyhow::anyhow!(
+                "unsupported body algorithm {body_alg:#06x}"
+            ));
         }
         let kdf_m_kib = read_u32(bytes, OFF_KDF_M)?;
         let kdf_t = read_u32(bytes, OFF_KDF_T)?;

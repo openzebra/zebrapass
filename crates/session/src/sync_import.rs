@@ -14,8 +14,8 @@ use kdf::frame_key;
 use pq::SYNC_VK_LEN;
 
 use crate::create::Session;
-use crate::rotate::write_records;
 use crate::error::SessionError;
+use crate::rotate::write_records;
 use crate::sync_export::{check_fresh, verify_sync_record};
 use crate::sync_sig::{DeviceCert, SyncRecord};
 
@@ -92,14 +92,13 @@ fn cert_for<'a>(
     if cert.client_id != trust.client_id {
         return Err(SessionError::CertRejected);
     }
-    cert.verify(&trust.root_vk, trust.now_ms)
-        .map_err(|error| {
-            if error.to_string() == "device cert expired" {
-                SessionError::CertExpired
-            } else {
-                SessionError::CertRejected
-            }
-        })?;
+    cert.verify(&trust.root_vk, trust.now_ms).map_err(|error| {
+        if error.to_string() == "device cert expired" {
+            SessionError::CertExpired
+        } else {
+            SessionError::CertRejected
+        }
+    })?;
     Ok(cert)
 }
 

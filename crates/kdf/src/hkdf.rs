@@ -5,7 +5,6 @@ use hkdf_impl::Hkdf;
 use secret::Secret;
 use sha2::Sha512;
 
-
 /// HKDF info for the device wrap key (`k_dev`).
 pub const INFO_DEVICE_WRAP: &[u8] = b"brby/v2/device-wrap";
 

@@ -13,6 +13,7 @@ members = [
     "crates/frame",
     "crates/seed",
     "crates/local",
+    "crates/tui",
 ]
 resolver = "2"
 
@@ -43,6 +44,10 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
+# Terminal UI only (crates/tui). ratatui 0.29 is the last line on the 1.85 MSRV;
+# Cargo.lock pins its `instability` proc-macro to 0.3.7 for the same reason.
+ratatui = "=0.29.0"
+crossterm = "=0.28.1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

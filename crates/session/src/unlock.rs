@@ -10,7 +10,9 @@ use wraps::{
     PrfPublics,
 };
 
-use crate::create::{body_ad, body_digest, commit_mode, mac_commit, verify_commit, CommitMode, Session};
+use crate::create::{
+    body_ad, body_digest, commit_mode, mac_commit, verify_commit, CommitMode, Session,
+};
 use crate::error::{Seen, SessionError};
 
 /// Factors a caller can present for one unlock.
@@ -198,10 +200,7 @@ fn unwrap_vk(
     open_password(header, &wrap, master).map(|vk| (vk, None))
 }
 
-fn find_chip<'a>(
-    entries: &'a [WrapEntry<'a>],
-    id: &[u8; 16],
-) -> anyhow::Result<&'a ChipWrap<'a>> {
+fn find_chip<'a>(entries: &'a [WrapEntry<'a>], id: &[u8; 16]) -> anyhow::Result<&'a ChipWrap<'a>> {
     for entry in entries {
         if let WrapEntry::Chip(wrap) = entry {
             if wrap.id == *id {
@@ -212,9 +211,7 @@ fn find_chip<'a>(
     Err(anyhow::anyhow!("no chip wrap for this device"))
 }
 
-fn find_password<'a>(
-    entries: &'a [WrapEntry<'a>],
-) -> anyhow::Result<container::PasswordWrap<'a>> {
+fn find_password<'a>(entries: &'a [WrapEntry<'a>]) -> anyhow::Result<container::PasswordWrap<'a>> {
     for entry in entries {
         if let WrapEntry::Password(wrap) = entry {
             return Ok(*wrap);
@@ -274,11 +271,22 @@ fn decrypt_body(
     }
 }
 
-fn accept_seen(
-    seen: Option<Seen>,
-    generation: u64,
-    commit_tag: &[u8; 32],
-) -> anyhow::Result<()> {
+/// Apply the rollback rule of [`unlock`] to a session that is already open.
+///
+/// For callers whose cursor is sealed under a key derived from the vault key
+/// (the on-device `local.meta`): they can only read it after unlocking, so
+/// they unlock with `seen = None`, open the cursor, and call this before any
+/// record is shown. On error the caller must drop the session.
+///
+/// # Errors
+///
+/// `rollback` when the session's file is older than `seen`; `conflict` when
+/// the generation matches but the commit tag does not.
+pub fn check_seen(session: &Session, seen: Option<Seen>) -> anyhow::Result<()> {
+    accept_seen(seen, session.generation, &session.commit_tag)
+}
+
+fn accept_seen(seen: Option<Seen>, generation: u64, commit_tag: &[u8; 32]) -> anyhow::Result<()> {
     let Some(seen) = seen else {
         return Ok(());
     };

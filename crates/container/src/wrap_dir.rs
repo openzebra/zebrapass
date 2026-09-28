@@ -57,7 +57,9 @@ impl<'a> WrapDir<'a> {
             offset = next;
         }
         check_entries(&entries)?;
-        let tail = bytes.get(offset..).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+        let tail = bytes
+            .get(offset..)
+            .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
         Ok((
             Self {
                 generation,

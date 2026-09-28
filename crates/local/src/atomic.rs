@@ -29,8 +29,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let write = || -> anyhow::Result<()> {
         let mut file = fs::File::create(&temp).map_err(|_| anyhow::anyhow!("write failed"))?;
         set_private_mode(&file)?;
-        file.write_all(bytes).map_err(|_| anyhow::anyhow!("write failed"))?;
-        file.sync_all().map_err(|_| anyhow::anyhow!("sync failed"))?;
+        file.write_all(bytes)
+            .map_err(|_| anyhow::anyhow!("write failed"))?;
+        file.sync_all()
+            .map_err(|_| anyhow::anyhow!("sync failed"))?;
         drop(file);
         fs::rename(&temp, path).map_err(|_| anyhow::anyhow!("rename failed"))?;
         if let Ok(dir_handle) = fs::File::open(dir) {
@@ -55,11 +57,10 @@ fn temp_name(path: &Path) -> anyhow::Result<String> {
     ];
     let mut suffix = [0u8; 8];
     getrandom::fill(&mut suffix).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
-    let mut name = path
-        .file_name()
-        .map_or_else(|| String::from("file"), |name| {
-            name.to_string_lossy().into_owned()
-        });
+    let mut name = path.file_name().map_or_else(
+        || String::from("file"),
+        |name| name.to_string_lossy().into_owned(),
+    );
     name.push_str(".tmp-");
     for byte in suffix {
         // Both indexes are masked into 0..=15 before the lookup.
@@ -91,9 +92,9 @@ mod tests {
         reason = "tests may unwrap, index, and panic"
     )]
 
+    use std::fmt::Write as _;
     use std::fs;
     use std::path::PathBuf;
-    use std::fmt::Write as _;
 
     use super::write_atomic;
 

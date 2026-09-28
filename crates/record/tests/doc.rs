@@ -8,8 +8,8 @@
     reason = "tests may unwrap, index, and panic"
 )]
 
-use record::{MAX_CUSTOM_NAME, MAX_FIELDS, SCHEMA_VERSION};
 use record::{Document, ValueType, TAG_NOTES, TAG_PASSWORD, TAG_TITLE};
+use record::{MAX_CUSTOM_NAME, MAX_FIELDS, SCHEMA_VERSION};
 
 fn sample_doc() -> Document {
     let mut doc = Document::new();
@@ -37,7 +37,8 @@ fn unknown_tags_survive_edit_of_known_field() {
     // A future standard tag this build does not interpret, and a
     // custom tag this build does not know, both byte for byte.
     doc.set_data(0x0501, ValueType::Bytes, b"abc");
-    doc.set_custom(0xDEAD, "z", ValueType::Secret, &[0xAA, 0xBB]).unwrap();
+    doc.set_custom(0xDEAD, "z", ValueType::Secret, &[0xAA, 0xBB])
+        .unwrap();
     let bytes = doc.encode().unwrap();
     let mut parsed = Document::parse(&bytes).unwrap();
     assert_eq!(parsed.text(TAG_TITLE).unwrap().unwrap(), "Blog");
@@ -48,10 +49,7 @@ fn unknown_tags_survive_edit_of_known_field() {
     assert!(out.ends_with(&[0xAA, 0xBB]));
     let reparsed = Document::parse(&out).unwrap();
     assert_eq!(reparsed.text(TAG_TITLE).unwrap().unwrap(), "New");
-    assert_eq!(
-        reparsed.custom_name(0xDEAD).unwrap().unwrap(),
-        "z"
-    );
+    assert_eq!(reparsed.custom_name(0xDEAD).unwrap().unwrap(), "z");
     assert_eq!(
         reparsed.data(0xDEAD).unwrap().unwrap(),
         [0xAA_u8, 0xBB].as_slice()
@@ -61,7 +59,8 @@ fn unknown_tags_survive_edit_of_known_field() {
 #[test]
 fn custom_fields_add_and_lookup() {
     let mut doc = sample_doc();
-    doc.set_custom(0x8001, "ssh key", ValueType::Bytes, b"SHA256:...").unwrap();
+    doc.set_custom(0x8001, "ssh key", ValueType::Bytes, b"SHA256:...")
+        .unwrap();
     let out = doc.encode().unwrap();
     let parsed = Document::parse(&out).unwrap();
     assert_eq!(parsed.custom_name(0x8001).unwrap().unwrap(), "ssh key");
@@ -76,7 +75,9 @@ fn custom_fields_add_and_lookup() {
 fn custom_name_length_is_enforced() {
     let mut doc = Document::new();
     let long = "x".repeat(MAX_CUSTOM_NAME + 1);
-    assert!(doc.set_custom(0x8001, &long, ValueType::Bytes, b"").is_err());
+    assert!(doc
+        .set_custom(0x8001, &long, ValueType::Bytes, b"")
+        .is_err());
     let ok = "x".repeat(MAX_CUSTOM_NAME);
     doc.set_custom(0x8001, &ok, ValueType::Bytes, b"").unwrap();
     let parsed = Document::parse(&doc.encode().unwrap()).unwrap();
@@ -95,9 +96,13 @@ fn garbage_text_is_rejected() {
 #[test]
 fn custom_text_data_must_be_utf8() {
     let mut doc = Document::new();
-    doc.set_custom(0x8001, "n", ValueType::Text, b"\xff").unwrap();
+    doc.set_custom(0x8001, "n", ValueType::Text, b"\xff")
+        .unwrap();
     let bytes = doc.encode().unwrap();
-    assert_eq!(Document::parse(&bytes).unwrap_err().to_string(), "invalid text encoding");
+    assert_eq!(
+        Document::parse(&bytes).unwrap_err().to_string(),
+        "invalid text encoding"
+    );
 }
 
 #[test]
@@ -127,11 +132,20 @@ fn truncated_and_trailing_input_rejected() {
     let short = bytes
         .get(..bytes.len() - 1)
         .expect("one byte less than the encoding");
-    assert_eq!(Document::parse(short).unwrap_err().to_string(), "corrupted length");
+    assert_eq!(
+        Document::parse(short).unwrap_err().to_string(),
+        "corrupted length"
+    );
     let mut long = bytes.clone();
     long.push(0);
-    assert_eq!(Document::parse(&long).unwrap_err().to_string(), "corrupted length");
-    assert_eq!(Document::parse(&[]).unwrap_err().to_string(), "corrupted length");
+    assert_eq!(
+        Document::parse(&long).unwrap_err().to_string(),
+        "corrupted length"
+    );
+    assert_eq!(
+        Document::parse(&[]).unwrap_err().to_string(),
+        "corrupted length"
+    );
 }
 
 #[test]
@@ -139,7 +153,10 @@ fn field_count_limit() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&SCHEMA_VERSION.to_le_bytes());
     bytes.extend_from_slice(&u16::try_from(MAX_FIELDS + 1).unwrap().to_le_bytes());
-    assert_eq!(Document::parse(&bytes).unwrap_err().to_string(), "too many fields");
+    assert_eq!(
+        Document::parse(&bytes).unwrap_err().to_string(),
+        "too many fields"
+    );
 
     let mut doc = Document::new();
     for (i, _) in (0..=MAX_FIELDS).enumerate() {
@@ -180,5 +197,8 @@ fn custom_name_corruption_detected() {
     // schema(2) + count(2) + tag(2) + vtype(1) + len(2) = the name-length byte.
     let name_len_pos = 9usize;
     *bytes.get_mut(name_len_pos).unwrap() = 0x7F;
-    assert_eq!(Document::parse(&bytes).unwrap_err().to_string(), "corrupted length");
+    assert_eq!(
+        Document::parse(&bytes).unwrap_err().to_string(),
+        "corrupted length"
+    );
 }

@@ -13,18 +13,18 @@
 use aead::BodyAlg;
 use container::{
     assemble, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry,
-    BODY_AEGIS256, BODY_KUZ_CTR_HMAC, COMMIT_LEN, HEADER_LEN, KDF_ARGON2ID,
-    KDF_M_KIB_MAX, KDF_P_MIN, KDF_T_MIN, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, WRAP_AEGIS256,
+    BODY_AEGIS256, BODY_KUZ_CTR_HMAC, COMMIT_LEN, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX,
+    KDF_P_MIN, KDF_T_MIN, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, WRAP_AEGIS256,
 };
 use kdf::KdfProfile;
 use pq::keypair;
+use record::Document;
 use secret::Secret;
 use session::{
-    add_device, add_prf_unlock, change_master, create, list_records, reencrypt_body,
-    remove_device, remove_prf_unlock, revoke, unlock, write_record, Revoke, RotateCreds, Seen,
-    Session, UnlockCreds,
+    add_device, add_prf_unlock, change_master, create, list_records, reencrypt_body, remove_device,
+    remove_prf_unlock, revoke, unlock, write_record, Revoke, RotateCreds, Seen, Session,
+    UnlockCreds,
 };
-use record::Document;
 use wraps::{DeviceKeys, DevicePublics, PrfPublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use zeroize::Zeroize;
@@ -59,7 +59,9 @@ fn vault_operations_mobile_and_one_desktop() {
 
 fn reject_before_argon() {
     assert_eq!(
-        create(&SEED_KUZ, KdfProfile::Mobile, BodyAlg::KuzMgm).unwrap_err().to_string(),
+        create(&SEED_KUZ, KdfProfile::Mobile, BodyAlg::KuzMgm)
+            .unwrap_err()
+            .to_string(),
         "unsupported body algorithm 0xa002"
     );
     let header = StaticHeader {
@@ -75,7 +77,13 @@ fn reject_before_argon() {
     let mut bytes = header.to_bytes().to_vec();
     bytes.extend_from_slice(&[0u8; COMMIT_LEN]);
     assert_eq!(
-        unlock(&VaultFile::new(bytes), &UnlockCreds::master(&SEED_AEGIS), None).unwrap_err().to_string(),
+        unlock(
+            &VaultFile::new(bytes),
+            &UnlockCreds::master(&SEED_AEGIS),
+            None
+        )
+        .unwrap_err()
+        .to_string(),
         "kdf parameters rejected"
     );
     // Non-BRBY bytes are rejected before Argon2 runs.
@@ -85,7 +93,8 @@ fn reject_before_argon() {
             &UnlockCreds::master(&SEED_AEGIS),
             None
         )
-        .unwrap_err().to_string(),
+        .unwrap_err()
+        .to_string(),
         "bad magic"
     );
 }
@@ -101,17 +110,23 @@ fn round_trip(master: &[u8; 64], alg: BodyAlg) -> (VaultFile, Session) {
 
 fn tamper(file: &VaultFile, master: &[u8; 64]) {
     assert_eq!(
-        unlock(file, &UnlockCreds::master(&SEED_KUZ), None).unwrap_err().to_string(),
+        unlock(file, &UnlockCreds::master(&SEED_KUZ), None)
+            .unwrap_err()
+            .to_string(),
         "wrap authentication failed"
     );
     let flipped_header = flip_at(file, 20);
     assert_eq!(
-        unlock(&flipped_header, &UnlockCreds::master(master), None).unwrap_err().to_string(),
+        unlock(&flipped_header, &UnlockCreds::master(master), None)
+            .unwrap_err()
+            .to_string(),
         "wrap authentication failed"
     );
     let flipped_body = flip_at(file, body_offset(file));
     assert_eq!(
-        unlock(&flipped_body, &UnlockCreds::master(master), None).unwrap_err().to_string(),
+        unlock(&flipped_body, &UnlockCreds::master(master), None)
+            .unwrap_err()
+            .to_string(),
         "commit mismatch"
     );
     let parsed = file.parse().unwrap();
@@ -121,12 +136,16 @@ fn tamper(file: &VaultFile, master: &[u8; 64]) {
     assert_eq!(file.as_bytes()[PASSWORD_CT_OFFSET], wrap.ct[0]);
     let flipped_ct = flip_at(file, PASSWORD_CT_OFFSET);
     assert_eq!(
-        unlock(&flipped_ct, &UnlockCreds::master(master), None).unwrap_err().to_string(),
+        unlock(&flipped_ct, &UnlockCreds::master(master), None)
+            .unwrap_err()
+            .to_string(),
         "wrap authentication failed"
     );
     let swapped_alg = set_body_alg(file, BODY_KUZ_CTR_HMAC);
     assert_eq!(
-        unlock(&swapped_alg, &UnlockCreds::master(master), None).unwrap_err().to_string(),
+        unlock(&swapped_alg, &UnlockCreds::master(master), None)
+            .unwrap_err()
+            .to_string(),
         "wrap authentication failed"
     );
 }
@@ -135,13 +154,17 @@ fn transplant(aegis: &VaultFile, kuz: &VaultFile) {
     let foreign = password_record(aegis);
     let mixed = with_password_record(kuz, &foreign);
     assert_eq!(
-        unlock(&mixed, &UnlockCreds::master(&SEED_AEGIS), None).unwrap_err().to_string(),
+        unlock(&mixed, &UnlockCreds::master(&SEED_AEGIS), None)
+            .unwrap_err()
+            .to_string(),
         "wrap authentication failed"
     );
     // B's password wrap stays. A's record replaces the body, so the commit is stale.
     let spliced = replace_body(kuz, &foreign);
     assert_eq!(
-        unlock(&spliced, &UnlockCreds::master(&SEED_KUZ), None).unwrap_err().to_string(),
+        unlock(&spliced, &UnlockCreds::master(&SEED_KUZ), None)
+            .unwrap_err()
+            .to_string(),
         "commit mismatch"
     );
 }
@@ -177,7 +200,9 @@ fn add_and_check(session: &mut Session, file: &mut VaultFile) -> (DevicePublics,
     let generation_after = session.generation();
     let tag_after = *session.commit_tag();
     assert_eq!(
-        add_device(session, file, &device.0).unwrap_err().to_string(),
+        add_device(session, file, &device.0)
+            .unwrap_err()
+            .to_string(),
         "corrupted length"
     );
     assert_eq!(file.as_bytes(), after_add.as_slice());
@@ -199,12 +224,18 @@ fn reencrypt_and_check(
     write_record(session, file, None, &doc("pre-rotation")).unwrap();
     reencrypt_body(session, file, &SEED_ROTATED, &[device.0], &[], &[]).unwrap();
     assert_eq!(
-        unlock(file, &UnlockCreds::master(&SEED_AEGIS), None).unwrap_err().to_string(),
+        unlock(file, &UnlockCreds::master(&SEED_AEGIS), None)
+            .unwrap_err()
+            .to_string(),
         "wrap authentication failed"
     );
     let opened = unlock(file, &UnlockCreds::master(&SEED_ROTATED), None).unwrap();
     assert_eq!(opened.commit_tag(), session.commit_tag());
-    assert_eq!(list_records(&opened).unwrap().len(), 1, "reencrypt keeps records");
+    assert_eq!(
+        list_records(&opened).unwrap().len(),
+        1,
+        "reencrypt keeps records"
+    );
     let via_device = unlock(file, &UnlockCreds::default().with_device(&device.1), None).unwrap();
     assert_eq!(via_device.generation(), session.generation());
     assert_eq!(via_device.commit_tag(), session.commit_tag());
@@ -222,7 +253,9 @@ fn change_master_and_check(session: &mut Session, file: &mut VaultFile) {
         commit_tag: *session.commit_tag(),
     };
     assert_eq!(
-        unlock(&old, &UnlockCreds::master(&SEED_ROTATED), Some(seen)).unwrap_err().to_string(),
+        unlock(&old, &UnlockCreds::master(&SEED_ROTATED), Some(seen))
+            .unwrap_err()
+            .to_string(),
         "rollback"
     );
     let opened_old = unlock(&old, &UnlockCreds::master(&SEED_ROTATED), None).unwrap();
@@ -237,7 +270,9 @@ fn doc(title: &str) -> record::Document {
 }
 
 fn reopened_len(file: &VaultFile, master: &[u8; 64]) -> usize {
-    list_records(&unlock(file, &UnlockCreds::master(master), None).unwrap()).unwrap().len()
+    list_records(&unlock(file, &UnlockCreds::master(master), None).unwrap())
+        .unwrap()
+        .len()
 }
 
 /// Reopening from disk must show exactly what the live session shows, for
@@ -259,11 +294,18 @@ fn mutations_survive_reopen_for_every_body_alg() {
         // The full rotation path (rotate_all, drop = None) must keep every
         // record — revoke used to publish an empty log (A2).
         change_master(&mut session, &mut file, &SEED_ROTATED, &[]).unwrap();
-        assert_eq!(list_records(&session).unwrap().len(), 3, "{alg:?}: rotate live");
-        assert_eq!(reopened_len(&file, &SEED_ROTATED), 3, "{alg:?}: rotate reopen");
+        assert_eq!(
+            list_records(&session).unwrap().len(),
+            3,
+            "{alg:?}: rotate live"
+        );
+        assert_eq!(
+            reopened_len(&file, &SEED_ROTATED),
+            3,
+            "{alg:?}: rotate reopen"
+        );
     }
 }
-
 
 fn write_and_check(session: &mut Session, file: &mut VaultFile) {
     let wraps_before = entry_wire(file);
@@ -283,7 +325,9 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
     let generation = session.generation();
     let missing = [0x11; 16];
     assert_eq!(
-        remove_device(session, file, &missing).unwrap_err().to_string(),
+        remove_device(session, file, &missing)
+            .unwrap_err()
+            .to_string(),
         "wrap not found"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
@@ -393,13 +437,20 @@ fn replace_body(file: &VaultFile, new_body: &[u8]) -> VaultFile {
 }
 
 fn prf_publics() -> PrfPublics {
-    PrfPublics { id: [0x5A; 16], cred_id: vec![0x51; 32], salt: [0x33; 32] }
+    PrfPublics {
+        id: [0x5A; 16],
+        cred_id: vec![0x51; 32],
+        salt: [0x33; 32],
+    }
 }
 
 fn count_prf_id(file: &VaultFile, id: [u8; 16]) -> usize {
-    file.parse().unwrap().entries.iter().filter(|entry| {
-        matches!(entry, WrapEntry::Prf(wrap) if wrap.id == id)
-    }).count()
+    file.parse()
+        .unwrap()
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry, WrapEntry::Prf(wrap) if wrap.id == id))
+        .count()
 }
 
 #[test]
@@ -410,15 +461,25 @@ fn change_master_keeps_single_prf_wrap() {
     add_prf_unlock(&mut session, &mut file, &publics, &[0x44; 32]).unwrap();
     assert_eq!(count_prf_id(&file, publics.id), 1);
 
-    change_master(&mut session, &mut file, &SEED_NEXT, &[(prf_publics(), [0x44; 32])])
-        .unwrap();
+    change_master(
+        &mut session,
+        &mut file,
+        &SEED_NEXT,
+        &[(prf_publics(), [0x44; 32])],
+    )
+    .unwrap();
     // The re-sealed wrap replaces the old one: the grant id stays unique and
     // the directory does not grow on every master change.
     assert_eq!(count_prf_id(&file, [0x5A; 16]), 1);
 
     // The re-sealed grant still authenticates with the same PRF output.
     let prf_out = [0x44; 32];
-    unlock(&file, &UnlockCreds::default().with_prf(&prf_publics(), &prf_out), None).unwrap();
+    unlock(
+        &file,
+        &UnlockCreds::default().with_prf(&prf_publics(), &prf_out),
+        None,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -449,7 +510,13 @@ const fn revoke_creds<'a>(
     devices: &'a [DevicePublics],
     prfs: &'a [(PrfPublics, [u8; 32])],
 ) -> RotateCreds<'a> {
-    RotateCreds { master, human_password: None, devices, chips: &[], prfs }
+    RotateCreds {
+        master,
+        human_password: None,
+        devices,
+        chips: &[],
+        prfs,
+    }
 }
 
 #[test]
@@ -461,12 +528,22 @@ fn revoked_device_cannot_read_new_frames() {
 
     // The attacker copies the file while the device is still enrolled.
     let stolen = VaultFile::new(file.as_bytes().to_vec());
-    let attacker =
-        unlock(&stolen, &UnlockCreds::default().with_device(&device.1), None).unwrap();
+    let attacker = unlock(
+        &stolen,
+        &UnlockCreds::default().with_device(&device.1),
+        None,
+    )
+    .unwrap();
 
     let devices = [device.0];
     let creds = revoke_creds(&SEED_NEXT, &devices, &[]);
-    revoke(&mut session, &mut file, &Revoke::Device(&device.0.id), &creds).unwrap();
+    revoke(
+        &mut session,
+        &mut file,
+        &Revoke::Device(&device.0.id),
+        &creds,
+    )
+    .unwrap();
 
     // The stolen device keys open nothing: its wrap is gone and the vault key
     // underneath has been replaced.
@@ -507,7 +584,12 @@ fn remaining_factors_still_unlock_after_revoke() {
     revoke(&mut session, &mut file, &Revoke::Device(&gone.0.id), &creds).unwrap();
 
     assert!(unlock(&file, &UnlockCreds::default().with_device(&kept.1), None).is_ok());
-    assert!(unlock(&file, &UnlockCreds::default().with_prf(&publics, &prf_out), None).is_ok());
+    assert!(unlock(
+        &file,
+        &UnlockCreds::default().with_prf(&publics, &prf_out),
+        None
+    )
+    .is_ok());
     assert!(unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).is_ok());
     assert!(unlock(&file, &UnlockCreds::default().with_device(&gone.1), None).is_err());
 }
@@ -527,9 +609,14 @@ fn revoke_without_prf_output_fails() {
     let devices = [device.0];
     let creds = revoke_creds(&SEED_NEXT, &devices, &[]);
     assert_eq!(
-        revoke(&mut session, &mut file, &Revoke::Device(&device.0.id), &creds)
-            .unwrap_err()
-            .to_string(),
+        revoke(
+            &mut session,
+            &mut file,
+            &Revoke::Device(&device.0.id),
+            &creds
+        )
+        .unwrap_err()
+        .to_string(),
         "prf factor required"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
@@ -622,8 +709,6 @@ fn origin_device_is_stable_across_unlocks() {
     assert_ne!(master.origin_device(), [0u8; 16]);
     assert_ne!(master.origin_device(), device.0.id);
 }
-
-
 
 #[test]
 fn append_is_constant_time_vs_vault_size() {

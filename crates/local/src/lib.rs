@@ -32,9 +32,7 @@ impl Paths {
     /// The vault directory: `<base>/vaults/<vault_id_hex>`.
     #[must_use]
     pub fn vault_dir(&self) -> &Path {
-        self.vault_file
-            .parent()
-            .unwrap_or(self.base.as_path())
+        self.vault_file.parent().unwrap_or(self.base.as_path())
     }
 }
 
@@ -182,7 +180,10 @@ mod tests {
         let mut two = [0u8; 16];
         two[0] = 0x00;
         two[1] = 0xAB;
-        assert_eq!(vault_dir_name(&two), "vaults/00ab0000000000000000000000000000");
+        assert_eq!(
+            vault_dir_name(&two),
+            "vaults/00ab0000000000000000000000000000"
+        );
         let all = [0xFF; 16];
         assert_eq!(vault_dir_name(&all), format!("vaults/{}", "ff".repeat(16)));
     }

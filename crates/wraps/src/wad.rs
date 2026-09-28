@@ -9,7 +9,6 @@ use pq::PQ_PK_LEN;
 use secret::Secret;
 use zeroize::Zeroize;
 
-
 pub fn password_wad(header: &StaticHeader, kid: [u8; 8], nonce: &[u8; 32]) -> Vec<u8> {
     let header_bytes = header.to_bytes();
     let kind_le = KIND_PASSWORD.to_le_bytes();
@@ -27,11 +26,7 @@ pub fn password_wad(header: &StaticHeader, kid: [u8; 8], nonce: &[u8; 32]) -> Ve
 /// Associated data for a human password wrap: binds the record to the file,
 /// the kind `0x0005`, the kid, and the nonce.
 #[must_use]
-pub fn human_password_wad(
-    header: &StaticHeader,
-    kid: [u8; 8],
-    nonce: &[u8; 32],
-) -> Vec<u8> {
+pub fn human_password_wad(header: &StaticHeader, kid: [u8; 8], nonce: &[u8; 32]) -> Vec<u8> {
     let header_bytes = header.to_bytes();
     let kind_le = KIND_PASSWORD_HUMAN.to_le_bytes();
     let mut wad = Vec::with_capacity(

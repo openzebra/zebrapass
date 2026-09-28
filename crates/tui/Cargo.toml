@@ -1,0 +1,39 @@
+[package]
+name = "tui"
+version = "0.1.0"
+description = "ZebraPass terminal interface."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "zebrapass"
+path = "src/main.rs"
+
+[features]
+default = ["osc52"]
+# Clipboard through the OSC 52 terminal escape (works over SSH, no native dependency).
+osc52 = []
+# Development-only secure-chip factor backed by the in-memory `SoftwareChip`.
+dev-chip = ["dep:platform", "dep:pq"]
+
+[dependencies]
+anyhow.workspace = true
+crossterm.workspace = true
+frame = { path = "../frame" }
+getrandom.workspace = true
+kdf = { path = "../kdf" }
+local = { path = "../local" }
+platform = { path = "../platform", optional = true }
+pq = { path = "../pq", optional = true }
+ratatui.workspace = true
+record = { path = "../record" }
+secrecy.workspace = true
+seed = { path = "../seed" }
+session = { path = "../session" }
+subtle.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

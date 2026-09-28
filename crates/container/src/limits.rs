@@ -4,7 +4,6 @@
 
 use pq::KEM_CT_LEN;
 
-
 /// File magic `BRBY`.
 pub const MAGIC: [u8; 4] = *b"BRBY";
 
@@ -171,9 +170,15 @@ pub fn read_array<const N: usize>(bytes: &[u8], offset: usize) -> anyhow::Result
 }
 
 pub fn read_ref<const N: usize>(bytes: &[u8], offset: usize) -> anyhow::Result<&[u8; N]> {
-    let end = offset.checked_add(N).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    let slice = bytes.get(offset..end).ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-    slice.first_chunk::<N>().ok_or_else(|| anyhow::anyhow!("corrupted length"))
+    let end = offset
+        .checked_add(N)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    let slice = bytes
+        .get(offset..end)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    slice
+        .first_chunk::<N>()
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))
 }
 
 pub fn read_u16(bytes: &[u8], offset: usize) -> anyhow::Result<u16> {
@@ -218,5 +223,6 @@ pub fn concat_array<const N: usize>(parts: &[&[u8]]) -> [u8; N] {
 }
 
 pub fn shift(base: usize, rel: usize) -> anyhow::Result<usize> {
-    base.checked_add(rel).ok_or_else(|| anyhow::anyhow!("corrupted length"))
+    base.checked_add(rel)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))
 }

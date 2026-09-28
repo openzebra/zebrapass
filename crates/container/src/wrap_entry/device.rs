@@ -4,7 +4,7 @@ use pq::KEM_CT_LEN;
 
 use crate::limits::{
     read_array, read_u16, shift, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN, DEVICE_SUFFIX_LEN,
-    ENTRY_HEADER_LEN, KIND_DEVICE, KEM_MLKEM768,
+    ENTRY_HEADER_LEN, KEM_MLKEM768, KIND_DEVICE,
 };
 use crate::wrap_entry::{DeviceWrap, WrapEntry};
 
@@ -64,7 +64,8 @@ pub(super) fn parse_device(
     payload: usize,
     entry_len: u32,
 ) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+    let payload_len =
+        usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
     if payload_len != DEVICE_PAYLOAD_MIN {
         return Err(anyhow::anyhow!("corrupted length"));
     }

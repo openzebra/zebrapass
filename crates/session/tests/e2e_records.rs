@@ -18,12 +18,12 @@ use kdf::KdfProfile;
 use pq::keypair;
 use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
 use secret::Secret;
+use seed::SeedPhrase;
 use session::{
     add_device, change_master, clear_history, delete_record, history, list_records, open_record,
     restore_revision, unlock, vault_meta, write_record, DeviceKeys, DevicePublics, Seen,
     UnlockCreds, VaultFile,
 };
-use seed::SeedPhrase;
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use zeroize::Zeroize;
 
@@ -52,8 +52,16 @@ fn device_identity(id_byte: u8) -> (DevicePublics, DeviceKeys) {
     getrandom::fill(&mut scalar).unwrap();
     let x_pk = x25519(scalar, X25519_BASEPOINT_BYTES);
     let id = [id_byte; 16];
-    let publics = DevicePublics { id, x_pk, pq_pk: ntru_pk };
-    let keys = DeviceKeys { id, x_sk: Secret::new(scalar), pq_sk: kem_secret };
+    let publics = DevicePublics {
+        id,
+        x_pk,
+        pq_pk: ntru_pk,
+    };
+    let keys = DeviceKeys {
+        id,
+        x_sk: Secret::new(scalar),
+        pq_sk: kem_secret,
+    };
     scalar.zeroize();
     (publics, keys)
 }
@@ -175,7 +183,10 @@ fn seed_vault_storage_and_records_end_to_end() {
 #[test]
 fn identity_is_deterministic_and_devices_differ() {
     let seed = [0x42u8; 64];
-    assert_eq!(kdf::client_id(&seed).unwrap(), kdf::client_id(&seed).unwrap());
+    assert_eq!(
+        kdf::client_id(&seed).unwrap(),
+        kdf::client_id(&seed).unwrap()
+    );
     assert_ne!(
         kdf::client_id(&seed).unwrap(),
         kdf::client_id(&[0x43u8; 64]).unwrap()

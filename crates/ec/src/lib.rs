@@ -72,7 +72,9 @@ pub fn pair_from_scalar(scalar: &Secret<[u8; 32]>) -> anyhow::Result<(SecretKey,
         .map_err(|_| anyhow::anyhow!("kem length"))?;
     let encoded = encode_pub(&sk.public_key())?;
     let mut point = [0u8; 64];
-    let body = encoded.get(1..).ok_or_else(|| anyhow::anyhow!("kem length"))?;
+    let body = encoded
+        .get(1..)
+        .ok_or_else(|| anyhow::anyhow!("kem length"))?;
     point.copy_from_slice(body);
     let mut encoded = encoded;
     encoded.zeroize();
@@ -123,7 +125,10 @@ mod tests {
         assert_eq!(point, again.1);
         // The zero scalar is not a valid secret key.
         let zero = Secret::new([0u8; 32]);
-        assert_eq!(pair_from_scalar(&zero).unwrap_err().to_string(), "kem length");
+        assert_eq!(
+            pair_from_scalar(&zero).unwrap_err().to_string(),
+            "kem length"
+        );
         // A scalar at the curve order is rejected too.
         let n = Secret::new([
             0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,

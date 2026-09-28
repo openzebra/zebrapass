@@ -66,9 +66,7 @@ pub fn record_message(
     let Ok(ct_len) = u32::try_from(ciphertext.len()) else {
         return Vec::new();
     };
-    let mut msg = Vec::with_capacity(
-        16 + 4 + 8 + 32 + 4 + 2 + 4 + ciphertext.len() + 7 * 2,
-    );
+    let mut msg = Vec::with_capacity(16 + 4 + 8 + 32 + 4 + 2 + 4 + ciphertext.len() + 7 * 2);
     msg.extend_from_slice(&L_VAULT.to_le_bytes());
     msg.extend_from_slice(vault_id);
     msg.extend_from_slice(&L_RECORD.to_le_bytes());
@@ -146,11 +144,10 @@ impl SyncRecord {
 /// # Errors
 ///
 /// `sign failed` when ML-DSA signing fails.
-pub fn sign_record(
-    device: &DeviceSignKey,
-    record: &SyncRecord,
-) -> Result<Vec<u8>, SessionError> {
-    let msg = record.signed_message().map_err(|_| SessionError::UnsupportedMsgVersion)?;
+pub fn sign_record(device: &DeviceSignKey, record: &SyncRecord) -> Result<Vec<u8>, SessionError> {
+    let msg = record
+        .signed_message()
+        .map_err(|_| SessionError::UnsupportedMsgVersion)?;
     pq::sync_sign(&*device.seed, SYNC_CTX, &msg).map_err(|_| SessionError::SignFailed)
 }
 
@@ -189,7 +186,10 @@ impl DeviceSignKey {
     #[must_use]
     pub fn from_seed(seed: &[u8; SYNC_SEED_LEN]) -> Self {
         let key = pq::signing_key_from_seed(seed);
-        Self { seed: Zeroizing::new(*seed), key }
+        Self {
+            seed: Zeroizing::new(*seed),
+            key,
+        }
     }
 
     /// The verifying key the account root certifies and servers pin.
@@ -249,8 +249,13 @@ impl DeviceCert {
         if now_ms > self.not_after_ms {
             return Err(anyhow::anyhow!("device cert expired"));
         }
-        pq::sync_verify(root_vk, DEVICE_CERT_CTX, &self.signed_message(), &self.signature)
-            .map_err(|_| anyhow::anyhow!("device cert rejected"))
+        pq::sync_verify(
+            root_vk,
+            DEVICE_CERT_CTX,
+            &self.signed_message(),
+            &self.signature,
+        )
+        .map_err(|_| anyhow::anyhow!("device cert rejected"))
     }
 }
 
@@ -312,23 +317,44 @@ mod tests {
             signature: Vec::new(),
         };
         let signature = sign_record(&device, &unsigned).unwrap();
-        let record = SyncRecord { signature, ..unsigned };
+        let record = SyncRecord {
+            signature,
+            ..unsigned
+        };
         verify_record(&vk, &record, &vault).unwrap();
 
         let mut flipped = ct;
         *flipped.get_mut(0).unwrap() ^= 1;
-        let tampered = SyncRecord { frame: flipped, ..record.clone() };
+        let tampered = SyncRecord {
+            frame: flipped,
+            ..record.clone()
+        };
         assert!(verify_record(&vk, &tampered, &vault).is_err());
-        let rolled = SyncRecord { revision: 12, ..record.clone() };
+        let rolled = SyncRecord {
+            revision: 12,
+            ..record.clone()
+        };
         assert!(verify_record(&vk, &rolled, &vault).is_err());
-        let foreign = SyncRecord { vault_id: [9u8; 16], ..record.clone() };
+        let foreign = SyncRecord {
+            vault_id: [9u8; 16],
+            ..record.clone()
+        };
         assert!(verify_record(&vk, &foreign, &vault).is_err());
-        let swapped = SyncRecord { record_id: 4, ..record.clone() };
+        let swapped = SyncRecord {
+            record_id: 4,
+            ..record.clone()
+        };
         assert!(verify_record(&vk, &swapped, &vault).is_err());
-        let wrong = SyncRecord { key_generation: 5, ..record.clone() };
+        let wrong = SyncRecord {
+            key_generation: 5,
+            ..record.clone()
+        };
         assert!(verify_record(&vk, &wrong, &vault).is_err());
         assert!(verify_record(&other.verifying_key().unwrap(), &record, &vault).is_err());
-        let short = SyncRecord { signature: record.signature[..100].to_vec(), ..record };
+        let short = SyncRecord {
+            signature: record.signature[..100].to_vec(),
+            ..record
+        };
         assert!(verify_record(&vk, &short, &vault).is_err());
     }
 
@@ -337,7 +363,10 @@ mod tests {
         let a = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 10], 0);
         let b = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 9], 0);
         assert_ne!(a, b);
-        assert_eq!(a.len(), 2 + 16 + 2 + 4 + 2 + 8 + 2 + 32 + 2 + 4 + 2 + 2 + 2 + 4 + 10);
+        assert_eq!(
+            a.len(),
+            2 + 16 + 2 + 4 + 2 + 8 + 2 + 32 + 2 + 4 + 2 + 2 + 2 + 4 + 10
+        );
     }
 
     #[test]

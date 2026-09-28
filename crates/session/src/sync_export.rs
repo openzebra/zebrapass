@@ -57,16 +57,16 @@ pub fn export_record(
     record_id: u32,
 ) -> anyhow::Result<SyncRecord> {
     let refs = frame::parse_index(session.records.expose())?;
-    let reference = frame::latest(&refs, record_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown record"))?;
+    let reference =
+        frame::latest(&refs, record_id).ok_or_else(|| anyhow::anyhow!("unknown record"))?;
     let frame_bytes = frame::frame_at(session.records.expose(), reference)?.to_vec();
     let origin = frame::parse(&frame_bytes)?.origin_device;
     if origin == [0u8; 16] {
         return Err(SessionError::ZeroOrigin.into());
     }
     let content_hash: [u8; 32] = Sha256::digest(&frame_bytes).into();
-    let generation = u32::try_from(session.generation())
-        .map_err(|_| anyhow::anyhow!("ciphertext too large"))?;
+    let generation =
+        u32::try_from(session.generation()).map_err(|_| anyhow::anyhow!("ciphertext too large"))?;
     let unsigned = SyncRecord {
         vault_id: *session.vault_id(),
         record_id,
@@ -78,7 +78,10 @@ pub fn export_record(
         signature: Vec::new(),
     };
     let signature = sign_record(device, &unsigned)?;
-    Ok(SyncRecord { signature, ..unsigned })
+    Ok(SyncRecord {
+        signature,
+        ..unsigned
+    })
 }
 
 /// Verify an exported payload against a device verifying key and the vault

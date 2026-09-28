@@ -4,7 +4,6 @@ extern crate argon2 as argon2_impl;
 use argon2_impl::{Algorithm, Argon2, Params, Version};
 use secret::Secret;
 
-
 /// OWASP Argon2id minimum: 19 MiB, two iterations, one lane.
 const M_KIB_FLOOR: u32 = 19_456;
 const T_FLOOR: u32 = 2;
@@ -51,8 +50,8 @@ pub fn argon2id(
         return Err(anyhow::anyhow!("empty password"));
     }
 
-    let params =
-        Params::new(m_kib, t, p, Some(OUTPUT_LEN)).map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    let params = Params::new(m_kib, t, p, Some(OUTPUT_LEN))
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
     let hasher = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; OUTPUT_LEN];
     hasher

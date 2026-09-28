@@ -28,9 +28,7 @@ use container::{VaultFile, COMMIT_LEN, HEADER_LEN, KDF_M_KIB_MAX, KDF_M_KIB_MIN,
 use kdf::{derive_vault_keys, KdfProfile};
 use pq::keypair;
 use secret::Secret;
-use session::{
-    add_device, change_master, create, remove_device, unlock, Seen, UnlockCreds,
-};
+use session::{add_device, change_master, create, remove_device, unlock, Seen, UnlockCreds};
 use wraps::{DeviceKeys, DevicePublics};
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use zeroize::Zeroize;
@@ -181,7 +179,12 @@ fn correctness_seen_blocks_rollback_to_older_file() {
         generation: 1,
         commit_tag: [0u8; 32],
     };
-    assert!(unlock(&old_file, &UnlockCreds::master(&SEED), Some(seen_same_gen_wrong_tag)).is_err());
+    assert!(unlock(
+        &old_file,
+        &UnlockCreds::master(&SEED),
+        Some(seen_same_gen_wrong_tag)
+    )
+    .is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +206,12 @@ fn conf_wrong_device_secret_same_id_rejected() {
     let (pubs, _keys) = device_identity(0x11);
     add_device(&mut session, &mut file, &pubs).unwrap();
     let (_forged_pubs, forged_keys) = device_identity(0x11); // same id, own secrets
-    assert!(unlock(&file, &UnlockCreds::default().with_device(&forged_keys), None).is_err());
+    assert!(unlock(
+        &file,
+        &UnlockCreds::default().with_device(&forged_keys),
+        None
+    )
+    .is_err());
 }
 
 #[test]
@@ -221,8 +229,7 @@ fn conf_cross_vault_transplant_password_wrap_rejected() {
 
 #[test]
 fn conf_cross_vault_transplant_device_wrap_rejected() {
-    let (mut file_a, mut session_a) =
-        create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file_a, mut session_a) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
     let (pubs, _keys) = device_identity(0x12);
     add_device(&mut session_a, &mut file_a, &pubs).unwrap();
     let (file_b, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
@@ -272,7 +279,10 @@ fn int_header_field_flips_all_rejected() {
     // vault_id@52, body_alg@68, wrap_alg@70.
     for idx in [0, 4, 6, 8, 12, 16, 20, 52, 68, 70] {
         let f = flip(&file, idx);
-        assert!(unlock(&f, &UnlockCreds::master(&SEED), None).is_err(), "header byte {idx} accepted");
+        assert!(
+            unlock(&f, &UnlockCreds::master(&SEED), None).is_err(),
+            "header byte {idx} accepted"
+        );
     }
 }
 
@@ -282,7 +292,10 @@ fn int_password_record_field_flips_all_rejected() {
     for idx in [OFF_KID, OFF_NONCE, OFF_CT, OFF_TAG] {
         let f = flip(&file, idx);
         let err = unlock(&f, &UnlockCreds::master(&SEED), None).unwrap_err();
-        assert!(err.to_string().contains("wrap authentication failed"), "byte {idx}");
+        assert!(
+            err.to_string().contains("wrap authentication failed"),
+            "byte {idx}"
+        );
     }
 }
 
@@ -302,9 +315,19 @@ fn int_device_record_field_flips_all_rejected() {
     let off_tail_nonce = len - COMMIT_LEN - 96;
     let off_tail_ct = off_tail_nonce + 32;
     let off_tail_tag = off_tail_ct + 32;
-    for idx in [off_id, off_dev_x, off_eph_x, off_tail_nonce, off_tail_ct, off_tail_tag] {
+    for idx in [
+        off_id,
+        off_dev_x,
+        off_eph_x,
+        off_tail_nonce,
+        off_tail_ct,
+        off_tail_tag,
+    ] {
         let f = flip(&file, idx);
-        assert!(unlock(&f, &UnlockCreds::default().with_device(&keys), None).is_err(), "device byte {idx}");
+        assert!(
+            unlock(&f, &UnlockCreds::default().with_device(&keys), None).is_err(),
+            "device byte {idx}"
+        );
     }
     // Sanity: untampered device still opens.
     unlock(&file, &UnlockCreds::default().with_device(&keys), None).unwrap();
@@ -316,7 +339,10 @@ fn int_wrapdir_generation_flip_detected_by_commit() {
     // wrap_count@72 and generation@74 are covered by the commit HMAC.
     for idx in [OFF_COUNT, OFF_DIR_GEN] {
         let f = flip(&file, idx);
-        assert!(unlock(&f, &UnlockCreds::master(&SEED), None).is_err(), "wrapdir byte {idx}");
+        assert!(
+            unlock(&f, &UnlockCreds::master(&SEED), None).is_err(),
+            "wrapdir byte {idx}"
+        );
     }
 }
 
@@ -357,7 +383,12 @@ fn int_wrapdir_invariants_enforced() {
     let mut duplicated = bytes[..ENTRY_END].to_vec();
     duplicated.extend_from_slice(&pw_rec);
     duplicated.extend_from_slice(&bytes[ENTRY_END..]);
-    assert!(unlock(&VaultFile::new(duplicated), &UnlockCreds::master(&SEED), None).is_err());
+    assert!(unlock(
+        &VaultFile::new(duplicated),
+        &UnlockCreds::master(&SEED),
+        None
+    )
+    .is_err());
 
     // A repeated device id does not parse.
     let (pubs, _keys) = device_identity(0x14);
@@ -381,7 +412,11 @@ fn kci_hkdf_domains_distinct_keys() {
     assert_ne!(k_body.expose(), k_commit.expose());
     assert_ne!(k_body.expose(), &vk);
     let (k_body_b, _m, _c) = derive_vault_keys(&vk, &vault_b).unwrap();
-    assert_ne!(k_body.expose(), k_body_b.expose(), "vault_id is the HKDF salt");
+    assert_ne!(
+        k_body.expose(),
+        k_body_b.expose(),
+        "vault_id is the HKDF salt"
+    );
 }
 
 #[test]
@@ -413,9 +448,8 @@ fn mu_three_devices_interleaved_unlocks() {
         devs.push((pubs, keys));
         // Every KEK added so far must open the current file (benign multi-user).
         for (p, k) in &devs {
-            unlock(&file, &UnlockCreds::default().with_device(k), None).unwrap_or_else(|e| {
-                panic!("device id {:?} failed after add: {e}", &p.id[..2])
-            });
+            unlock(&file, &UnlockCreds::default().with_device(k), None)
+                .unwrap_or_else(|e| panic!("device id {:?} failed after add: {e}", &p.id[..2]));
         }
         unlock(&file, &UnlockCreds::master(&SEED), None).unwrap();
     }
@@ -473,7 +507,8 @@ fn rnd_two_vaults_distinct_kid_nonce_body() {
     assert_ne!(&a[OFF_KID..OFF_NONCE], &b[OFF_KID..OFF_NONCE], "kid");
     assert_ne!(&a[OFF_NONCE..OFF_CT], &b[OFF_NONCE..OFF_CT], "wrap nonce");
     assert_ne!(
-        &a[OFF_CT..OFF_TAG], &b[OFF_CT..OFF_TAG],
+        &a[OFF_CT..OFF_TAG],
+        &b[OFF_CT..OFF_TAG],
         "wrapping the same password and salt? salt differs, but ct must differ too"
     );
     let (ab, ae) = body_span(&fa);

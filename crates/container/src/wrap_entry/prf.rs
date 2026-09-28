@@ -52,7 +52,8 @@ pub(super) fn parse_prf(
     payload: usize,
     entry_len: u32,
 ) -> anyhow::Result<(WrapEntry<'_>, usize)> {
-    let payload_len = usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+    let payload_len =
+        usize::try_from(entry_len).map_err(|_| anyhow::anyhow!("corrupted length"))?;
     if !matches!(payload_len, PRF_PAYLOAD_MIN..=PRF_PAYLOAD_MAX) {
         return Err(anyhow::anyhow!("corrupted length"));
     }

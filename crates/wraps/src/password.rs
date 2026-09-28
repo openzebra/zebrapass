@@ -120,7 +120,9 @@ mod tests {
         assert_eq!(opened.expose(), &vk);
         let wrong = [0x2Bu8; 64];
         assert_eq!(
-            open_password(&header, &parsed, &wrong).unwrap_err().to_string(),
+            open_password(&header, &parsed, &wrong)
+                .unwrap_err()
+                .to_string(),
             "wrap authentication failed"
         );
     }

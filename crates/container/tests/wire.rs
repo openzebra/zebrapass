@@ -7,14 +7,13 @@
 )]
 
 use container::{
-    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry, HumanKdf,
-    encode_password_entry, encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapDir,
-    WrapEntry, BODY_AEGIS256,
-    BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN,
-    DEVICE_SUFFIX_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE, DOMAIN_WRAP_PASSWORD, HEADER_LEN,
-    KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN,
-    KEM_MLKEM768, KEM_NTRULP, KIND_CHIP, KIND_PASSWORD, KIND_PRF, MAGIC, PASSWORD_PAYLOAD_LEN,
-    PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
+    assemble, encode_chip_entry, encode_device_entry, encode_human_password_entry,
+    encode_password_entry, encode_prf_entry, encode_wrap_dir, HumanKdf, StaticHeader, VaultFile,
+    WrapDir, WrapEntry, BODY_AEGIS256, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN,
+    DEVICE_PAYLOAD_MIN, DEVICE_PREFIX_LEN, DEVICE_SUFFIX_LEN, DOMAIN_BODY, DOMAIN_WRAP_DEVICE,
+    DOMAIN_WRAP_PASSWORD, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX,
+    KDF_P_MIN, KDF_T_MAX, KDF_T_MIN, KEM_MLKEM768, KEM_NTRULP, KIND_CHIP, KIND_PASSWORD, KIND_PRF,
+    MAGIC, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, VERSION, WRAP_AEGIS256,
 };
 use pq::{KEM_CT_LEN, PQ_PK_LEN};
 
@@ -161,11 +160,17 @@ fn bad_magic_is_reported_before_length() {
         "bad magic"
     );
     assert_eq!(
-        VaultFile::new(b"BRB".to_vec()).parse().unwrap_err().to_string(),
+        VaultFile::new(b"BRB".to_vec())
+            .parse()
+            .unwrap_err()
+            .to_string(),
         "bad magic"
     );
     assert_eq!(
-        VaultFile::new(b"BRBX".to_vec()).parse().unwrap_err().to_string(),
+        VaultFile::new(b"BRBX".to_vec())
+            .parse()
+            .unwrap_err()
+            .to_string(),
         "bad magic"
     );
     let mut long = vec![0xAB; 200];
@@ -323,23 +328,29 @@ fn duplicate_chip_and_prf_ids_are_rejected() {
         &[0x22; 64],
         2,
     );
-    assert_eq!(chip_file.parse().unwrap_err().to_string(), "corrupted length");
+    assert_eq!(
+        chip_file.parse().unwrap_err().to_string(),
+        "corrupted length"
+    );
 
-    let prf_first = encode_prf_entry([0xB2; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32])
-        .unwrap();
-    let prf_dupe = encode_prf_entry([0xB2; 16], &[0x78; 32], [9; 32], [1; 32], [2; 32], [3; 32])
-        .unwrap();
+    let prf_first =
+        encode_prf_entry([0xB2; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32]).unwrap();
+    let prf_dupe =
+        encode_prf_entry([0xB2; 16], &[0x78; 32], [9; 32], [1; 32], [2; 32], [3; 32]).unwrap();
     let prf_file = file_from(
         &sample_header(BODY_AEGIS256),
         &[&password, prf_first.as_slice(), prf_dupe.as_slice()],
         &[0x22; 64],
         2,
     );
-    assert_eq!(prf_file.parse().unwrap_err().to_string(), "corrupted length");
+    assert_eq!(
+        prf_file.parse().unwrap_err().to_string(),
+        "corrupted length"
+    );
 
     // Distinct ids of the same kind still parse.
-    let prf_other = encode_prf_entry([0xB3; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32])
-        .unwrap();
+    let prf_other =
+        encode_prf_entry([0xB3; 16], &[0x77; 32], [9; 32], [1; 32], [2; 32], [3; 32]).unwrap();
     let ok = file_from(
         &sample_header(BODY_AEGIS256),
         &[&password, prf_first.as_slice(), prf_other.as_slice()],
@@ -411,7 +422,11 @@ fn kdf_floor_and_ceiling_are_inclusive() {
         bytes.extend_from_slice(&[0u8; COMMIT_LEN]);
         let err = VaultFile::new(bytes).parse().unwrap_err();
         if rejected {
-            assert_eq!(err.to_string(), "kdf parameters rejected", "m={m_kib} t={t} p={p}");
+            assert_eq!(
+                err.to_string(),
+                "kdf parameters rejected",
+                "m={m_kib} t={t} p={p}"
+            );
         } else {
             assert_eq!(err.to_string(), "corrupted length", "m={m_kib} t={t} p={p}");
         }
@@ -427,7 +442,10 @@ fn algorithm_ids_are_checked_before_kdf_params() {
     version_and_m[4..6].copy_from_slice(&9u16.to_le_bytes());
     version_and_m[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(version_and_m).parse().unwrap_err().to_string(),
+        VaultFile::new(version_and_m)
+            .parse()
+            .unwrap_err()
+            .to_string(),
         "unsupported version 0x0009"
     );
 
@@ -436,7 +454,10 @@ fn algorithm_ids_are_checked_before_kdf_params() {
     kdf_and_wrap[70..72].copy_from_slice(&1u16.to_le_bytes());
     kdf_and_wrap[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(kdf_and_wrap).parse().unwrap_err().to_string(),
+        VaultFile::new(kdf_and_wrap)
+            .parse()
+            .unwrap_err()
+            .to_string(),
         "unsupported kdf 0x0002"
     );
 
@@ -445,7 +466,10 @@ fn algorithm_ids_are_checked_before_kdf_params() {
     wrap_and_body[68..70].copy_from_slice(&1u16.to_le_bytes());
     wrap_and_body[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(
-        VaultFile::new(wrap_and_body).parse().unwrap_err().to_string(),
+        VaultFile::new(wrap_and_body)
+            .parse()
+            .unwrap_err()
+            .to_string(),
         "unsupported wrap algorithm 0x0001"
     );
 
@@ -501,7 +525,9 @@ fn exact_wrap_directory_rejects_a_trailing_body() {
     let mut with_tail = dir;
     with_tail.push(0);
     assert_eq!(
-        WrapDir::try_from(with_tail.as_slice()).unwrap_err().to_string(),
+        WrapDir::try_from(with_tail.as_slice())
+            .unwrap_err()
+            .to_string(),
         "corrupted length"
     );
 }
@@ -563,7 +589,11 @@ fn human_password_roundtrip_and_floor() {
     let ok = encode_human_password_entry(
         [7u8; 8],
         [8u8; 32],
-        HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MIN, p: KDF_P_MIN },
+        HumanKdf {
+            m_kib: KDF_M_KIB_MIN,
+            t: KDF_T_MIN,
+            p: KDF_P_MIN,
+        },
         [9u8; 32],
         [0x66; 32],
         [0x77; 32],
@@ -580,13 +610,24 @@ fn human_password_roundtrip_and_floor() {
         panic!("second entry must be the human password wrap");
     };
     assert_eq!(human.kid, [7u8; 8]);
-    assert_eq!(human.kdf, HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MIN, p: KDF_P_MIN });
+    assert_eq!(
+        human.kdf,
+        HumanKdf {
+            m_kib: KDF_M_KIB_MIN,
+            t: KDF_T_MIN,
+            p: KDF_P_MIN
+        }
+    );
 
     // Downgrade attempt: memory below the floor.
     let weak = encode_human_password_entry(
         [7u8; 8],
         [8u8; 32],
-        HumanKdf { m_kib: KDF_M_KIB_MIN - 1, t: KDF_T_MIN, p: KDF_P_MIN },
+        HumanKdf {
+            m_kib: KDF_M_KIB_MIN - 1,
+            t: KDF_T_MIN,
+            p: KDF_P_MIN,
+        },
         [9u8; 32],
         [0x66; 32],
         [0x77; 32],
@@ -606,7 +647,11 @@ fn human_password_roundtrip_and_floor() {
     let hot = encode_human_password_entry(
         [7u8; 8],
         [8u8; 32],
-        HumanKdf { m_kib: KDF_M_KIB_MIN, t: KDF_T_MAX + 1, p: KDF_P_MIN },
+        HumanKdf {
+            m_kib: KDF_M_KIB_MIN,
+            t: KDF_T_MAX + 1,
+            p: KDF_P_MIN,
+        },
         [9u8; 32],
         [0x66; 32],
         [0x77; 32],

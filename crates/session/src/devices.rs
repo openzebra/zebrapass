@@ -1,6 +1,6 @@
 //! Add and remove device, chip, and PRF wraps. The body bytes stay as they are.
 
-use container::{KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PRF, VaultFile, WrapEntry};
+use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PRF};
 use wraps::{
     seal_chip, seal_device, seal_human_password, seal_prf, ChipGrant, ChipPublics, DeviceGrant,
     DevicePublics, HumanPasswordPublics, PrfGrant, PrfPublics,

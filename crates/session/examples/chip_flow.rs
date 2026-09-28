@@ -4,14 +4,19 @@
 //! with the chip alone, removes the chip grant, and opens the vault with the
 //! password again. Run with `cargo run -p session --example chip_flow`.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 
 use container::WrapEntry;
 use platform::{ChipBackend, SoftwareChip};
 use pq::keypair;
 use session::{
-    add_chip_unlock, create, remove_chip_unlock, unlock, BodyAlg, ChipKeys, ChipPublics, KdfProfile,
-    UnlockCreds,
+    add_chip_unlock, create, remove_chip_unlock, unlock, BodyAlg, ChipKeys, ChipPublics,
+    KdfProfile, UnlockCreds,
 };
 
 const SEED: [u8; 64] = [0x7F; 64];
@@ -56,7 +61,11 @@ fn main() -> anyhow::Result<()> {
         id: publics.id,
         pq_sk,
     };
-    let _session = unlock(&file, &UnlockCreds::default().with_chip(&keys, ss_p256), None)?;
+    let _session = unlock(
+        &file,
+        &UnlockCreds::default().with_chip(&keys, ss_p256),
+        None,
+    )?;
     println!("chip unlock ok");
 
     // 5. The settings toggle: drop the grant, keep the vault key.

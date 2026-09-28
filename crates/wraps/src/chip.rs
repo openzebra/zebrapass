@@ -309,7 +309,9 @@ mod tests {
             panic!("expected a chip entry");
         };
         assert_eq!(
-            open_chip(&header, &bad, &keys, &ss).unwrap_err().to_string(),
+            open_chip(&header, &bad, &keys, &ss)
+                .unwrap_err()
+                .to_string(),
             "wrap authentication failed"
         );
         // A foreign wrap id is rejected before any KEM.
