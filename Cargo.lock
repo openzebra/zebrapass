@@ -620,13 +620,16 @@ version = "0.1.0"
 dependencies = [
  "aead",
  "anyhow",
+ "ec",
  "frame",
  "getrandom",
  "kdf",
+ "pq",
  "record",
  "secret",
  "seed",
  "session",
+ "zeroize",
 ]
 
 [[package]]

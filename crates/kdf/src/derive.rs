@@ -38,7 +38,29 @@ pub const INFO_CLIENT_ID: &[u8] = b"brby/v2/client-id";
 /// HKDF info for the 32-byte ML-DSA signing seed.
 pub const INFO_SYNC_SIGN: &[u8] = b"brby/v2/sync-sign";
 
+/// HKDF info for the PIN-sealed device key file on this device.
+pub const INFO_DEVICE_KEY_FILE: &[u8] = b"brby/v2/device-key-file";
+
 const OUTPUT_LEN: usize = 32;
+
+/// Device key file key.
+///
+/// HKDF-SHA512 with the Argon2id output of the device PIN as `ikm`, the
+/// vault id as salt, and the length-framed file header appended to the
+/// info, so every header byte is bound into the key.
+///
+/// # Errors
+///
+/// `info part too long` when `file_header` exceeds `u16::MAX` bytes;
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn device_key_file_key(
+    pin_key: &[u8; 32],
+    vault_id: &[u8; 16],
+    file_header: &[u8],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    let info = framed_info(INFO_DEVICE_KEY_FILE, &[file_header])?;
+    hkdf_sha512(pin_key, vault_id, &info)
+}
 
 /// Per-record frame key: HKDF-SHA512 with the vault key as `ikm`, the
 /// vault id as salt, and the record id appended to the info. Two records

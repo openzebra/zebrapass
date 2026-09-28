@@ -41,3 +41,44 @@ impl KdfProfile {
         }
     }
 }
+
+impl From<KdfProfile> for u8 {
+    fn from(profile: KdfProfile) -> Self {
+        match profile {
+            KdfProfile::Fast => 1,
+            KdfProfile::Balanced => 2,
+            KdfProfile::Strong => 3,
+        }
+    }
+}
+
+impl TryFrom<u8> for KdfProfile {
+    type Error = anyhow::Error;
+
+    /// # Errors
+    ///
+    /// `kdf parameters rejected` for any byte outside the preset allow-list.
+    fn try_from(byte: u8) -> anyhow::Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|profile| u8::from(*profile) == byte)
+            .ok_or_else(|| anyhow::anyhow!("kdf parameters rejected"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
+
+    use super::KdfProfile;
+
+    #[test]
+    fn profile_ids_round_trip_and_reject_unknown_bytes() {
+        for profile in KdfProfile::ALL {
+            assert_eq!(KdfProfile::try_from(u8::from(profile)).unwrap(), profile);
+        }
+        for byte in [0u8, 4, 0x80, 0xFF] {
+            assert!(KdfProfile::try_from(byte).is_err());
+        }
+    }
+}

@@ -61,6 +61,7 @@ pub fn from_file(path: &Path) -> VaultRef {
             base: base.to_path_buf(),
             vault_file: path.to_path_buf(),
             local_meta: dir.join("local.meta"),
+            device_key: dir.join("device.key"),
         },
         vault_id,
     }
