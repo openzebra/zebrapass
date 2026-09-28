@@ -44,12 +44,7 @@ fn welcome_matches_golden_and_every_size() {
     let [normal, small, large] = render_all(&app);
     assert_all(
         &[normal.clone(), large],
-        &[
-            "Create a new vault",
-            "Restore from phrase",
-            "ML-KEM hybrid",
-            "Argon2id",
-        ],
+        &["Create a new vault", "Restore from phrase", "quantum-safe"],
     );
     assert!(small.contains("Create a new vault"), "{small}");
     let golden =

@@ -9,7 +9,7 @@ use crate::app::ctx::Ctx;
 use crate::app::flows::gate::WelcomeState;
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
-use crate::ui::widgets::chrome::{button, hint_bar, pq_badge};
+use crate::ui::widgets::chrome::{button, hint_bar};
 use crate::ui::widgets::stripes::scrolling_rule;
 
 const LETTER_ROWS: usize = 5;
@@ -53,7 +53,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &WelcomeState, ctx: &Ctx) 
     let [body, hints] = body_and_hints(area);
     let tick = if theme.anim { ctx.tick / 2 } else { 0 };
     let card = centered(body, body.width.min(96), 17);
-    let [rule_top, logo, rule_bottom, tagline, _, buttons, _, badges] = Layout::vertical([
+    let [rule_top, logo, rule_bottom, tagline, _, buttons, _, _] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(5),
         Constraint::Length(1),
@@ -88,13 +88,8 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &WelcomeState, ctx: &Ctx) 
         ]
     };
     frame.render_widget(Paragraph::new(rows).alignment(Alignment::Center), logo);
-    let dot = theme.glyphs.dot;
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            format!("quantum-safe {dot} envelope-encrypted {dot} per-record sync"),
-            theme.muted(),
-        ))
-        .alignment(Alignment::Center),
+        Paragraph::new(Span::styled("quantum-safe", theme.muted())).alignment(Alignment::Center),
         tagline,
     );
     let pair = centered(buttons, buttons.width.min(64), 3);
@@ -104,19 +99,6 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &WelcomeState, ctx: &Ctx) 
     let restore = format!("{}  Restore from phrase", theme.glyphs.recovery);
     button(frame, left, &create, !state.restore, !state.restore, theme);
     button(frame, right, &restore, state.restore, state.restore, theme);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            pq_badge(theme),
-            Span::styled(
-                format!(
-                    " ML-KEM hybrid  {dot}  ML-DSA  {dot}  AEGIS-256 + Kuznyechik  {dot}  Argon2id"
-                ),
-                theme.muted(),
-            ),
-        ]))
-        .alignment(Alignment::Center),
-        badges,
-    );
     hint_bar(
         frame,
         hints,
