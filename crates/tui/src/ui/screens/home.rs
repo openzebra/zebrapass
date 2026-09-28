@@ -15,7 +15,7 @@ use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
 use crate::ui::layout::{body_and_hints, Breakpoint};
 use crate::ui::screens::detail;
-use crate::ui::widgets::chrome::{hint_bar, pq_badge, row_style};
+use crate::ui::widgets::chrome::{hint_bar, row_style};
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::list;
 
@@ -47,7 +47,6 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
         ),
         Span::styled(countdown, countdown_style),
         Span::styled(fill, theme.muted()),
-        pq_badge(theme),
     ]);
     frame.render_widget(Paragraph::new(line).style(theme.base()), area);
 }
