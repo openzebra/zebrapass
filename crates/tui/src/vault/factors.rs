@@ -60,7 +60,7 @@ pub struct FactorView {
     pub id: Option<[u8; 16]>,
     /// Kind.
     pub kind: FactorKind,
-    /// This process holds the key (chips only).
+    /// This device holds the key (chips and devices).
     pub owned: bool,
     /// Argon2id cost, for password wraps.
     pub cost: Option<(u32, u32, u32)>,
@@ -71,6 +71,8 @@ pub struct FactorView {
 pub struct Presence {
     /// Devices.
     pub devices: usize,
+    /// Devices whose keys this device holds.
+    pub owned_devices: usize,
     /// Chips.
     pub chips: usize,
     /// Chips this process owns.
@@ -105,7 +107,7 @@ pub fn views(directory: &WrapDirectory, chips: &Chips) -> Vec<FactorView> {
             Factor::Device { id } => FactorView {
                 id: Some(*id),
                 kind: FactorKind::Device,
-                owned: false,
+                owned: chips.keyring().owns(id),
                 cost: None,
             },
             Factor::Chip(chip) => FactorView {
@@ -133,7 +135,10 @@ pub fn presence(directory: &WrapDirectory, chips: &Chips) -> Presence {
             match view.kind {
                 FactorKind::Recovery => acc.recovery = true,
                 FactorKind::Password => acc.password = true,
-                FactorKind::Device => acc.devices += 1,
+                FactorKind::Device => {
+                    acc.devices += 1;
+                    acc.owned_devices += usize::from(view.owned);
+                }
                 FactorKind::Chip => {
                     acc.chips += 1;
                     acc.owned_chips += usize::from(view.owned);

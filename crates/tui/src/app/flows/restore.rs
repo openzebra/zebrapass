@@ -9,7 +9,7 @@ use session::KdfProfile;
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
-use crate::app::flows::editing::{edit_secret, edit_text, printable};
+use crate::app::flows::editing::{edit_secret, edit_text, printable, Edit};
 use crate::app::flows::enroll::{EnrollEvent, EnrollState};
 use crate::app::flows::unlock::MAX_PASSPHRASE;
 use crate::app::keymap::{resolve, Scope};
@@ -37,21 +37,21 @@ pub enum RestoreStep {
     Enroll,
 }
 
-/// Focus on the phrase step.
+/// Focus on the phrase step, in Tab order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreField {
     /// The words.
     Phrase,
-    /// Optional 25th word.
-    Passphrase,
     /// Vault file path.
     Source,
     /// Display name.
     Name,
+    /// Optional 25th word.
+    Passphrase,
 }
 
 impl RestoreField {
-    const ORDER: [Self; 4] = [Self::Phrase, Self::Passphrase, Self::Source, Self::Name];
+    const ORDER: [Self; 4] = [Self::Phrase, Self::Source, Self::Name, Self::Passphrase];
 
     fn shift(self, forward: bool) -> Self {
         let at = Self::ORDER
@@ -93,6 +93,8 @@ pub struct RestoreState {
     pub parsed: Option<Box<SeedPhrase>>,
     /// Factor step.
     pub enroll: EnrollState,
+    /// Unlock factors in the file at `source`; `None` when it is not a vault.
+    pub source_factors: Option<usize>,
     /// Last problem.
     pub error: Option<&'static str>,
 }
@@ -111,7 +113,7 @@ impl RestoreState {
             .as_deref()
             .map(Path::to_string_lossy)
             .unwrap_or_default();
-        Self {
+        let mut state = Self {
             step: RestoreStep::Phrase,
             phrase: PhraseInput::default(),
             passphrase: SecretInput::new(MAX_PASSPHRASE),
@@ -122,8 +124,19 @@ impl RestoreState {
             reveal: RevealGuard::default(),
             parsed: None,
             enroll: EnrollState::new(false),
+            source_factors: None,
             error: None,
-        }
+        };
+        state.check_source();
+        state
+    }
+
+    /// Re-read the wrap directory at `source`. Unauthenticated: this only
+    /// tells the user whether the path points at a vault.
+    fn check_source(&mut self) {
+        self.source_factors = read_directory(Path::new(self.source.value().trim()))
+            .ok()
+            .map(|directory| directory.factors.len());
     }
 
     /// Keymap scope.
@@ -180,7 +193,9 @@ impl RestoreState {
                 edit_secret(&mut self.passphrase, event);
             }
             RestoreField::Source => {
-                edit_text(&mut self.source, event);
+                if edit_text(&mut self.source, event) == Edit::Consumed {
+                    self.check_source();
+                }
             }
             RestoreField::Name => {
                 edit_text(&mut self.name, event);
@@ -211,6 +226,7 @@ impl RestoreState {
             }
             RestoreField::Source => {
                 self.source.insert_str(text);
+                self.check_source();
             }
             RestoreField::Name => {
                 self.name.insert_str(text);
@@ -225,10 +241,12 @@ impl RestoreState {
                     self.error = Some("Ambiguous: keep typing or press Tab to accept.");
                 }
             }
+            // Tab completes the word being typed; with nothing to complete it
+            // moves on, like Tab everywhere else.
             Action::AcceptSuggestion => {
-                if self.field == RestoreField::Phrase {
-                    self.phrase.accept_suggestion();
-                } else {
+                let accepted =
+                    self.field == RestoreField::Phrase && self.phrase.accept_suggestion();
+                if !accepted {
                     self.field = self.field.shift(true);
                 }
             }
@@ -268,7 +286,7 @@ impl RestoreState {
             self.error = Some("Give the vault a name.");
             return;
         }
-        let Ok(directory) = read_directory(Path::new(self.source.value())) else {
+        let Ok(directory) = read_directory(Path::new(self.source.value().trim())) else {
             self.error = Some("No ZebraPass vault file at that path.");
             return;
         };
@@ -292,8 +310,8 @@ impl RestoreState {
             phrase,
             name: self.name.value().trim().to_owned(),
             base: ctx.base.clone(),
-            source: PathBuf::from(self.source.value()),
-            profile: KdfProfile::Desktop,
+            source: PathBuf::from(self.source.value().trim()),
+            profile: KdfProfile::Balanced,
             factor,
         };
         ctx.start(Job::Restore(Box::new(request)), Task::Restore);

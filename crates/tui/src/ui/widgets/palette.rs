@@ -20,9 +20,7 @@ const fn icon(action: Action, ctx: &Ctx) -> &'static str {
         Action::RotateVaultKey => glyphs.rotate,
         Action::ChangePassword | Action::DropRecovery => glyphs.password,
         Action::RevokeFactor | Action::OpenDevices | Action::EnrollDevice => glyphs.device,
-        Action::OpenSync | Action::ExportFrames | Action::ExportAll | Action::ImportFrames => {
-            glyphs.sync
-        }
+        Action::OpenSync => glyphs.sync,
         Action::Lock | Action::Quit => glyphs.lock,
         Action::OpenFactors => glyphs.vk,
         _ => glyphs.dot,

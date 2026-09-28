@@ -225,29 +225,23 @@ pub fn encrypt_records(
     k_bmac: &[u8; 32],
     records: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    match alg {
-        BodyAlg::Frames => encode_frames(records),
-        BodyAlg::KuzMgm => Err(anyhow::anyhow!(
-            "unsupported body algorithm {BODY_KUZ_MGM:#06x}"
-        )),
-        alg => {
-            let ad = body_ad(header);
-            let mut nonce = [0u8; 32];
-            let nonce_len = match alg {
-                BodyAlg::Aegis256 => 32,
-                BodyAlg::KuzCtrHmac => 16,
-                BodyAlg::Frames | BodyAlg::KuzMgm => unreachable!("handled above"),
-            };
-            let slot = nonce
-                .get_mut(..nonce_len)
-                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-            fill_random(slot)?;
-            let used = nonce
-                .get(..nonce_len)
-                .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
-            encrypt_body(alg, k_body, k_bmac, used, &ad, records)
+    let nonce_len = match alg {
+        BodyAlg::Frames => return encode_frames(records),
+        BodyAlg::KuzMgm => {
+            return Err(anyhow::anyhow!(
+                "unsupported body algorithm {BODY_KUZ_MGM:#06x}"
+            ))
         }
-    }
+        BodyAlg::Aegis256 => 32,
+        BodyAlg::KuzCtrHmac => 16,
+    };
+    let ad = body_ad(header);
+    let mut nonce = [0u8; 32];
+    let slot = nonce
+        .get_mut(..nonce_len)
+        .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;
+    fill_random(slot)?;
+    encrypt_body(alg, k_body, k_bmac, slot, &ad, records)
 }
 
 /// How the commit tag covers the body.

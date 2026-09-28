@@ -24,7 +24,7 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 |---|---|
 | `session` | Public API: `create`, `unlock`, records CRUD, devices, rotation/revoke, `export_record` / `accept_record`, sync signatures |
 | `local` | On-device storage: atomic writes, local meta, rollback `seen` state |
-| `platform` | OS / keychain / secure-enclave abstraction |
+| `platform` | OS / keychain / secure-enclave abstraction (`SecretStore`: macOS keychain, in-memory for tests) |
 | `container` | Vault file wire format: static header, wrap directory, wrap entries (`password`, `device`, `chip`, `prf`), commitment tag, parse limits |
 | `wraps` | KEK derivation and VK wrap/unwrap per factor (`password`, `password_human`, `device`, `chip`, `prf`, `grant`) and wrap AD construction (`wad`) |
 | `frame` | Per-record encrypted frames (AEGIS-256, header as AD), frame index, append log |
@@ -40,10 +40,11 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 
 | Purpose | Primitive |
 |---|---|
-| Password stretching | **Argon2id** v0x13, parameters bounded by a known `KdfProfile` |
+| Password stretching | **Argon2id** v0x13, parameters bounded by a known `KdfProfile` (`Fast` 64 MiB, `Balanced` 256 MiB, `Strong` 1 GiB) |
 | Key derivation | **HKDF-SHA512**, unique `INFO_*` label per key, length-framed variable parts |
-| Record / frame encryption | **AEGIS-256** with a random 256-bit nonce and the full header as AD |
-| Alternate body cipher | **Kuznyechik-CTR + HMAC**, encrypt-then-MAC, separate keys, constant-time tag check |
+| Record / frame encryption | **Cascade** (frame alg `0xA005`): **AEGIS-256** (random 256-bit nonce) inside **Kuznyechik-CTR + HMAC** (random 128-bit IV, encrypt-then-MAC, constant-time tag check). Each layer has its own HKDF key from the frame key; both authenticate the full header as AD; the outer MAC is checked first. Legacy AEGIS-256-only frames (`0xA001`) still open and are re-sealed as cascade frames on rotation |
+| Alternate body cipher | **Kuznyechik-CTR + HMAC** for whole-body legacy vaults. New vaults always use per-record frames |
+| TOTP codes | **HMAC-SHA1** (RFC 6238) for one-time codes only, never for keys or integrity |
 | File commitment | **HMAC** over the whole file (or the chained frame digest), checked **before** decryption |
 | Frame log integrity | Chained **SHA-256** fold |
 | Key encapsulation (device wraps) | **ML-KEM** hybrid with the EC share. The combiner must bind both shared secrets, ciphertexts and public keys |
@@ -80,7 +81,7 @@ VK ──HKDF(vault_id)──► k_body, k_bmac, k_commit (+ frame keys)
 - **Domain-separate everything.** Each derived key has a unique constant label. Variable parts of an info string or signed message are length-prefixed (`u16/u32 BE len ‖ bytes`). Never concatenate raw variable data.
 - **Authenticate all context.** Every AEAD call binds its header, algorithm id, version, vault_id and wrap metadata as AD. Algorithm ids come from an allow-list. Downgrades are rejected.
 - **Fail closed.** Unsupported algorithms, unknown wrap kinds, and unbuilt hardware paths return an error. Never silently skip them.
-- **Every sync upload is signed.** The signed message binds the domain ‖ server origin ‖ client_id ‖ device_id ‖ record_id ‖ revision ‖ prev_hash ‖ hash(ciphertext).
+- **Every sync upload is signed.** The signed message (`MSG_VERSION` 2) binds the domain ‖ server origin ‖ client_id ‖ device_id ‖ vault_id ‖ record_id ‖ revision ‖ prev_hash ‖ hash(ciphertext) ‖ msg_version ‖ key_generation. Version 1 still verifies but is never signed or accepted.
 - **Unsafe code is forbidden** in crypto crates: `#![forbid(unsafe_code)]`.
 - **Every security fix ships with a regression test.** Examples: tamper a byte and expect failure; roll back and expect `rollback`; revoke and expect the old key to fail.
 

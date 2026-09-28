@@ -16,46 +16,9 @@ use crossterm::event::KeyCode;
 use tui::app::flows::create::Step;
 use tui::app::screen::Screen;
 
-use common::{app, ctrl, press, render, temp_dir, type_text, unlock, wait, PASSWORD};
+use common::{app, ctrl, pass_verify, press, render, temp_dir, type_text, unlock, wait, PASSWORD};
 
 const RECORD_PASSWORD: &str = "S3cure-Pa55!word";
-
-/// Answer the three verify cards with the right words.
-fn pass_verify(app: &mut tui::App, wrong_first: bool) {
-    for card in 0..3 {
-        let (choices, expected) = {
-            let Screen::Create(state) = &app.screen else {
-                panic!("not create")
-            };
-            let verify = state.verify.as_ref().unwrap();
-            let phrase = state
-                .phrase
-                .as_ref()
-                .unwrap()
-                .phrase_normalized()
-                .to_owned();
-            let word = phrase
-                .split(' ')
-                .nth(verify.position(card) - 1)
-                .unwrap()
-                .to_owned();
-            (verify.choices(card), word)
-        };
-        let right = choices
-            .iter()
-            .position(|choice| *choice == expected)
-            .unwrap();
-        let pick = if wrong_first && card == 0 {
-            (right + 1) % 4
-        } else {
-            right
-        };
-        for _ in 0..pick {
-            press(app, KeyCode::Down);
-        }
-        press(app, KeyCode::Enter);
-    }
-}
 
 #[test]
 fn first_run_creates_a_vault_and_round_trips_a_record() {
@@ -63,8 +26,8 @@ fn first_run_creates_a_vault_and_round_trips_a_record() {
     let mut app = app(&base);
     assert_eq!(app.screen.name(), "welcome");
     press(&mut app, KeyCode::Enter);
-    press(&mut app, KeyCode::Tab);
-    press(&mut app, KeyCode::Down);
+    // Up from the name field focuses the cost radios and picks Fast.
+    press(&mut app, KeyCode::Up);
     press(&mut app, KeyCode::Enter);
     let Screen::Create(state) = &app.screen else {
         panic!("not create")

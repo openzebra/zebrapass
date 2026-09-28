@@ -17,27 +17,9 @@ const SYNC_VK_LEN_U16: u16 = {
 };
 
 use crate::error::SessionError;
+use crate::sync_msg::{record_message, MSG_VERSION, MSG_VERSION_V1};
 
-/// Wire format version of `record_message`.
-pub const MSG_VERSION: u16 = 1;
-
-/// L-prefix `vault_id`, 16 bytes.
-const L_VAULT: u16 = 16;
-/// L-prefix `record_id`, 4 bytes.
-const L_RECORD: u16 = 4;
-/// L-prefix `revision`, 8 bytes.
-const L_REVISION: u16 = 8;
-/// L-prefix `content_hash`, 32 bytes.
-const L_HASH: u16 = 32;
-/// L-prefix of the ciphertext length itself, 4 bytes.
-const L_CT_LEN: u16 = 4;
-/// L-prefix `msg_version`, 2 bytes.
-const L_VERSION: u16 = 2;
-/// L-prefix `key_generation`, 4 bytes.
-const L_GENERATION: u16 = 4;
-
-/// Length prefix for the ciphertext tail. The old code saturated at
-/// `u32::MAX`; a length that cannot exist must be an error instead.
+/// Length prefix for the ciphertext tail of a version-1 message.
 ///
 /// # Errors
 ///
@@ -49,57 +31,31 @@ pub fn ct_len_prefix(len: usize) -> Result<[u8; 4], SessionError> {
     Ok(value.to_le_bytes())
 }
 
-/// Exact bytes signed over one record. Exposed so a verifier can rebuild it.
-/// The wire version is a constant, not a caller choice: a future layout must
-/// change `MSG_VERSION` and this function together.
-#[must_use]
-pub fn record_message(
-    vault_id: &[u8; 16],
-    record_id: u32,
-    revision: u64,
-    content_hash: &[u8; 32],
-    ciphertext: &[u8],
-    key_generation: u32,
-) -> Vec<u8> {
-    // The caller got `ciphertext` from a frame, so the length fits; the
-    // prefix is part of the signed bytes and must never saturate silently.
-    let Ok(ct_len) = u32::try_from(ciphertext.len()) else {
-        return Vec::new();
-    };
-    let mut msg = Vec::with_capacity(16 + 4 + 8 + 32 + 4 + 2 + 4 + ciphertext.len() + 7 * 2);
-    msg.extend_from_slice(&L_VAULT.to_le_bytes());
-    msg.extend_from_slice(vault_id);
-    msg.extend_from_slice(&L_RECORD.to_le_bytes());
-    msg.extend_from_slice(&record_id.to_le_bytes());
-    msg.extend_from_slice(&L_REVISION.to_le_bytes());
-    msg.extend_from_slice(&revision.to_le_bytes());
-    msg.extend_from_slice(&L_HASH.to_le_bytes());
-    msg.extend_from_slice(content_hash);
-    msg.extend_from_slice(&L_CT_LEN.to_le_bytes());
-    msg.extend_from_slice(&ct_len.to_le_bytes());
-    msg.extend_from_slice(&L_VERSION.to_le_bytes());
-    msg.extend_from_slice(&MSG_VERSION.to_le_bytes());
-    msg.extend_from_slice(&L_GENERATION.to_le_bytes());
-    msg.extend_from_slice(&key_generation.to_le_bytes());
-    msg.extend_from_slice(ciphertext);
-    msg
-}
-
 /// One signed sync record, ready for the server wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncRecord {
+    /// Account id (`kdf::client_id`) of the sender.
+    pub client_id: [u8; 64],
+    /// SHA-256 of the frame this revision supersedes on the sender; zero
+    /// for the first revision. A server uses it for compare-and-swap.
+    pub prev_hash: [u8; 32],
+    /// SHA-256 of the frame ciphertext.
+    pub content_hash: [u8; 32],
     /// Vault the record belongs to; must equal the session vault id.
     pub vault_id: [u8; 16],
+    /// Device that sealed and signed the frame; equals the frame origin.
+    pub device_id: [u8; 16],
     /// Record the frame carries.
     pub record_id: u32,
     /// Monotonic per-record counter; strictly newer than anything stored.
     pub revision: u64,
-    /// SHA-256 of the frame ciphertext.
-    pub content_hash: [u8; 32],
     /// Wire format version (`MSG_VERSION`).
     pub msg_version: u16,
     /// Vault-key generation the frame was written under.
     pub key_generation: u32,
+    /// Server origin the record is addressed to; empty until a sync
+    /// server exists.
+    pub server_origin: Box<[u8]>,
     /// The sealed frame, as written to the vault body.
     pub frame: Vec<u8>,
     /// ML-DSA-65 signature over [`record_message`].
@@ -111,20 +67,9 @@ impl SyncRecord {
     ///
     /// # Errors
     ///
-    /// `unsupported sync message version` when `msg_version` is not the
-    /// constant baked into the message format.
+    /// As in [`record_message`].
     pub fn signed_message(&self) -> anyhow::Result<Vec<u8>> {
-        if self.msg_version != MSG_VERSION {
-            return Err(anyhow::anyhow!("unsupported sync message version"));
-        }
-        Ok(record_message(
-            &self.vault_id,
-            self.record_id,
-            self.revision,
-            &self.content_hash,
-            &self.frame,
-            self.key_generation,
-        ))
+        record_message(self)
     }
 
     /// Verify this record against a device verifying key and the expected
@@ -139,12 +84,17 @@ impl SyncRecord {
 }
 
 /// Sign a record payload with the device key. The signature covers every
-/// field of `record`, so callers must fill `signature` last.
+/// field of `record`, so callers must fill `signature` last. Only the
+/// current [`MSG_VERSION`] is ever signed.
 ///
 /// # Errors
 ///
-/// `sign failed` when ML-DSA signing fails.
+/// `sign failed` when ML-DSA signing fails; `unsupported sync message
+/// version` for any other version.
 pub fn sign_record(device: &DeviceSignKey, record: &SyncRecord) -> Result<Vec<u8>, SessionError> {
+    if record.msg_version != MSG_VERSION {
+        return Err(SessionError::UnsupportedMsgVersion);
+    }
     let msg = record
         .signed_message()
         .map_err(|_| SessionError::UnsupportedMsgVersion)?;
@@ -166,7 +116,7 @@ pub fn verify_record(
     if vault_id != &record.vault_id {
         return Err(anyhow::anyhow!("vault id mismatch"));
     }
-    if record.msg_version != MSG_VERSION {
+    if !matches!(record.msg_version, MSG_VERSION | MSG_VERSION_V1) {
         return Err(anyhow::anyhow!("unsupported sync message version"));
     }
     let msg = record.signed_message()?;
@@ -292,64 +242,92 @@ mod tests {
         reason = "unit tests may unwrap and index"
     )]
 
-    use super::{
-        issue_device_cert, record_message, sign_record, verify_record, DeviceSignKey, SyncRecord,
-        MSG_VERSION,
-    };
+    use sha2::{Digest, Sha256};
+
+    use super::{issue_device_cert, sign_record, verify_record, DeviceSignKey, SyncRecord};
     use crate::error::SessionError;
+    use crate::sync_msg::{record_message, MSG_VERSION, MSG_VERSION_V1};
+
+    fn unsigned(frame: Vec<u8>) -> SyncRecord {
+        SyncRecord {
+            client_id: [5u8; 64],
+            prev_hash: [6u8; 32],
+            content_hash: Sha256::digest(&frame).into(),
+            vault_id: [1u8; 16],
+            device_id: [2u8; 16],
+            record_id: 3,
+            revision: 11,
+            msg_version: MSG_VERSION,
+            key_generation: 4,
+            server_origin: Box::from(&b"https://sync.example"[..]),
+            frame,
+            signature: Vec::new(),
+        }
+    }
 
     #[test]
-    fn signs_and_verifies_with_version_and_generation() {
+    fn every_bound_field_breaks_the_signature() {
         let device = DeviceSignKey::from_seed(&[7u8; 32]);
         let other = DeviceSignKey::from_seed(&[8u8; 32]);
         let vault = [1u8; 16];
-        let hash = [2u8; 32];
-        let ct = vec![9u8; 100];
         let vk = device.verifying_key().unwrap();
-        let unsigned = SyncRecord {
-            vault_id: vault,
-            record_id: 3,
-            revision: 11,
-            content_hash: hash,
-            msg_version: MSG_VERSION,
-            key_generation: 4,
-            frame: ct.clone(),
-            signature: Vec::new(),
-        };
-        let signature = sign_record(&device, &unsigned).unwrap();
+        let base = unsigned(vec![9u8; 100]);
         let record = SyncRecord {
-            signature,
-            ..unsigned
+            signature: sign_record(&device, &base).unwrap(),
+            ..base
         };
         verify_record(&vk, &record, &vault).unwrap();
 
-        let mut flipped = ct;
-        *flipped.get_mut(0).unwrap() ^= 1;
-        let tampered = SyncRecord {
-            frame: flipped,
-            ..record.clone()
-        };
-        assert!(verify_record(&vk, &tampered, &vault).is_err());
-        let rolled = SyncRecord {
-            revision: 12,
-            ..record.clone()
-        };
-        assert!(verify_record(&vk, &rolled, &vault).is_err());
+        let mut flipped = record.frame.clone();
+        flipped[0] ^= 1;
+        let variants = [
+            SyncRecord {
+                content_hash: Sha256::digest(&flipped).into(),
+                frame: flipped,
+                ..record.clone()
+            },
+            SyncRecord {
+                revision: 12,
+                ..record.clone()
+            },
+            SyncRecord {
+                record_id: 4,
+                ..record.clone()
+            },
+            SyncRecord {
+                key_generation: 5,
+                ..record.clone()
+            },
+            SyncRecord {
+                client_id: [0u8; 64],
+                ..record.clone()
+            },
+            SyncRecord {
+                device_id: [0u8; 16],
+                ..record.clone()
+            },
+            SyncRecord {
+                prev_hash: [0u8; 32],
+                ..record.clone()
+            },
+            SyncRecord {
+                server_origin: Box::from(&b"https://evil.example"[..]),
+                ..record.clone()
+            },
+            SyncRecord {
+                msg_version: MSG_VERSION_V1,
+                ..record.clone()
+            },
+        ];
+        for variant in &variants {
+            assert!(verify_record(&vk, variant, &vault).is_err());
+        }
         let foreign = SyncRecord {
             vault_id: [9u8; 16],
             ..record.clone()
         };
-        assert!(verify_record(&vk, &foreign, &vault).is_err());
-        let swapped = SyncRecord {
-            record_id: 4,
-            ..record.clone()
-        };
-        assert!(verify_record(&vk, &swapped, &vault).is_err());
-        let wrong = SyncRecord {
-            key_generation: 5,
-            ..record.clone()
-        };
-        assert!(verify_record(&vk, &wrong, &vault).is_err());
+        assert!(verify_record(&vk, &foreign, &[9u8; 16]).is_err());
+        assert!(verify_record(&vk, &record, &[9u8; 16]).is_err());
         assert!(verify_record(&other.verifying_key().unwrap(), &record, &vault).is_err());
         let short = SyncRecord {
             signature: record.signature[..100].to_vec(),
@@ -359,14 +337,48 @@ mod tests {
     }
 
     #[test]
-    fn message_is_length_prefixed_with_new_fields() {
-        let a = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 10], 0);
-        let b = record_message(&[1u8; 16], 1, 1, &[2u8; 32], &[3u8; 9], 0);
-        assert_ne!(a, b);
+    fn content_hash_must_match_frame() {
+        let record = SyncRecord {
+            content_hash: [0u8; 32],
+            ..unsigned(vec![1u8; 10])
+        };
         assert_eq!(
-            a.len(),
+            record_message(&record).unwrap_err().to_string(),
+            "content hash mismatch"
+        );
+    }
+
+    #[test]
+    fn v1_messages_verify_but_are_never_signed() {
+        let device = DeviceSignKey::from_seed(&[7u8; 32]);
+        let legacy = SyncRecord {
+            msg_version: MSG_VERSION_V1,
+            ..unsigned(vec![3u8; 10])
+        };
+        assert!(matches!(
+            sign_record(&device, &legacy),
+            Err(SessionError::UnsupportedMsgVersion)
+        ));
+        let msg = record_message(&legacy).unwrap();
+        assert_eq!(
+            msg.len(),
             2 + 16 + 2 + 4 + 2 + 8 + 2 + 32 + 2 + 4 + 2 + 2 + 2 + 4 + 10
         );
+        let signature = pq::sync_sign(&device.seed(), pq::SYNC_CTX, &msg).unwrap();
+        let signed = SyncRecord {
+            signature,
+            ..legacy
+        };
+        verify_record(&device.verifying_key().unwrap(), &signed, &[1u8; 16]).unwrap();
+    }
+
+    #[test]
+    fn v2_message_is_domain_separated_and_framed() {
+        let msg = record_message(&unsigned(vec![3u8; 10])).unwrap();
+        assert_eq!(&msg[..2], &19u16.to_be_bytes());
+        assert_eq!(&msg[2..21], b"brby/v2/sync-record");
+        let longer = record_message(&unsigned(vec![3u8; 11])).unwrap();
+        assert_ne!(msg, longer);
     }
 
     #[test]

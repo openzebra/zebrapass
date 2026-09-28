@@ -38,8 +38,6 @@ pub enum Task {
     Factor,
     /// Health analysis.
     Health,
-    /// Sync export or import.
-    Sync,
 }
 
 impl Task {
@@ -54,7 +52,6 @@ impl Task {
             Self::Rotate => "Rotating the vault key",
             Self::Factor => "Updating unlock factors",
             Self::Health => "Checking vault health",
-            Self::Sync => "Signing and syncing frames",
         }
     }
 
@@ -105,8 +102,8 @@ pub struct Ctx {
     pub idle: Idle,
     /// Chip backend.
     pub chips: Chips,
-    /// Argon2id timings: `[desktop, mobile]`.
-    pub timings: [Option<Duration>; 2],
+    /// Measured time of one [`session::KdfProfile::Fast`] Argon2id run.
+    pub kdf_fast: Option<Duration>,
     /// The next frame must clear the terminal first.
     pub full_redraw: bool,
     /// Terminal size `(columns, rows)`.
@@ -120,7 +117,7 @@ impl Ctx {
     ///
     /// When the worker thread cannot start.
     pub fn new(config: &Config, base: PathBuf, caps: Caps, now: Instant) -> std::io::Result<Self> {
-        let chips = Chips::default();
+        let chips = Chips::new(config.flags.has(Flags::KEYCHAIN));
         Ok(Self {
             now,
             tick: 0,
@@ -139,7 +136,7 @@ impl Ctx {
             pending: None,
             idle: Idle::new(now, config.lock_after),
             chips,
-            timings: [None, None],
+            kdf_fast: None,
             full_redraw: false,
             size: (120, 40),
         })

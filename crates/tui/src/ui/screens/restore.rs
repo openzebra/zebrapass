@@ -11,9 +11,10 @@ use crate::app::flows::restore::{RestoreField, RestoreState, RestoreStep, REVEAL
 use crate::app::keymap::Scope;
 use crate::secure::phrase_input::{PhraseInput, MAX_WORDS};
 use crate::ui::layout::{body_and_hints, centered};
+use crate::ui::screens::create::titled;
 use crate::ui::theme::Theme;
-use crate::ui::widgets::chrome::{hint_bar, panel};
-use crate::ui::widgets::field::{boxed, secret_line, text_line};
+use crate::ui::widgets::chrome::{button, hint_bar, panel};
+use crate::ui::widgets::field::{block_cursor, boxed, secret_line, text_line};
 use crate::ui::widgets::stripes::mask;
 
 /// Words per grid row.
@@ -55,13 +56,77 @@ pub fn word_grid<'a>(
             };
             spans.push(Span::styled(shown, theme.text()));
             if focused {
-                spans.push(Span::styled(theme.glyphs.cursor, theme.accent()));
+                spans.push(block_cursor("", theme));
             }
         }
     }
     lines.push(Line::from(spans));
     lines
 }
+
+/// Most slot grid columns on the restore screen.
+const SLOT_COLUMNS: usize = 6;
+
+/// Cells of one slot: ` 01 ` and the word.
+const SLOT_CELLS: u16 = 4 + WORD_CELLS;
+
+/// Slot columns that fit `width` inner cells.
+fn slot_columns(width: u16) -> usize {
+    usize::from(width / SLOT_CELLS).clamp(1, SLOT_COLUMNS)
+}
+
+/// All 24 slots at once: finished words masked, the current word with the
+/// cursor, and empty slots as dots, so progress reads at a glance.
+fn slot_grid<'a>(
+    state: &RestoreState,
+    columns: usize,
+    focused: bool,
+    theme: &Theme,
+) -> Vec<Line<'a>> {
+    let phrase = &state.phrase;
+    let count = phrase.count();
+    let reveal_last = state.reveal.is_shown(REVEAL_LAST);
+    let slot = usize::from(WORD_CELLS);
+    (0..MAX_WORDS)
+        .collect::<Vec<_>>()
+        .chunks(columns)
+        .map(|row| {
+            let mut spans = Vec::with_capacity(row.len() * 3);
+            for index in row.iter().copied() {
+                spans.push(Span::styled(format!(" {:02} ", index + 1), theme.muted()));
+                if index < count {
+                    let revealed = phrase
+                        .word(index)
+                        .filter(|_| reveal_last && index + 1 == count);
+                    spans.push(revealed.map_or_else(
+                        || Span::styled(format!("{:<slot$}", mask(theme.glyphs, 5)), theme.zebra()),
+                        |word| Span::styled(format!("{word:<slot$}"), theme.warn()),
+                    ));
+                } else if index == count && count < MAX_WORDS {
+                    let typed = String::from_utf8_lossy(phrase.current()).into_owned();
+                    let shown = if state.hide_current {
+                        mask(theme.glyphs, typed.chars().count().min(1) * 4)
+                    } else {
+                        typed
+                    };
+                    let used = shown.chars().count();
+                    spans.push(Span::styled(shown, theme.text()));
+                    if focused {
+                        spans.push(block_cursor("", theme));
+                    }
+                    let pad = slot.saturating_sub(used + usize::from(focused));
+                    spans.push(Span::raw(" ".repeat(pad)));
+                } else {
+                    spans.push(Span::styled(format!("{:<slot$}", "·····"), theme.muted()));
+                }
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// Mask and word width inside one slot.
+const WORD_CELLS: u16 = 8;
 
 /// Draw the restore screen.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) {
@@ -71,42 +136,45 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
     }
     let theme = &ctx.theme;
     let [body, hints] = body_and_hints(area);
-    let card = centered(body, body.width.min(86), 26);
-    let block = panel(" Restore from phrase ", theme);
-    let inner = block.inner(card);
-    frame.render_widget(block, card);
-    let [grid, suggest, status, pass_label, pass, file_label, file, name_row, error] =
-        Layout::vertical([
-            Constraint::Length(5),
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(1),
-        ])
-        .areas(inner);
-    draw_words(frame, grid, suggest, status, state, ctx);
-    let label = |text: &'static str| Paragraph::new(Span::styled(text, theme.strong()));
-    frame.render_widget(label("   Passphrase (optional, \"25th word\")"), pass_label);
-    let pass_focus = state.field == RestoreField::Passphrase;
-    let pass_rect = Rect {
-        x: pass.x + 2,
-        width: pass.width.min(40),
-        ..pass
-    };
-    boxed(
-        frame,
-        pass_rect,
-        secret_line(&state.passphrase, pass_focus, false, theme),
-        pass_focus,
+    let card = centered(body, body.width.min(86), 30);
+    let block = panel(
+        titled("Restore from phrase", (1, 2), card.width, ctx),
         theme,
     );
-    frame.render_widget(
-        label("   Vault file (backup or copy from another device)"),
-        file_label,
+    let inner = block.inner(card);
+    frame.render_widget(block, card);
+    let columns = slot_columns(inner.width.saturating_sub(6));
+    let grid_rows = u16::try_from(MAX_WORDS.div_ceil(columns)).unwrap_or(24);
+    let [phrase_head, grid, suggest, _, file_head, file, file_status, _, details, footer] =
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(grid_rows + 2),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(4),
+            Constraint::Min(3),
+        ])
+        .areas(inner);
+    section(
+        frame,
+        phrase_head,
+        "1",
+        "Recovery phrase",
+        &progress(state, ctx),
+        ctx,
+    );
+    draw_words(frame, grid, suggest, state, columns, ctx);
+    section(
+        frame,
+        file_head,
+        "2",
+        "Vault file",
+        "backup or copy from another device",
+        ctx,
     );
     let file_focus = state.field == RestoreField::Source;
     let file_rect = Rect {
@@ -126,51 +194,71 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
         file_focus,
         theme,
     );
-    let [name_label, name_box] =
-        Layout::horizontal([Constraint::Length(16), Constraint::Length(40)]).areas(name_row);
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(""),
-            Line::from(Span::styled("   Name", theme.strong())),
-        ]),
-        name_label,
+    let status = state.source_factors.map_or_else(
+        || {
+            Span::styled(
+                format!("    {} no vault file at this path", theme.glyphs.fail),
+                theme.warn(),
+            )
+        },
+        |factors| {
+            Span::styled(
+                format!(
+                    "    {} ZebraPass vault · {factors} unlock factor(s)",
+                    theme.glyphs.ok
+                ),
+                theme.accent(),
+            )
+        },
     );
-    let name_focus = state.field == RestoreField::Name;
-    boxed(
-        frame,
-        name_box,
-        text_line(
-            &state.name,
-            name_box.width.saturating_sub(2),
-            name_focus,
-            theme,
-        ),
-        name_focus,
-        theme,
-    );
-    if let Some(message) = state.error {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                format!("   {} {message}", theme.glyphs.fail),
-                theme.danger(),
-            )),
-            error,
-        );
-    }
+    frame.render_widget(Paragraph::new(status), file_status);
+    draw_details(frame, details, state, ctx);
+    draw_footer(frame, footer, state, ctx);
     hint_bar(frame, hints, Scope::Restore, "", ctx);
 }
 
-/// The word grid, its suggestions, and the count line.
+/// `3 / 24 words` plus a short bar.
+fn progress(state: &RestoreState, ctx: &Ctx) -> String {
+    let count = state.phrase.count();
+    let filled = count * 12 / MAX_WORDS;
+    let (on, off) = if ctx.theme.ascii {
+        ("#", "-")
+    } else {
+        ("▰", "▱")
+    };
+    format!(
+        "{count:>2} / {MAX_WORDS} words  {}{}",
+        on.repeat(filled),
+        off.repeat(12 - filled)
+    )
+}
+
+/// A numbered section heading with a muted note at the right.
+fn section(frame: &mut Frame<'_>, area: Rect, number: &str, title: &str, note: &str, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    let head = format!("  {number}  {title}");
+    let pad =
+        usize::from(area.width).saturating_sub(head.chars().count() + note.chars().count() + 2);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(head, theme.strong()),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(note.to_owned(), theme.muted()),
+        ])),
+        area,
+    );
+}
+
+/// The slot grid and its suggestions.
 fn draw_words(
     frame: &mut Frame<'_>,
     grid: Rect,
     suggest: Rect,
-    status: Rect,
     state: &RestoreState,
+    columns: usize,
     ctx: &Ctx,
 ) {
     let theme = &ctx.theme;
-    let glyphs = theme.glyphs;
     let focused = state.field == RestoreField::Phrase;
     let block = Block::default()
         .borders(Borders::ALL)
@@ -180,52 +268,118 @@ fn draw_words(
         } else {
             theme.muted()
         });
-    let grid_inner = block.inner(grid);
-    frame.render_widget(block, grid);
-    let lines = word_grid(
-        &state.phrase,
-        focused,
-        state.hide_current,
-        state.reveal.is_shown(REVEAL_LAST),
-        theme,
+    let rect = Rect {
+        x: grid.x + 2,
+        width: grid.width.saturating_sub(4),
+        ..grid
+    };
+    let grid_inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    // A short terminal cannot hold every row: scroll so the slot being
+    // typed stays visible.
+    let current_row = state.phrase.count().min(MAX_WORDS - 1) / columns;
+    let visible = usize::from(grid_inner.height).max(1);
+    let skip = (current_row + 1).saturating_sub(visible);
+    let lines = slot_grid(state, columns, focused, theme);
+    frame.render_widget(
+        Paragraph::new(lines.into_iter().skip(skip).collect::<Vec<_>>()),
+        grid_inner,
     );
-    frame.render_widget(Paragraph::new(lines), grid_inner);
     let suggestions = state.phrase.suggestions(4);
-    if focused
-        && !state.phrase.current().is_empty()
-        && !state.hide_current
-        && !suggestions.is_empty()
-    {
-        let mut spans = vec![Span::styled("   suggestions: ", theme.muted())];
+    let line = if !focused || state.hide_current {
+        Line::from("")
+    } else if state.phrase.current().is_empty() {
+        Line::from(Span::styled(
+            "    type a word · Space next · Tab accept · Ctrl-R reveal last",
+            theme.muted(),
+        ))
+    } else {
+        let mut spans = vec![Span::styled("    ", theme.muted())];
         for (index, word) in suggestions.iter().enumerate() {
             let (style, pointer) = if index == 0 {
-                (theme.selected(), glyphs.pointer)
+                (theme.selected(), theme.glyphs.pointer)
             } else {
                 (theme.text(), " ")
             };
             spans.push(Span::styled(format!("{pointer} {word}  "), style));
         }
-        spans.push(Span::styled(
-            format!("({} match, Tab to accept)", suggestions.len()),
-            theme.muted(),
-        ));
+        spans.push(Span::styled("Tab accept", theme.muted()));
+        Line::from(spans)
+    };
+    frame.render_widget(Paragraph::new(line), suggest);
+}
+
+/// Name on this device and the optional passphrase, side by side.
+fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    let [labels, boxes] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(area);
+    let columns = [Constraint::Percentage(50), Constraint::Percentage(50)];
+    let [name_label, pass_label] = Layout::horizontal(columns).areas(labels);
+    let [name_box, pass_box] = Layout::horizontal(columns).areas(boxes);
+    let label = |text: &'static str| Paragraph::new(Span::styled(text, theme.strong()));
+    frame.render_widget(label("  3  Name on this device"), name_label);
+    frame.render_widget(
+        label(if pass_label.width >= 34 {
+            "  Passphrase (optional 25th word)"
+        } else {
+            "  Passphrase (optional)"
+        }),
+        pass_label,
+    );
+    let inset = |rect: Rect| Rect {
+        x: rect.x + 2,
+        width: rect.width.saturating_sub(4),
+        ..rect
+    };
+    let name_focus = state.field == RestoreField::Name;
+    let name_rect = inset(name_box);
+    boxed(
+        frame,
+        name_rect,
+        text_line(
+            &state.name,
+            name_rect.width.saturating_sub(2),
+            name_focus,
+            theme,
+        ),
+        name_focus,
+        theme,
+    );
+    let pass_focus = state.field == RestoreField::Passphrase;
+    boxed(
+        frame,
+        inset(pass_box),
+        secret_line(&state.passphrase, pass_focus, false, theme),
+        pass_focus,
+        theme,
+    );
+}
+
+/// The last problem and the continue button.
+fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    let [message, action] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(18)]).areas(area);
+    if let Some(problem) = state.error {
         frame.render_widget(
-            Paragraph::new(vec![Line::from(""), Line::from(spans)]),
-            suggest,
+            Paragraph::new(Span::styled(
+                format!("  {} {problem}", theme.glyphs.fail),
+                theme.danger(),
+            ))
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+            Rect {
+                y: message.y + 1,
+                ..message
+            },
         );
     }
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!("   {} / 24 words     ", state.phrase.count()),
-                theme.text(),
-            ),
-            Span::styled(
-                format!("{} all words in wordlist     ", glyphs.ok),
-                theme.accent(),
-            ),
-            Span::styled("checksum: checked on restore", theme.muted()),
-        ])),
-        status,
-    );
+    let ready = state.phrase.plausible() && state.source_factors.is_some();
+    let rect = Rect {
+        x: action.x + 1,
+        width: action.width.saturating_sub(3),
+        height: 3.min(action.height),
+        ..action
+    };
+    button(frame, rect, "Continue →", ready, false, theme);
 }

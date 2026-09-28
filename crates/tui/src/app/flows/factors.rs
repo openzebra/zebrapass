@@ -1,5 +1,5 @@
 //! Constellation (factor management), devices, and the palette-only vault
-//! commands (rotate, change password, drop recovery, export, import).
+//! commands (rotate, change password, drop recovery).
 
 use std::time::Instant;
 
@@ -144,10 +144,16 @@ fn act(state: &mut Unlocked, action: Action, selected: Option<&FactorView>, ctx:
                 ],
             })));
         }
-        (Action::RemoveFactor, _, None) => ctx.toast(
-            Tone::Info,
-            "A vault keeps its password factor. Press Enter to change it instead.",
-        ),
+        (Action::RemoveFactor, FactorKind::Password, _) => {
+            state.dialog = Some(Box::new(Dialog::Confirm(Confirm {
+                kind: ConfirmKind::RemovePassword,
+                title: String::from("Remove the password?"),
+                body: vec![
+                    String::from("The password stops opening this file. Another factor"),
+                    String::from("must remain; the vault key does NOT rotate."),
+                ],
+            })));
+        }
         _ => {}
     }
 }
@@ -214,26 +220,6 @@ pub fn palette_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Na
                 )],
             })));
         }
-        Action::ExportFrames => {
-            let ids: Box<[u32]> = state.pending_sync.iter().copied().collect();
-            if ids.is_empty() {
-                ctx.toast(
-                    Tone::Info,
-                    "Nothing pending. Use export all (X) to send every record.",
-                );
-            } else {
-                form(state, Form::export(ids, &ctx.base));
-            }
-        }
-        Action::ExportAll => {
-            let ids: Box<[u32]> = state.cache.iter().map(|summary| summary.id).collect();
-            if ids.is_empty() {
-                ctx.toast(Tone::Info, "The vault has no records yet.");
-            } else {
-                form(state, Form::export(ids, &ctx.base));
-            }
-        }
-        Action::ImportFrames => form(state, Form::import(&ctx.base)),
         Action::EnrollDevice => state.dialog = Some(Box::new(enroll_guide())),
         Action::RevokeFactor | Action::OpenDevices => state.view = View::Devices(0),
         _ => {}

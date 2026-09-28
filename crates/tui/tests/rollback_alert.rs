@@ -14,7 +14,7 @@ mod common;
 
 use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
-use session::{BodyAlg, UnlockCreds, VaultFile};
+use session::{UnlockCreds, VaultFile};
 use tui::app::ctx::Task;
 use tui::app::screen::Screen;
 use tui::vault::discover::discover;
@@ -69,7 +69,7 @@ fn assert_alert_holds(app: &mut tui::App) {
 #[test]
 fn older_file_opens_the_alert_without_a_bypass() {
     let base = temp_dir("rollback");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let path = discover(&base).first().unwrap().paths.vault_file.clone();
     let old = std::fs::read(&path).unwrap();
     write_one(&base, "newer");
@@ -89,7 +89,7 @@ fn older_file_opens_the_alert_without_a_bypass() {
 #[test]
 fn same_generation_fork_opens_the_alert() {
     let base = temp_dir("conflict");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let path = discover(&base).first().unwrap().paths.vault_file.clone();
     let old = VaultFile::new(std::fs::read(&path).unwrap());
     write_one(&base, "accepted");

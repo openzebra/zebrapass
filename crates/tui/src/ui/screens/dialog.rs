@@ -79,7 +79,10 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
         Dialog::Confirm(confirm) => {
             let danger = matches!(
                 confirm.kind,
-                ConfirmKind::Delete(_) | ConfirmKind::RemoveWrap(_) | ConfirmKind::ClearHistory
+                ConfirmKind::Delete(_)
+                    | ConfirmKind::RemoveWrap(_)
+                    | ConfirmKind::RemovePassword
+                    | ConfirmKind::ClearHistory
             );
             let rect = fitted(area, &confirm.title, &confirm.body, 3);
             let body: Vec<String> = confirm
@@ -219,20 +222,14 @@ fn draw_form(frame: &mut Frame<'_>, area: Rect, form: &Form, ctx: &Ctx) {
     if let Some(input) = form.repeat.as_ref() {
         lines.push(secret_row("repeat", input, FormFocus::Repeat, form, ctx));
     }
-    for (focus, input, label) in [
-        (FormFocus::Path, form.path.as_ref(), "file"),
-        (
-            FormFocus::Text,
-            form.text.as_ref(),
-            if form.kind == FormKind::DropRecovery {
-                "type DROP"
-            } else {
-                "name"
-            },
-        ),
-    ] {
-        if let Some(input) = input {
-            let focused = form.focus == focus;
+    if let Some(input) = form.text.as_ref() {
+        let label = if form.kind == FormKind::DropRecovery {
+            "type DROP"
+        } else {
+            "name"
+        };
+        {
+            let focused = form.focus == FormFocus::Text;
             let mut spans = vec![Span::styled(
                 format!(" {label:<18}"),
                 if focused {
@@ -274,8 +271,6 @@ fn confirm_line(form: &Form, ctx: &Ctx) -> Line<'static> {
                 FormKind::Rotate
                 | FormKind::ChangePassword
                 | FormKind::AddPassword
-                | FormKind::Export(_)
-                | FormKind::Import
                 | FormKind::Rename => "rotate",
             };
             let how = if ctx.caps.key_release {

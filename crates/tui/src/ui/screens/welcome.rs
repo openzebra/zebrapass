@@ -109,7 +109,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &WelcomeState, ctx: &Ctx) 
             pq_badge(theme),
             Span::styled(
                 format!(
-                    " ML-KEM hybrid  {dot}  ML-DSA signatures  {dot}  AEGIS-256  {dot}  Argon2id"
+                    " ML-KEM hybrid  {dot}  ML-DSA  {dot}  AEGIS-256 + Kuznyechik  {dot}  Argon2id"
                 ),
                 theme.muted(),
             ),

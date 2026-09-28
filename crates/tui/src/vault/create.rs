@@ -23,6 +23,8 @@ pub enum Enrollment {
     Password(Zeroizing<Vec<u8>>),
     /// Keep the password factor the restored file already has.
     KeepExisting,
+    /// This device's keys in the keyring.
+    Device,
     /// The development chip.
     #[cfg(feature = "dev-chip")]
     Chip,
@@ -45,8 +47,6 @@ pub struct NewVault {
     pub base: PathBuf,
     /// Argon2id profile for the header and the password factor.
     pub profile: KdfProfile,
-    /// Body cipher.
-    pub alg: BodyAlg,
     /// This device's factor.
     pub factor: Enrollment,
 }
@@ -80,11 +80,12 @@ pub fn create(request: NewVault, chips: &Chips) -> anyhow::Result<Box<Vault>> {
         name,
         base,
         profile,
-        alg,
         factor,
     } = request;
+    // Every new vault uses per-record frames: each frame is the AEGIS-256 +
+    // Kuznyechik cascade, and there is no cipher choice to get wrong.
     let (paths, mut session, mut file, mut meta) =
-        local::create_vault(&base, phrase.seed(), profile, alg)?;
+        local::create_vault(&base, phrase.seed(), profile, BodyAlg::Frames)?;
     drop(phrase);
     meta.name = name;
     enroll(&mut session, &mut file, profile, factor, chips)?;
@@ -153,10 +154,8 @@ fn enroll(
 ) -> anyhow::Result<()> {
     match factor {
         Enrollment::Password(password) => add_password(session, file, &password, profile),
-        Enrollment::KeepExisting => {
-            let _ = chips;
-            Ok(())
-        }
+        Enrollment::KeepExisting => Ok(()),
+        Enrollment::Device => chips.keyring().enroll(session, file),
         #[cfg(feature = "dev-chip")]
         Enrollment::Chip => chips.enroll(session, file),
     }
@@ -173,17 +172,29 @@ pub fn add_password(
     password: &[u8],
     profile: KdfProfile,
 ) -> anyhow::Result<()> {
+    let cost = (profile.m_kib(), profile.t(), profile.p());
+    add_human_password(session, file, &password_publics(password, cost)?)
+}
+
+/// A human password wrap request with a fresh key id and Argon2id `cost`
+/// as `(m_kib, t, p)`. The result wipes its password copy on drop.
+///
+/// # Errors
+///
+/// `os entropy failed` when the key id cannot be drawn.
+pub fn password_publics(
+    password: &[u8],
+    (m_kib, t, p): (u32, u32, u32),
+) -> anyhow::Result<HumanPasswordPublics> {
     let mut kid = [0u8; 8];
     getrandom::fill(&mut kid).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
-    // `HumanPasswordPublics` wipes its password copy on drop.
-    let publics = HumanPasswordPublics {
+    Ok(HumanPasswordPublics {
         kid,
         password: password.to_vec(),
-        m_kib: profile.m_kib(),
-        t: profile.t(),
-        p: profile.p(),
-    };
-    add_human_password(session, file, &publics)
+        m_kib,
+        t,
+        p,
+    })
 }
 
 /// Unix milliseconds now, for record ages and metadata.

@@ -146,10 +146,6 @@ actions! {
     RemoveFactor,
     /// Enroll another device.
     EnrollDevice,
-    /// Export pending changes.
-    ExportFrames,
-    /// Import a frame file.
-    ImportFrames,
     /// Regenerate the selected record's password.
     Regenerate,
     /// Restore the selected revision.
@@ -164,8 +160,6 @@ actions! {
     DropRecovery,
     /// Drop superseded revisions.
     ClearHistory,
-    /// Export every record.
-    ExportAll,
     /// Next color theme.
     CycleTheme,
     /// Animations on/off.
@@ -228,13 +222,6 @@ pub const PALETTE: &[(Action, &str, Section)] = &[
     ),
     (Action::OpenDevices, "Devices and trust", Section::Devices),
     (Action::OpenSync, "Sync", Section::Devices),
-    (
-        Action::ExportFrames,
-        "Export pending changes…",
-        Section::Devices,
-    ),
-    (Action::ExportAll, "Export all records…", Section::Devices),
-    (Action::ImportFrames, "Import frame file…", Section::Devices),
     (
         Action::EnrollDevice,
         "Enroll a new device",

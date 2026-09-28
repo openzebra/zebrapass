@@ -21,6 +21,8 @@ use crate::vault::create::Enrollment;
 pub enum EnrollFactor {
     /// Argon2id password.
     Password,
+    /// This device's keys in the keyring.
+    Device,
     /// Secure chip.
     Chip,
     /// Hardware key (not built yet).
@@ -29,7 +31,7 @@ pub enum EnrollFactor {
 
 impl EnrollFactor {
     /// Cards in display order.
-    pub const ALL: [Self; 3] = [Self::Password, Self::Chip, Self::HwKey];
+    pub const ALL: [Self; 4] = [Self::Password, Self::Device, Self::Chip, Self::HwKey];
 }
 
 /// Focus.
@@ -145,13 +147,14 @@ impl EnrollState {
                     .iter()
                     .position(|factor| *factor == self.factor)
                     .unwrap_or(0);
+                let len = EnrollFactor::ALL.len();
                 let next = if action == Action::Left {
-                    at + 2
+                    at + len - 1
                 } else {
                     at + 1
-                } % 3;
+                } % len;
                 self.factor = EnrollFactor::ALL
-                    .get(next % 3)
+                    .get(next)
                     .copied()
                     .unwrap_or(EnrollFactor::Password);
                 self.message = None;
@@ -215,10 +218,10 @@ impl EnrollState {
         match self.factor {
             // TODO(hw-key): FIDO2 PRF enrollment plugs in here; until then it fails closed.
             EnrollFactor::HwKey => self.message = Some("Hardware keys are not available yet."),
+            EnrollFactor::Device => return EnrollEvent::Done(Enrollment::Device),
             EnrollFactor::Chip if !Chips::available() => {
-                self.message = Some(
-                    "No secure chip backend in this build (native keychain is not built yet).",
-                );
+                self.message =
+                    Some("No secure chip backend in this build (Secure Enclave is not built yet).");
             }
             EnrollFactor::Chip => return chip_enrollment(),
             EnrollFactor::Password => {

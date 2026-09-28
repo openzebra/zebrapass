@@ -17,7 +17,6 @@ mod common;
 use std::time::Duration;
 
 use crossterm::event::KeyCode;
-use session::BodyAlg;
 
 use common::{
     app, ctrl, make_vault, press, render_all, temp_dir, tick, type_text, unlock, wait, PASSWORD,
@@ -44,7 +43,7 @@ fn assert_absent(screens: &[String], secret: &str, context: &str) {
 #[test]
 fn unlock_password_is_never_rendered_or_debug_printed() {
     let base = temp_dir("mask-unlock");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let mut app = app(&base);
     type_text(&mut app, SECRET);
     let screens = render_all(&app);
@@ -62,7 +61,7 @@ fn unlock_password_is_never_rendered_or_debug_printed() {
 #[test]
 fn editor_detail_and_reveal_lifecycle() {
     let base = temp_dir("mask-editor");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let mut app = app(&base);
     unlock(&mut app, PASSWORD);
     press(&mut app, KeyCode::Char('n'));
@@ -123,7 +122,7 @@ fn restore_grid_masks_finished_words() {
     type_text(&mut app, "abo");
     let screen = &render_all(&app)[0];
     assert!(
-        screen.contains("abo▏") && screen.contains("about"),
+        screen.contains("03 abo") && screen.contains("about"),
         "the word being typed shows with suggestions:\n{screen}"
     );
     type_text(&mut app, "u");

@@ -41,7 +41,7 @@ const PASSWORD_CT_OFFSET: usize =
 #[test]
 fn vault_operations_mobile_and_one_desktop() {
     // One function so cargo does not run these Argon2 allocations in parallel.
-    // Mobile (64 MiB) covers tamper and mutation. Desktop (256 MiB) runs once.
+    // Fast (64 MiB) covers tamper and mutation. Balanced (256 MiB) runs once.
     reject_before_argon();
     let (aegis, mut session) = round_trip(&SEED_AEGIS, BodyAlg::Aegis256);
     let (kuz, _kuz_session) = round_trip(&SEED_KUZ, BodyAlg::KuzCtrHmac);
@@ -59,7 +59,7 @@ fn vault_operations_mobile_and_one_desktop() {
 
 fn reject_before_argon() {
     assert_eq!(
-        create(&SEED_KUZ, KdfProfile::Mobile, BodyAlg::KuzMgm)
+        create(&SEED_KUZ, KdfProfile::Fast, BodyAlg::KuzMgm)
             .unwrap_err()
             .to_string(),
         "unsupported body algorithm 0xa002"
@@ -100,7 +100,7 @@ fn reject_before_argon() {
 }
 
 fn round_trip(master: &[u8; 64], alg: BodyAlg) -> (VaultFile, Session) {
-    let (file, session) = create(master, KdfProfile::Mobile, alg).unwrap();
+    let (file, session) = create(master, KdfProfile::Fast, alg).unwrap();
     assert_eq!(session.generation(), 1);
     let opened = unlock(&file, &UnlockCreds::master(master), None).unwrap();
     assert_eq!(opened.generation(), session.generation());
@@ -222,7 +222,7 @@ fn reencrypt_and_check(
     // One real record so the rotated log is a well-formed frame log
     // (write_record below indexes the session log).
     write_record(session, file, None, &doc("pre-rotation")).unwrap();
-    reencrypt_body(session, file, &SEED_ROTATED, &[device.0], &[], &[]).unwrap();
+    reencrypt_body(session, file, &SEED_ROTATED, &[device.0], &[]).unwrap();
     assert_eq!(
         unlock(file, &UnlockCreds::master(&SEED_AEGIS), None)
             .unwrap_err()
@@ -348,7 +348,7 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
 }
 
 fn desktop_once() {
-    let (file, session) = create(&SEED_DESKTOP, KdfProfile::Desktop, BodyAlg::Aegis256).unwrap();
+    let (file, session) = create(&SEED_DESKTOP, KdfProfile::Balanced, BodyAlg::Aegis256).unwrap();
     assert_eq!(session.generation(), 1);
     let opened = unlock(&file, &UnlockCreds::master(&SEED_DESKTOP), None).unwrap();
     assert_eq!(opened.generation(), 1);
@@ -514,7 +514,6 @@ const fn revoke_creds<'a>(
         master,
         human_password: None,
         devices,
-        chips: &[],
         prfs,
     }
 }
@@ -719,7 +718,7 @@ fn append_is_constant_time_vs_vault_size() {
 
     let fill = |count: usize| -> (VaultFile, session::Session) {
         let (mut file, mut s) =
-            session::create(&[0x2Au8; 64], KdfProfile::Desktop, BodyAlg::Frames).unwrap();
+            session::create(&[0x2Au8; 64], KdfProfile::Balanced, BodyAlg::Frames).unwrap();
         for _ in 0..count {
             session::write_record(&mut s, &mut file, None, &Document::new()).unwrap();
         }

@@ -17,6 +17,15 @@ use crate::hkdf::hkdf_sha512;
 /// HKDF info for a per-record frame key.
 pub const INFO_FRAME_KEY: &[u8] = b"brby/v2/frame-key";
 
+/// HKDF info for the inner AEGIS-256 key of a cascade frame.
+pub const INFO_CASCADE_AEGIS: &[u8] = b"brby/v2/cascade-aegis";
+
+/// HKDF info for the outer Kuznyechik-CTR key of a cascade frame.
+pub const INFO_CASCADE_KUZ: &[u8] = b"brby/v2/cascade-kuz";
+
+/// HKDF info for the outer HMAC-SHA256 key of a cascade frame.
+pub const INFO_CASCADE_MAC: &[u8] = b"brby/v2/cascade-mac";
+
 /// HKDF info for the per-device local-metadata file key.
 pub const INFO_LOCAL_META: &[u8] = b"brby/v2/local-meta";
 
@@ -47,6 +56,39 @@ pub fn frame_key(
     info.extend_from_slice(INFO_FRAME_KEY);
     info.extend_from_slice(&record_id.to_le_bytes());
     hkdf_sha512(vk, vault_id, &info)
+}
+
+/// Three independent layer keys `(k_aegis, k_kuz, k_mac)` for one cascade frame.
+///
+/// HKDF-SHA512 with the frame key as `ikm`, no salt, and one info per
+/// layer. A break of one cipher reveals nothing about the other key.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+#[allow(
+    clippy::type_complexity,
+    reason = "the cross-crate signature is the three layer keys"
+)]
+pub fn cascade_keys(
+    frame_key: &[u8; 32],
+) -> anyhow::Result<(
+    Secret<[u8; OUTPUT_LEN]>,
+    Secret<[u8; OUTPUT_LEN]>,
+    Secret<[u8; OUTPUT_LEN]>,
+)> {
+    let hk = Hkdf::<Sha512>::new(None, frame_key);
+    let expand = |info: &[u8]| -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+        let mut okm = Secret::new([0u8; OUTPUT_LEN]);
+        hk.expand(info, okm.expose_mut())
+            .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+        Ok(okm)
+    };
+    Ok((
+        expand(INFO_CASCADE_AEGIS)?,
+        expand(INFO_CASCADE_KUZ)?,
+        expand(INFO_CASCADE_MAC)?,
+    ))
 }
 
 /// Local-metadata file key: HKDF-SHA512 with the vault key as `ikm`, the
@@ -143,7 +185,21 @@ fn framed_info(label: &[u8], parts: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use super::{client_id, client_id_for, frame_key, identity_seed, local_meta_key, sync_seed};
+    use super::{
+        cascade_keys, client_id, client_id_for, frame_key, identity_seed, local_meta_key, sync_seed,
+    };
+
+    #[test]
+    fn cascade_layer_keys_are_distinct_and_deterministic() {
+        let (a, k, m) = cascade_keys(&[3u8; 32]).unwrap();
+        assert_ne!(a.expose(), k.expose());
+        assert_ne!(a.expose(), m.expose());
+        assert_ne!(k.expose(), m.expose());
+        let (again, _, _) = cascade_keys(&[3u8; 32]).unwrap();
+        assert_eq!(a.expose(), again.expose());
+        let (other, _, _) = cascade_keys(&[4u8; 32]).unwrap();
+        assert_ne!(a.expose(), other.expose());
+    }
 
     #[test]
     fn frame_keys_are_record_separated() {

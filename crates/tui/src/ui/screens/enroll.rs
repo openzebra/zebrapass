@@ -80,6 +80,28 @@ pub fn draw(
             height: 1,
         };
         frame.render_widget(Paragraph::new(verdict), verdict_rect);
+    } else if state.factor == EnrollFactor::Device {
+        let where_ = ctx.chips.keyring().kind();
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    format!("   New device keys (X25519 + ML-KEM-768) go to the {where_}."),
+                    theme.text(),
+                )),
+                Line::from(Span::styled(
+                    "   On this device you unlock with Enter; nothing to type.",
+                    theme.muted(),
+                )),
+                Line::from(Span::styled(
+                    "   Other devices restore with the phrase and enroll their own.",
+                    theme.muted(),
+                )),
+            ]),
+            Rect {
+                height: password.height + strength.height + repeat.height,
+                ..password
+            },
+        );
     }
     draw_notes(frame, message, state, ctx);
     hint_bar(frame, hints, Scope::Enroll, "", ctx);
@@ -112,39 +134,52 @@ fn labeled_secret(
     field
 }
 
-/// The three factor cards.
+/// The factor cards.
 fn draw_cards(frame: &mut Frame<'_>, area: Rect, state: &EnrollState, ctx: &Ctx) {
     let theme = &ctx.theme;
     let glyphs = theme.glyphs;
     let chip_note = if Chips::available() {
-        "software backend (dev)"
+        "dev backend"
     } else {
-        "needs native backend"
+        "not built yet"
     };
-    let specs: [(EnrollFactor, String, &str, &str, &str); 3] = [
+    let keyring = ctx.chips.keyring();
+    let device_note = if keyring.persistent() {
+        ""
+    } else {
+        "lost on quit"
+    };
+    let specs: [(EnrollFactor, String, &str, &str, &str); 4] = [
         (
             EnrollFactor::Password,
-            format!("{}  Password", glyphs.password),
+            format!("{} Password", glyphs.password),
             "Argon2id → KEK",
             "works everywhere",
             "",
         ),
         (
+            EnrollFactor::Device,
+            format!("{} This device", glyphs.device),
+            "X25519 + ML-KEM",
+            keyring.kind(),
+            device_note,
+        ),
+        (
             EnrollFactor::Chip,
-            format!("{}  Secure chip", glyphs.chip),
-            "P-256 + ML-KEM hybrid",
+            format!("{} Secure chip", glyphs.chip),
+            "P-256 + ML-KEM",
             "bound to this box",
             chip_note,
         ),
         (
             EnrollFactor::HwKey,
-            format!("{}  Hardware key", glyphs.hw_key),
+            format!("{} Hardware key", glyphs.hw_key),
             "FIDO2 PRF",
             "",
-            "coming soon (disabled)",
+            "coming soon",
         ),
     ];
-    let columns = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(area);
+    let columns = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
     for ((factor, title, primitive, detail, note), rect) in specs.iter().zip(columns.iter()) {
         let chosen = state.factor == *factor;
         let focused = chosen && state.focus == EnrollFocus::Cards;
@@ -166,10 +201,10 @@ fn draw_cards(frame: &mut Frame<'_>, area: Rect, state: &EnrollState, ctx: &Ctx)
             Line::from(Span::styled(*primitive, theme.text())),
             Line::from(Span::styled(*detail, theme.muted())),
         ];
-        if *factor == EnrollFactor::Chip {
+        if matches!(*factor, EnrollFactor::Chip | EnrollFactor::Device) {
             lines.push(Line::from(pq_badge(theme)));
         }
-        let note_style = if *factor == EnrollFactor::Password {
+        let note_style = if matches!(*factor, EnrollFactor::Password | EnrollFactor::Device) {
             theme.accent()
         } else {
             theme.warn()

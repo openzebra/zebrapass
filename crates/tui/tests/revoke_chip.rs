@@ -16,7 +16,7 @@
 mod common;
 
 use record::{Document, TAG_TITLE};
-use session::{BodyAlg, Factor};
+use session::Factor;
 use tui::vault::chip::Chips;
 use tui::vault::discover::discover;
 use tui::vault::open::{unlock_vault, Credential};
@@ -33,17 +33,16 @@ fn rotation(words: &str, current: &str, revoke: Option<FactorRef>) -> Op {
     Op::Rotate(Box::new(Rotation {
         phrase: Box::new(phrase(words)),
         current: Some(Zeroizing::new(current.as_bytes().to_vec())),
-        new_password: None,
         revoke,
     }))
 }
 
 #[test]
 fn revoked_chip_stops_working_and_records_survive() {
-    for alg in [BodyAlg::Aegis256, BodyAlg::Frames] {
+    {
         let chips = Chips::default();
         let base = temp_dir("revoke-chip");
-        let words = make_vault(&base, alg);
+        let words = make_vault(&base);
         let paths = discover(&base).first().unwrap().paths.clone();
         let mut vault = unlock_vault(paths.clone(), password(), &chips).unwrap();
         let mut doc = Document::new();
@@ -81,7 +80,6 @@ fn revoked_chip_stops_working_and_records_survive() {
             Op::Rotate(Box::new(Rotation {
                 phrase: Box::new(stranger),
                 current: Some(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
-                new_password: None,
                 revoke: Some(FactorRef::Chip(chip_id)),
             })),
             &chips,
@@ -108,17 +106,17 @@ fn revoked_chip_stops_working_and_records_survive() {
             &chips,
         )
         .unwrap();
-        assert!(matches!(outcome, Outcome::Rotated { revoked: true, .. }));
+        assert!(matches!(outcome, Outcome::Rotated(true)));
         assert!(
             unlock_vault(paths.clone(), Credential::Chip, &chips).is_err(),
-            "{alg:?}: the revoked chip still opens"
+            "the revoked chip still opens"
         );
         let reopened = unlock_vault(paths, password(), &chips).unwrap();
         let doc = session::open_record(&reopened.session, id).unwrap();
         assert_eq!(
             doc.text(TAG_TITLE).unwrap(),
             Some("keep me"),
-            "{alg:?}: records must survive rotation"
+            "records must survive rotation"
         );
     }
 }

@@ -21,13 +21,22 @@ use session::{
 };
 
 const SEED: [u8; 64] = [0x42; 64];
+const ORIGIN: &[u8] = b"https://sync.example";
+
+fn export(
+    session: &session::Session,
+    device: &DeviceSignKey,
+    id: u32,
+) -> anyhow::Result<SyncRecord> {
+    export_record(session, device, id, &client_id(&SEED).unwrap(), ORIGIN)
+}
 const ROOT_SEED: [u8; 32] = [0x07; 32];
 
 fn round_trip() -> (VaultFile, session::Session) {
     // Unlocked through a device wrap so every written frame carries a
     // certified-device origin; `export_record` refuses the zero origin
     // that seed/password unlocks stamp.
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (ntru_bytes, kem_secret) = pq::keypair().unwrap();
     let ntru_pk: [u8; pq::PQ_PK_LEN] = ntru_bytes.as_slice().try_into().unwrap();
     let mut scalar = [0u8; 32];
@@ -75,7 +84,7 @@ fn export_verify_round_trip() {
     let (mut file, mut session) = round_trip();
     let record_id = write_record(&mut session, &mut file, None, &demo_doc()).unwrap();
     let (device, device_vk) = certified_device(0x21);
-    let record = export_record(&session, &device, record_id).unwrap();
+    let record = export(&session, &device, record_id).unwrap();
 
     assert_eq!(record.record_id, record_id);
     assert_eq!(record.revision, 1);
@@ -96,25 +105,25 @@ fn tampered_record_is_rejected() {
     let vault_id = file.parse().unwrap().header.vault_id;
 
     // One flipped ciphertext bit.
-    let mut record = export_record(&session, &device, record_id).unwrap();
+    let mut record = export(&session, &device, record_id).unwrap();
     let last = record.frame.len() - 1;
     *record.frame.get_mut(last).unwrap() ^= 0x01;
     assert!(verify_sync_record(&record, &device_vk, &vault_id).is_err());
 
     // A forged revision.
-    let mut record = export_record(&session, &device, record_id).unwrap();
+    let mut record = export(&session, &device, record_id).unwrap();
     record.revision += 1;
     assert!(verify_sync_record(&record, &device_vk, &vault_id).is_err());
 
     // A foreign vault id.
-    let record = export_record(&session, &device, record_id).unwrap();
+    let record = export(&session, &device, record_id).unwrap();
     let mut foreign = [0u8; 16];
     foreign.copy_from_slice(&vault_id);
     foreign[0] ^= 0x80;
     assert!(verify_sync_record(&record, &device_vk, &foreign).is_err());
 
     // A swapped record id.
-    let mut record = export_record(&session, &device, record_id).unwrap();
+    let mut record = export(&session, &device, record_id).unwrap();
 
     record.record_id = record_id + 1;
     assert!(verify_sync_record(&record, &device_vk, &vault_id).is_err());
@@ -125,7 +134,7 @@ fn wrong_verifying_key_is_rejected() {
     let (mut file, mut session) = round_trip();
     let record_id = write_record(&mut session, &mut file, None, &demo_doc()).unwrap();
     let (device, _) = certified_device(0x23);
-    let record = export_record(&session, &device, record_id).unwrap();
+    let record = export(&session, &device, record_id).unwrap();
     let (_, other_vk) = certified_device(0x24);
     let vault_id = file.parse().unwrap().header.vault_id;
     assert!(verify_sync_record(&record, &other_vk, &vault_id).is_err());
@@ -221,7 +230,7 @@ fn export_of_unknown_record_fails() {
     let (file, session) = round_trip();
     let (device, _) = certified_device(0x28);
     let _ = file;
-    assert!(export_record(&session, &device, 999).is_err());
+    assert!(export(&session, &device, 999).is_err());
 }
 
 /// A certificate must fail against a message type it was not issued for:
@@ -268,6 +277,7 @@ fn trust<'a>(
 ) -> TrustedKeys<'a> {
     TrustedKeys {
         client_id: *client,
+        server_origin: ORIGIN,
         root_vk: *root_vk,
         devices,
         now_ms: now_ms(),
@@ -303,7 +313,7 @@ fn valid_record_is_applied() {
     // Receiver snapshot before the write: same vault, no record yet.
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
-    let sync_rec = export_record(&sender, &device, record_id).unwrap();
+    let sync_rec = export(&sender, &device, record_id).unwrap();
     let enrolled = [enroll(
         &root.seed(),
         &client,
@@ -339,7 +349,7 @@ fn replayed_revision_is_rejected() {
     let (mut sfile, mut sender) = round_trip();
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
-    let sync_rec = export_record(&sender, &device, record_id).unwrap();
+    let sync_rec = export(&sender, &device, record_id).unwrap();
     let enrolled = [enroll(
         &root.seed(),
         &client,
@@ -376,7 +386,7 @@ fn revoked_and_foreign_devices_are_rejected() {
     let (mut sfile, mut sender) = round_trip();
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
-    let sync_rec = export_record(&sender, &device, record_id).unwrap();
+    let sync_rec = export(&sender, &device, record_id).unwrap();
 
     let mut receiver = unlock(&rfile, &UnlockCreds::master(&SEED), None).unwrap();
     let mut rfile = rfile;
@@ -462,7 +472,7 @@ fn forged_outer_fields_are_rejected() {
     let (root, root_vk) = root_key();
     let (mut sfile, mut sender) = round_trip();
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
-    let honest = export_record(&sender, &device, record_id).unwrap();
+    let honest = export(&sender, &device, record_id).unwrap();
     let enrolled = [enroll(
         &root.seed(),
         &client,
@@ -536,4 +546,89 @@ fn accepted_type_round_trips() {
     let b = a;
     assert_eq!(a, b);
     let _ = format!("{a:?}");
+}
+
+fn accept_err(sync_rec: &SyncRecord, keys: &TrustedKeys<'_>, rfile: &VaultFile) -> String {
+    let mut receiver = unlock(rfile, &UnlockCreds::master(&SEED), None).unwrap();
+    let mut rfile = VaultFile::new(rfile.as_bytes().to_vec());
+    accept_record(&mut receiver, &mut rfile, sync_rec, keys, |_| None)
+        .unwrap_err()
+        .to_string()
+}
+
+#[test]
+fn addressing_and_downgrade_are_rejected() {
+    let client = client_id(&SEED).unwrap();
+    let (device, _) = certified_device(0x35);
+    let (root, root_vk) = root_key();
+    let (mut sfile, mut sender) = round_trip();
+    let rfile = VaultFile::new(sfile.as_bytes().to_vec());
+    let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
+    let honest = export(&sender, &device, record_id).unwrap();
+    let enrolled = [enroll(
+        &root.seed(),
+        &client,
+        &device,
+        origin_of(&honest),
+        1,
+    )];
+    let keys = trust(&client, &root_vk, &enrolled);
+    let resign = |rec: SyncRecord| SyncRecord {
+        signature: sign_record(&device, &rec).unwrap(),
+        ..rec
+    };
+
+    let other_server = resign(SyncRecord {
+        server_origin: Box::from(&b"https://other.example"[..]),
+        ..honest.clone()
+    });
+    assert_eq!(
+        accept_err(&other_server, &keys, &rfile),
+        "device cert rejected"
+    );
+
+    let other_account = resign(SyncRecord {
+        client_id: [9u8; 64],
+        ..honest.clone()
+    });
+    assert_eq!(
+        accept_err(&other_account, &keys, &rfile),
+        "device cert rejected"
+    );
+
+    let other_device = resign(SyncRecord {
+        device_id: [0x77; 16],
+        ..honest.clone()
+    });
+    assert_eq!(accept_err(&other_device, &keys, &rfile), "header mismatch");
+
+    let mut legacy = SyncRecord {
+        msg_version: session::MSG_VERSION_V1,
+        ..honest
+    };
+    let msg = session::record_message(&legacy).unwrap();
+    legacy.signature = pq::sync_sign(&device.seed(), session::SYNC_CTX, &msg).unwrap();
+    verify_sync_record(&legacy, &device.verifying_key().unwrap(), &legacy.vault_id).unwrap();
+    assert_eq!(
+        accept_err(&legacy, &keys, &rfile),
+        "unsupported sync message version"
+    );
+}
+
+#[test]
+fn prev_hash_chains_to_the_superseded_frame() {
+    use sha2::{Digest, Sha256};
+    let (mut file, mut session) = round_trip();
+    let (device, _) = certified_device(0x36);
+    let record_id = write_record(&mut session, &mut file, None, &demo_doc()).unwrap();
+    let first = export(&session, &device, record_id).unwrap();
+    assert_eq!(first.prev_hash, [0u8; 32]);
+    write_record(&mut session, &mut file, Some(record_id), &demo_doc()).unwrap();
+    let second = export(&session, &device, record_id).unwrap();
+    assert_eq!(
+        second.prev_hash,
+        <[u8; 32]>::from(Sha256::digest(&first.frame))
+    );
+    assert_eq!(second.device_id, origin_of(&second));
+    assert_eq!(second.msg_version, session::MSG_VERSION);
 }

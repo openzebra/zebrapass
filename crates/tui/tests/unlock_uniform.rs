@@ -15,7 +15,6 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::KeyCode;
-use session::BodyAlg;
 use tui::vault::discover::discover;
 
 use common::{app, make_vault, press, render, temp_dir, type_text, wait, PASSWORD};
@@ -56,7 +55,7 @@ fn failed_screen(base: &Path, password: &str) -> String {
 #[test]
 fn wrong_password_and_tampered_file_look_the_same() {
     let original = temp_dir("uniform-original");
-    make_vault(&original, BodyAlg::Aegis256);
+    make_vault(&original);
     let body_flip = temp_dir("uniform-body");
     copy_tree(&original, &body_flip);
     // The byte just before the 32-byte commit tag: inside the body.

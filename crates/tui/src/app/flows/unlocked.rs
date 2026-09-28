@@ -1,8 +1,6 @@
 //! The open vault: owns the session (through [`Vault`]), the summary cache,
 //! and every view. Dropping this state is what "lock" means.
 
-use std::collections::BTreeSet;
-
 use crossterm::event::{KeyCode, KeyEvent};
 use session::WrapDirectory;
 
@@ -22,7 +20,6 @@ use crate::ui::widgets::toast::Tone;
 use crate::vault::discover::VaultRef;
 use crate::vault::ops::{Op, Outcome};
 use crate::vault::records::{build_cache, Summary};
-use crate::vault::sync::{ImportReport, SignedPreview};
 use crate::vault::Vault;
 
 /// Public facts about the open vault, kept while a job holds the vault.
@@ -67,7 +64,7 @@ pub enum View {
     /// Devices.
     Devices(usize),
     /// Sync.
-    Sync(usize),
+    Sync,
     /// Health.
     Health(usize),
     /// History.
@@ -99,12 +96,6 @@ pub struct Unlocked {
     pub generator: Option<Box<GeneratorState>>,
     /// Last health report.
     pub health: Option<Box<HealthReport>>,
-    /// Records changed since the last export.
-    pub pending_sync: BTreeSet<u32>,
-    /// Last exported record's signed fields.
-    pub last_export: Option<SignedPreview>,
-    /// Last import results.
-    pub import: Option<Box<ImportReport>>,
 }
 
 impl Unlocked {
@@ -124,9 +115,6 @@ impl Unlocked {
             dialog: None,
             generator: None,
             health: None,
-            pending_sync: BTreeSet::new(),
-            last_export: None,
-            import: None,
         };
         state.load_detail();
         state
@@ -147,7 +135,7 @@ impl Unlocked {
             View::Editor(_) => Scope::Editor,
             View::Factors(_) => Scope::Factors,
             View::Devices(_) => Scope::Devices,
-            View::Sync(_) => Scope::Sync,
+            View::Sync => Scope::Sync,
             View::Health(_) => Scope::Health,
             View::History(_) => Scope::History,
             View::Settings(_) => Scope::Settings,
@@ -233,7 +221,7 @@ impl Unlocked {
             View::Factors(_) | View::Devices(_) => {
                 crate::app::flows::factors::on_key(self, event, ctx)
             }
-            View::Sync(_) | View::Health(_) | View::Settings(_) => {
+            View::Sync | View::Health(_) | View::Settings(_) => {
                 crate::app::flows::panels::on_key(self, event, ctx)
             }
             View::History(_) => crate::app::flows::history::on_key(self, event, ctx),
@@ -300,14 +288,12 @@ impl Unlocked {
         };
         match outcome {
             Outcome::Saved(id) => {
-                self.pending_sync.insert(id);
                 self.view = View::Home;
                 self.refresh();
                 self.select(id);
                 ctx.toast(Tone::Success, "Saved.");
             }
-            Outcome::Deleted(id) => {
-                self.pending_sync.insert(id);
+            Outcome::Deleted(_) => {
                 self.refresh();
                 ctx.toast(
                     Tone::Success,
@@ -315,7 +301,6 @@ impl Unlocked {
                 );
             }
             Outcome::Restored(id, revision) => {
-                self.pending_sync.insert(id);
                 self.view = View::Home;
                 self.refresh();
                 self.select(id);
@@ -333,16 +318,16 @@ impl Unlocked {
             Outcome::FactorRemoved => {
                 ctx.toast(Tone::Success, "Wrap removed. The vault key did not change.");
             }
-            Outcome::Rotated {
-                revoked,
-                password_changed,
-            } => {
+            Outcome::PasswordChanged => {
+                ctx.toast(Tone::Success, "Password changed.");
+            }
+            Outcome::Rotated(revoked) => {
                 self.refresh();
                 self.animate(if revoked { Anim::Revoke } else { Anim::Rotate }, ctx);
-                let what = match (revoked, password_changed) {
-                    (true, _) => "Revoked. New vault key",
-                    (false, true) => "Password changed. New vault key",
-                    (false, false) => "New vault key",
+                let what = if revoked {
+                    "Revoked. New vault key"
+                } else {
+                    "New vault key"
                 };
                 ctx.toast(
                     Tone::Success,
@@ -355,34 +340,6 @@ impl Unlocked {
             Outcome::Health(report) => {
                 self.health = Some(report);
                 self.view = View::Health(0);
-            }
-            Outcome::Exported(report) => {
-                self.last_export = report.preview;
-                self.pending_sync.clear();
-                ctx.toast(
-                    Tone::Success,
-                    format!(
-                        "Exported {} signed frame(s) to {}.",
-                        report.count,
-                        report.path.display()
-                    ),
-                );
-            }
-            Outcome::Imported(report) => {
-                let accepted = report
-                    .outcomes
-                    .iter()
-                    .filter(|(_, outcome)| outcome.is_ok())
-                    .count();
-                let total = report.outcomes.len();
-                self.import = Some(report);
-                self.refresh();
-                let tone = if accepted == total {
-                    Tone::Success
-                } else {
-                    Tone::Warn
-                };
-                ctx.toast(tone, format!("Imported {accepted} of {total} frame(s)."));
             }
         }
     }

@@ -9,7 +9,7 @@
 use sha2::{Digest, Sha256};
 
 use container::VaultFile;
-use frame::{parse, Header, ALG_AEGIS256, KIND_REVISION, KIND_TOMBSTONE};
+use frame::{parse, Header, ALG_AEGIS256, ALG_CASCADE, KIND_REVISION, KIND_TOMBSTONE};
 use kdf::frame_key;
 use pq::SYNC_VK_LEN;
 
@@ -17,13 +17,17 @@ use crate::create::Session;
 use crate::error::SessionError;
 use crate::rotate::write_records;
 use crate::sync_export::{check_fresh, verify_sync_record};
+use crate::sync_msg::MSG_VERSION;
 use crate::sync_sig::{DeviceCert, SyncRecord};
 
 /// Keys this device trusts: the account root plus the certified devices.
 #[derive(Debug)]
 pub struct TrustedKeys<'a> {
-    /// Account id every certificate must carry.
+    /// Account id every certificate and record must carry.
     pub client_id: [u8; 64],
+    /// Server origin every record must be addressed to; empty until a sync
+    /// server exists.
+    pub server_origin: &'a [u8],
     /// Verifying key of the account root.
     pub root_vk: [u8; SYNC_VK_LEN],
     /// `(origin_device, certificate)` for every enrolled device. The
@@ -57,6 +61,20 @@ fn check_vault(session: &Session, rec: &SyncRecord) -> Result<(), SessionError> 
     }
 }
 
+/// The record must be current-format and addressed to this account and
+/// server. A version-1 record binds neither, so it is a downgrade.
+fn check_addressing(rec: &SyncRecord, trust: &TrustedKeys<'_>) -> Result<(), SessionError> {
+    if rec.msg_version != MSG_VERSION {
+        return Err(SessionError::UnsupportedMsgVersion);
+    }
+    if !secret::ct_eq(&rec.client_id, &trust.client_id)
+        || !secret::ct_eq(&rec.server_origin, trust.server_origin)
+    {
+        return Err(SessionError::CertRejected);
+    }
+    Ok(())
+}
+
 /// The signed outer fields must describe the frame they cover, the digest
 /// must match, and a certified device must never claim the zero origin
 /// (only seed/password unlocks may stamp it).
@@ -64,10 +82,14 @@ fn check_header_binding(header: &Header, rec: &SyncRecord) -> Result<(), Session
     if header.origin_device == [0u8; 16] {
         return Err(SessionError::ZeroOrigin);
     }
+    // The signed device must be the one that sealed the frame.
+    if header.origin_device != rec.device_id {
+        return Err(SessionError::HeaderMismatch);
+    }
     if header.record_id != rec.record_id
         || header.revision != rec.revision
         || !matches!(header.kind, KIND_REVISION | KIND_TOMBSTONE)
-        || header.alg != ALG_AEGIS256
+        || !matches!(header.alg, ALG_CASCADE | ALG_AEGIS256)
     {
         return Err(SessionError::HeaderMismatch);
     }
@@ -162,6 +184,7 @@ pub fn accept_record(
     let cert = cert_for(trust, &header.origin_device)?;
     verify_sync_record(rec, &cert.device_vk, &rec.vault_id)?;
 
+    check_addressing(rec, trust)?;
     check_vault(session, rec)?;
     let local = local_latest(session, rec.record_id)?;
     check_fresh(seen_revision(local, rec.record_id, last_seen), rec.revision)?;

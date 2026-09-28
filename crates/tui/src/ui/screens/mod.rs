@@ -53,7 +53,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 View::Editor(editor) => editor::draw(frame, area, state, editor, ctx),
                 View::Factors(factors) => factors::draw(frame, area, state, factors, ctx),
                 View::Devices(cursor) => devices::draw(frame, area, state, *cursor, ctx),
-                View::Sync(cursor) => sync::draw(frame, area, state, *cursor, ctx),
+                View::Sync => sync::draw(frame, area, state, ctx),
                 View::Health(cursor) => health::draw(frame, area, state, *cursor, ctx),
                 View::History(history) => history::draw(frame, area, history, ctx),
                 View::Settings(settings) => settings::draw(frame, area, state, settings, ctx),

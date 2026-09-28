@@ -1,5 +1,6 @@
-//! Create wizard, step 1 of 4: name, Argon2id cost, body cipher. Later steps
-//! delegate to the ceremony and enroll screens.
+//! Create wizard, step 1 of 4: name and unlock cost. The encryption stack is
+//! fixed and only described. Later steps delegate to the ceremony and enroll
+//! screens.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -7,9 +8,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::create::{
-    cipher_info, profile_info, CreateState, SetupField, Step, CIPHERS, PROFILES,
-};
+use crate::app::flows::create::{estimate, profile_info, CreateState, SetupField, Step, PROFILES};
 use crate::cli::Flags;
 use crate::ui::layout::{body_and_hints, centered, row};
 use crate::ui::widgets::chrome::{button, hint_bar, panel, radio, step_dots};
@@ -46,13 +45,13 @@ pub fn titled<'a>(title: &str, step: (usize, usize), width: u16, ctx: &Ctx) -> L
     ])
 }
 
-fn timing(index: usize, ctx: &Ctx) -> String {
+fn timing(profile: session::KdfProfile, ctx: &Ctx) -> String {
     if !ctx.flags.has(Flags::BENCH) {
         return String::new();
     }
-    ctx.timings.get(index).copied().flatten().map_or_else(
+    ctx.kdf_fast.map_or_else(
         || String::from("measuring…"),
-        |time| format!("≈ {:.1} s here", time.as_secs_f64()),
+        |fast| format!("≈ {:.1} s", estimate(fast, profile).as_secs_f64()),
     )
 }
 
@@ -63,13 +62,13 @@ fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
     let block = panel(titled("New vault", (1, 4), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
-    let [name_label, name_box, _, cost, _, cipher, next] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(3),
+    let [name_label, name_box, _, cost, _, crypto, next] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(3),
         Constraint::Length(1),
         Constraint::Length(5),
+        Constraint::Length(1),
+        Constraint::Length(4),
         Constraint::Min(3),
     ])
     .areas(inner);
@@ -93,13 +92,13 @@ fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::from(Span::styled("  stored in local meta only", theme.muted())),
+                Line::from(Span::styled("  shown on this device only", theme.muted())),
             ]),
             note,
         );
     }
     frame.render_widget(Paragraph::new(cost_lines(state, wide, ctx)), cost);
-    frame.render_widget(Paragraph::new(cipher_lines(state, wide, ctx)), cipher);
+    frame.render_widget(Paragraph::new(crypto_lines(wide, ctx)), crypto);
     if let Some(spot) = row(next, 0) {
         let rect = Rect {
             x: spot.right().saturating_sub(16),
@@ -112,86 +111,55 @@ fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
     hint_bar(frame, hints, crate::app::keymap::Scope::Setup, "", ctx);
 }
 
-/// Argon2id profile radios with their timing estimates.
+/// Unlock-cost radios: how long opening the vault takes on this machine.
 fn cost_lines(state: &CreateState, wide: bool, ctx: &Ctx) -> Vec<Line<'static>> {
     let theme = &ctx.theme;
-    let mut cost_lines = vec![Line::from(Span::styled(
-        "  Unlock cost (Argon2id)",
+    let mut lines = vec![Line::from(Span::styled(
+        "  Unlock time (Argon2id)",
         if state.field == SetupField::Profile {
             theme.accent()
         } else {
             theme.strong()
         },
     ))];
-    cost_lines.extend(PROFILES.iter().enumerate().map(|(index, profile)| {
-        let (name, detail) = profile_info(*profile);
-        let tag = if index == 0 && wide {
-            "recommended"
-        } else {
-            ""
-        };
-        let time = if wide {
-            format!("{:<16}", timing(index, ctx))
-        } else {
-            String::new()
-        };
-        Line::from(vec![
+    lines.extend(PROFILES.iter().enumerate().map(|(index, profile)| {
+        let (name, detail, summary) = profile_info(*profile);
+        let chosen = index == state.profile;
+        let mut spans = vec![
             Span::styled(
-                format!("   {} {name:<8}", radio(index == state.profile, theme)),
-                theme.text(),
+                format!("   {} {name:<9}", radio(chosen, theme)),
+                if chosen { theme.accent() } else { theme.text() },
             ),
-            Span::styled(format!("{detail:<22}"), theme.muted()),
-            Span::styled(time, theme.muted()),
-            Span::styled(tag, theme.accent()),
-        ])
+            Span::styled(format!("{:<10}", timing(*profile, ctx)), theme.text()),
+        ];
+        if wide {
+            spans.push(Span::styled(format!("{detail:<17}"), theme.muted()));
+            spans.push(Span::styled(summary, theme.muted()));
+        }
+        Line::from(spans)
     }));
-    cost_lines
+    lines
 }
 
-/// Body cipher radios; unavailable algorithms say so.
-fn cipher_lines(state: &CreateState, wide: bool, ctx: &Ctx) -> Vec<Line<'static>> {
+/// The fixed encryption stack every vault uses.
+fn crypto_lines(wide: bool, ctx: &Ctx) -> Vec<Line<'static>> {
     let theme = &ctx.theme;
-    let mut cipher_lines = vec![Line::from(Span::styled(
-        "  Body cipher",
-        if state.field == SetupField::Cipher {
-            theme.accent()
-        } else {
-            theme.strong()
-        },
-    ))];
-    cipher_lines.extend(CIPHERS.iter().enumerate().map(|(index, alg)| {
-        let (name, detail, available) = cipher_info(*alg);
-        let style = if available {
-            theme.text()
-        } else {
-            theme.muted()
-        };
-        let tag = match (index, available) {
-            (0, _) => "default",
-            (_, false) => "unavailable",
-            _ => "",
-        };
-        let detail = if wide {
-            format!("{detail:<32}")
-        } else {
-            String::new()
-        };
-        let tag = if wide || !available { tag } else { "" };
-        Line::from(vec![
-            Span::styled(
-                format!("   {} {name:<24}", radio(index == state.cipher, theme)),
-                style,
-            ),
-            Span::styled(detail, theme.muted()),
-            Span::styled(
-                tag,
-                if available {
-                    theme.accent()
-                } else {
-                    theme.warn()
-                },
-            ),
-        ])
+    let ok = theme.glyphs.ok;
+    let rows: [(&str, &str); 3] = [
+        (
+            "Records",
+            "AEGIS-256 inside Kuznyechik-CTR + HMAC, keys per layer",
+        ),
+        ("Devices", "ML-KEM-768 + X25519 hybrid key wraps"),
+        ("Sync", "ML-DSA-65 signatures on every upload"),
+    ];
+    let mut lines = vec![Line::from(Span::styled("  Encryption", theme.strong()))];
+    lines.extend(rows.iter().map(|(label, detail)| {
+        let mut spans = vec![Span::styled(format!("   {ok} {label:<9}"), theme.accent())];
+        if wide {
+            spans.push(Span::styled(*detail, theme.muted()));
+        }
+        Line::from(spans)
     }));
-    cipher_lines
+    lines
 }

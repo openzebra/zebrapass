@@ -10,10 +10,16 @@ const T_FLOOR: u32 = 2;
 const P_FLOOR: u32 = 1;
 
 /// Header fields are untrusted `u32`s. Past this, Argon2 would allocate.
-/// The ceilings match the largest built-in profile (`KdfProfile::Desktop`).
-const M_KIB_CEILING: u32 = 262_144;
+/// The ceilings match the largest built-in profile (`KdfProfile::Strong`).
+const M_KIB_CEILING: u32 = 1_048_576;
 const T_CEILING: u32 = 8;
 const P_CEILING: u32 = 4;
+
+const _: () = {
+    assert!(M_KIB_CEILING == crate::KdfProfile::Strong.m_kib());
+    assert!(T_CEILING >= crate::KdfProfile::Strong.t());
+    assert!(P_CEILING >= crate::KdfProfile::Strong.p());
+};
 
 const OUTPUT_LEN: usize = 32;
 
@@ -26,7 +32,7 @@ const OUTPUT_LEN: usize = 32;
 ///
 /// `kdf parameters rejected` when `m_kib`, `t`, or `p` is outside the
 /// floor (`m_kib >= 19456`, `t >= 2`, `p >= 1`) or the ceiling
-/// (`m_kib <= 262144`, `t <= 8`, `p <= 4`). Those inputs are rejected
+/// (`m_kib <= 1048576`, `t <= 8`, `p <= 4`). Those inputs are rejected
 /// before Argon2 runs. The same error is returned when Argon2 itself rejects
 /// the inputs.
 /// `empty password` when `password` is empty. Argon2 is not called.
@@ -68,11 +74,10 @@ mod tests {
     #[test]
     fn bounds_empty_password_floor_and_domains() {
         // One function so `cargo test` does not run these allocations in parallel.
-        // Desktop is 256 MiB and is not hashed here.
+        // The presets allocate 64 MiB to 1 GiB and are not hashed here.
         let salt = [0xA5u8; 32];
         let password = b"vault-password";
         let rejected = [
-            (262_145, 2, 1),
             (1_048_577, 2, 1),
             (19_456, 9, 1),
             (19_456, 17, 1),
@@ -93,12 +98,11 @@ mod tests {
         let err = argon2id(b"", &salt, 19_456, 2, 1).unwrap_err();
         assert_eq!(err.to_string(), "empty password");
 
-        assert_eq!(KdfProfile::Desktop.m_kib(), 262_144);
-        assert_eq!(KdfProfile::Desktop.t(), 3);
-        assert_eq!(KdfProfile::Desktop.p(), 4);
-        assert_eq!(KdfProfile::Mobile.m_kib(), 65_536);
-        assert_eq!(KdfProfile::Mobile.t(), 3);
-        assert_eq!(KdfProfile::Mobile.p(), 2);
+        let presets = KdfProfile::ALL.map(|p| (p.m_kib(), p.t(), p.p()));
+        assert_eq!(
+            presets,
+            [(65_536, 3, 4), (262_144, 3, 4), (1_048_576, 4, 4)]
+        );
         assert_eq!(INFO_DEVICE_WRAP, b"brby/v2/device-wrap");
 
         let vk = [0x42u8; 32];

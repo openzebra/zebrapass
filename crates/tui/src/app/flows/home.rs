@@ -156,7 +156,7 @@ pub enum RowKind {
     Text,
     /// Masked secret.
     Secret,
-    /// TOTP secret: masked, and no code (HMAC-SHA1 is not an allowed primitive).
+    /// TOTP secret: shows the current code (masked until revealed), never the secret.
     Totp,
 }
 

@@ -1,8 +1,10 @@
 //! New vault wizard: setup → recovery phrase → verify → enroll.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use std::time::Duration;
+
 use seed::SeedPhrase;
-use session::{BodyAlg, KdfProfile};
+use session::KdfProfile;
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
@@ -19,40 +21,33 @@ use crate::vault::create::{Enrollment, NewVault};
 use crate::vault::limits::MAX_VAULT_NAME;
 
 /// Argon2id profiles offered, in display order.
-pub const PROFILES: [KdfProfile; 2] = [KdfProfile::Desktop, KdfProfile::Mobile];
-/// Body ciphers offered, in display order.
-pub const CIPHERS: [BodyAlg; 4] = [
-    BodyAlg::Aegis256,
-    BodyAlg::KuzCtrHmac,
-    BodyAlg::KuzMgm,
-    BodyAlg::Frames,
-];
+pub const PROFILES: [KdfProfile; 3] = KdfProfile::ALL;
+/// The preselected profile: [`KdfProfile::Balanced`].
+pub const DEFAULT_PROFILE: usize = 1;
 
-/// Label, detail, and availability of a body cipher. Exhaustive: a new
-/// algorithm is a compile error here.
+/// Label, cost, and summary of a profile. Exhaustive.
 #[must_use]
-pub const fn cipher_info(alg: BodyAlg) -> (&'static str, &'static str, bool) {
-    match alg {
-        BodyAlg::Aegis256 => ("AEGIS-256", "fast, 256-bit nonce", true),
-        BodyAlg::KuzCtrHmac => ("Kuznyechik-CTR + HMAC", "GOST, encrypt-then-MAC", true),
-        BodyAlg::KuzMgm => ("Kuznyechik-MGM", "recognized, not implemented", false),
-        BodyAlg::Frames => ("Per-record frames", "AEGIS-256 frames, O(1) append", true),
+pub const fn profile_info(profile: KdfProfile) -> (&'static str, &'static str, &'static str) {
+    match profile {
+        KdfProfile::Fast => ("Fast", "  64 MiB · t=3", "quick unlock, older hardware"),
+        KdfProfile::Balanced => ("Balanced", " 256 MiB · t=3", "recommended"),
+        KdfProfile::Strong => ("Strong", "1024 MiB · t=4", "slow unlock, hardest to crack"),
     }
 }
 
-/// Label and cost of a profile. Exhaustive.
+/// Unlock time of `profile` on this machine, scaled from one measured
+/// [`KdfProfile::Fast`] run by memory × passes (Argon2id is linear in both).
 #[must_use]
-pub const fn profile_info(profile: KdfProfile) -> (&'static str, &'static str) {
-    match profile {
-        KdfProfile::Desktop => ("Desktop", "256 MiB · t=3 · p=4"),
-        KdfProfile::Mobile => ("Mobile", " 64 MiB · t=3 · p=2"),
-    }
+pub fn estimate(fast: Duration, profile: KdfProfile) -> Duration {
+    let cost = |p: KdfProfile| u128::from(p.m_kib()) * u128::from(p.t());
+    let nanos = fast.as_nanos() * cost(profile) / cost(KdfProfile::Fast).max(1);
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 /// Wizard step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// Name, cost, cipher.
+    /// Name and unlock cost.
     Setup,
     /// Show the phrase.
     Ceremony,
@@ -69,8 +64,6 @@ pub enum SetupField {
     Name,
     /// Argon2id profile.
     Profile,
-    /// Body cipher.
-    Cipher,
 }
 
 /// Wizard state.
@@ -82,8 +75,6 @@ pub struct CreateState {
     pub name: TextInput,
     /// Index into [`PROFILES`].
     pub profile: usize,
-    /// Index into [`CIPHERS`].
-    pub cipher: usize,
     /// Focus on the setup step.
     pub field: SetupField,
     /// The generated phrase (wiped on drop).
@@ -100,16 +91,13 @@ impl CreateState {
     /// Start the wizard; queues the Argon2id timing estimate unless disabled.
     #[must_use]
     pub fn new(ctx: &mut Ctx) -> Self {
-        if ctx.flags.has(Flags::BENCH) && ctx.timings == [None, None] {
-            for profile in PROFILES {
-                ctx.worker.submit(Job::Bench(profile));
-            }
+        if ctx.flags.has(Flags::BENCH) && ctx.kdf_fast.is_none() {
+            ctx.worker.submit(Job::Bench);
         }
         Self {
             step: Step::Setup,
             name: TextInput::with_value("Personal", MAX_VAULT_NAME),
-            profile: 0,
-            cipher: 0,
+            profile: DEFAULT_PROFILE,
             field: SetupField::Name,
             phrase: None,
             ceremony: Ceremony::default(),
@@ -190,7 +178,10 @@ impl CreateState {
                 if self.ceremony.on_action(action, ctx) {
                     self.start_verify(ctx);
                 } else if action == Action::Confirm {
-                    ctx.toast(Tone::Info, "Write the phrase down, then tick it with x.");
+                    ctx.toast(
+                        Tone::Info,
+                        "Write the phrase down, then tick \"I wrote it down\" with Space.",
+                    );
                 }
                 Nav::Stay
             }
@@ -220,19 +211,15 @@ impl CreateState {
     fn on_setup(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
         match action {
             Action::NextField | Action::PrevField => {
-                self.field = match (self.field, action == Action::NextField) {
-                    (SetupField::Name, true) | (SetupField::Cipher, false) => SetupField::Profile,
-                    (SetupField::Profile, true) | (SetupField::Name, false) => SetupField::Cipher,
-                    (SetupField::Cipher, true) | (SetupField::Profile, false) => SetupField::Name,
+                self.field = match self.field {
+                    SetupField::Name => SetupField::Profile,
+                    SetupField::Profile => SetupField::Name,
                 };
             }
             Action::Up | Action::Down => {
+                self.field = SetupField::Profile;
                 let down = action == Action::Down;
-                match self.field {
-                    SetupField::Name => {}
-                    SetupField::Profile => self.profile = step(self.profile, down, PROFILES.len()),
-                    SetupField::Cipher => self.cipher = step(self.cipher, down, CIPHERS.len()),
-                }
+                self.profile = step(self.profile, down, PROFILES.len());
             }
             Action::Confirm => self.leave_setup(ctx),
             Action::Back => return Nav::To(crate::app::flows::gate::initial_screen(ctx)),
@@ -242,18 +229,8 @@ impl CreateState {
     }
 
     fn leave_setup(&mut self, ctx: &mut Ctx) {
-        let alg = CIPHERS
-            .get(self.cipher)
-            .copied()
-            .unwrap_or(BodyAlg::Aegis256);
-        let (label, _, available) = cipher_info(alg);
         if self.name.value().trim().is_empty() {
             ctx.toast(Tone::Warn, "Give the vault a name.");
-        } else if !available {
-            ctx.toast(
-                Tone::Warn,
-                format!("{label} is not available in this build."),
-            );
         } else {
             match SeedPhrase::generate_24() {
                 Ok(phrase) => {
@@ -290,11 +267,7 @@ impl CreateState {
             profile: PROFILES
                 .get(self.profile)
                 .copied()
-                .unwrap_or(KdfProfile::Desktop),
-            alg: CIPHERS
-                .get(self.cipher)
-                .copied()
-                .unwrap_or(BodyAlg::Aegis256),
+                .unwrap_or(KdfProfile::Balanced),
             factor,
         };
         ctx.start(Job::Create(Box::new(request)), Task::Create);

@@ -5,12 +5,13 @@
 
 use crate::header::HEADER_LEN;
 use crate::limits::MAX_FRAME_PLAINTEXT;
-use crate::TAG_LEN;
+use crate::{CASCADE_OVERHEAD, TAG_LEN};
 
 const LEN_LEN: usize = 4;
 
-/// Upper bound on one sealed frame: header plus maximum plaintext plus tag.
-const MAX_SEALED_FRAME: usize = HEADER_LEN + MAX_FRAME_PLAINTEXT + TAG_LEN;
+/// Upper bound on one sealed frame: header, maximum plaintext, cascade
+/// overhead, and the trailing tag.
+const MAX_SEALED_FRAME: usize = HEADER_LEN + MAX_FRAME_PLAINTEXT + CASCADE_OVERHEAD + TAG_LEN;
 
 /// Encode a concatenation of sealed frames as `u32le length || frame`.
 ///

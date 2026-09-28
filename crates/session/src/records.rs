@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use container::VaultFile;
 use frame::{
-    frame_at, latest, parse_index, FrameMeta, FrameRef, ALG_AEGIS256, KIND_REVISION, KIND_TOMBSTONE,
+    frame_at, latest, parse_index, FrameMeta, FrameRef, ALG_CASCADE, KIND_REVISION, KIND_TOMBSTONE,
 };
 use kdf::frame_key;
 use record::Document;
@@ -377,7 +377,7 @@ fn append_frame(
         revision,
         origin_device: session.origin_device,
         timestamp_ms: now_ms(),
-        alg: ALG_AEGIS256,
+        alg: ALG_CASCADE,
     };
     let key = frame_key_for(session, record_id)?;
     let frame_bytes = frame::seal(&key, &meta, plaintext)?;

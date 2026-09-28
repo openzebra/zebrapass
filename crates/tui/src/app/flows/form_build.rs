@@ -1,8 +1,6 @@
 //! Form validation: turn the typed inputs into one vault op. Every check runs
 //! before the vault reaches the worker; a rejected form keeps its inputs.
 
-use std::path::PathBuf;
-
 use seed::SeedPhrase;
 use session::KdfProfile;
 use subtle::ConstantTimeEq;
@@ -61,15 +59,6 @@ impl Form {
         }
     }
 
-    fn path(&self) -> Result<PathBuf, &'static str> {
-        self.path
-            .as_ref()
-            .map(|input| input.value().trim())
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .ok_or("Enter a file path.")
-    }
-
     /// Validate and build the op.
     ///
     /// # Errors
@@ -77,11 +66,17 @@ impl Form {
     /// A message for the first invalid input.
     pub fn build(&mut self) -> Result<(Op, Task), &'static str> {
         match self.kind.clone() {
-            FormKind::Revoke(factor) => self.rotation(Some(factor), false),
-            FormKind::Rotate => self.rotation(None, false),
-            FormKind::ChangePassword => self.rotation(None, true),
+            FormKind::Revoke(factor) => self.rotation(Some(factor)),
+            FormKind::Rotate => self.rotation(None),
+            FormKind::ChangePassword => {
+                let new = self.new_password()?;
+                let current = self
+                    .current_password()?
+                    .ok_or("Enter the current password.")?;
+                Ok((Op::ChangePassword { current, new }, Task::Factor))
+            }
             FormKind::AddPassword => Ok((
-                Op::AddPassword(self.new_password()?, KdfProfile::Desktop),
+                Op::AddPassword(self.new_password()?, KdfProfile::Balanced),
                 Task::Factor,
             )),
             FormKind::DropRecovery => {
@@ -90,14 +85,6 @@ impl Form {
                 } else {
                     Err("Type DROP to confirm.")
                 }
-            }
-            FormKind::Export(ids) => {
-                let path = self.path()?;
-                Ok((Op::Export(self.parse_phrase()?, ids, path), Task::Sync))
-            }
-            FormKind::Import => {
-                let path = self.path()?;
-                Ok((Op::Import(self.parse_phrase()?, path), Task::Sync))
             }
             FormKind::Rename => {
                 let name = self
@@ -114,22 +101,12 @@ impl Form {
         }
     }
 
-    fn rotation(
-        &mut self,
-        revoke: Option<FactorRef>,
-        change: bool,
-    ) -> Result<(Op, Task), &'static str> {
-        let new_password = if change {
-            Some(self.new_password()?)
-        } else {
-            None
-        };
+    fn rotation(&mut self, revoke: Option<FactorRef>) -> Result<(Op, Task), &'static str> {
         let current = self.current_password()?;
         let phrase = self.parse_phrase()?;
         let rotation = Rotation {
             phrase,
             current,
-            new_password,
             revoke,
         };
         Ok((Op::Rotate(Box::new(rotation)), Task::Rotate))

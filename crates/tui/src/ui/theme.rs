@@ -315,6 +315,14 @@ impl Theme {
         self.text().add_modifier(Modifier::BOLD)
     }
 
+    /// Block text cursor: the cell under the cursor, reversed (vim style).
+    #[must_use]
+    pub const fn cursor(&self) -> Style {
+        Style::new()
+            .fg(self.palette.text)
+            .add_modifier(Modifier::REVERSED)
+    }
+
     /// Unlocked, verified, primary.
     #[must_use]
     pub const fn accent(&self) -> Style {

@@ -20,8 +20,8 @@ use crate::vault::ops::{apply, Op, Outcome};
 
 /// Work for the worker thread.
 pub enum Job {
-    /// Time one Argon2id run of `profile` (UI estimate only).
-    Bench(KdfProfile),
+    /// Time one Argon2id run of the Fast profile (UI estimate only).
+    Bench,
     /// Unlock a vault.
     Unlock(Paths, Credential),
     /// Create a vault.
@@ -34,8 +34,8 @@ pub enum Job {
 
 /// A finished job.
 pub enum JobResult {
-    /// Benchmark time, `None` when Argon2 refused the parameters.
-    Bench(KdfProfile, Option<Duration>),
+    /// Time of one [`KdfProfile::Fast`] run, `None` when Argon2 refused.
+    Bench(Option<Duration>),
     /// Unlock outcome.
     Opened(Result<Box<Vault>, UnlockError>),
     /// Create outcome; the error text holds no secret.
@@ -122,7 +122,7 @@ impl Worker {
 
 fn run(job: Job, chips: &Chips) -> JobResult {
     match job {
-        Job::Bench(profile) => JobResult::Bench(profile, bench(profile)),
+        Job::Bench => JobResult::Bench(bench(KdfProfile::Fast)),
         Job::Unlock(paths, credential) => JobResult::Opened(unlock_vault(paths, credential, chips)),
         Job::Create(request) => {
             JobResult::Created(create(*request, chips).map_err(|error| describe(&error)))

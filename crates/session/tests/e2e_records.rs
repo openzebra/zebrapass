@@ -81,7 +81,7 @@ fn seed_vault_storage_and_records_end_to_end() {
     let seed = *phrase.seed();
     let base = temp_base("storage");
     let (paths, mut session, mut file, meta) =
-        local::create_vault(&base, &seed, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+        local::create_vault(&base, &seed, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     assert!(paths.vault_file.exists(), "vault.brby must exist");
     assert!(paths.local_meta.exists(), "local.meta must exist");
 
@@ -199,9 +199,9 @@ fn identity_is_deterministic_and_devices_differ() {
 
     let base = temp_base("identity");
     let (_p1, _s1, _f1, meta1) =
-        local::create_vault(&base, &seed, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+        local::create_vault(&base, &seed, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (_p2, _s2, _f2, meta2) =
-        local::create_vault(&base, &seed, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+        local::create_vault(&base, &seed, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     assert_ne!(meta1.device_id, meta2.device_id);
     assert_eq!(meta1.client_id, meta2.client_id);
     std::fs::remove_dir_all(&base).unwrap();
@@ -212,7 +212,7 @@ fn device_factor_opens_without_master() {
     let seed = [0x77u8; 64];
     let base = temp_base("device");
     let (_paths, mut session, mut file, _meta) =
-        local::create_vault(&base, &seed, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+        local::create_vault(&base, &seed, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
 
     write_record(&mut session, &mut file, None, &login_doc("Wifi", "pw")).unwrap();
     let (pubs, keys) = device_identity(0x61);

@@ -4,7 +4,7 @@ use aead::BodyAlg;
 use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_DEVICE, KIND_PRF};
 use frame::encode_frames;
 use secret::Secret;
-use wraps::{seal_prf, ChipPublics, DevicePublics, PrfPublics};
+use wraps::{seal_prf, DevicePublics, PrfPublics};
 
 use crate::create::{encrypt_records, fold_log, fold_new_spans, next_generation, publish, Session};
 use crate::error::SessionError;
@@ -141,7 +141,7 @@ pub fn rewrite_body(
 /// Rotate the vault key, keeping the record log as it is.
 ///
 /// Old wrap ciphertexts are not reused: they seal the previous vault key.
-/// A file wrap id with no matching entry in `creds.devices` or `creds.chips`
+/// A device wrap id with no public keys in the device book or `devices`
 /// is `wrap not found` and does not modify `file` or `session`. A PRF wrap
 /// without a matching output in `creds.prfs` is `prf factor required`, and a
 /// human password wrap without `creds.human_password` is
@@ -154,7 +154,7 @@ pub fn rewrite_body(
 /// # Errors
 ///
 /// `corrupted length` when the stored log does not parse as whole frames;
-/// `wrap not found` when a device or chip wrap has no matching public id.
+/// `wrap not found` when a device wrap has no known public keys.
 /// `prf factor required` when a PRF wrap has no matching output.
 /// `human factor required` when a human wrap has no password.
 /// `zero shared secret` when a device X25519 public key is zero.
@@ -163,7 +163,6 @@ pub fn reencrypt_body(
     file: &mut VaultFile,
     master: &[u8; 64],
     devices: &[DevicePublics],
-    chips: &[(ChipPublics, [u8; 32])],
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     let log = session.records.expose().clone();
@@ -175,7 +174,6 @@ pub fn reencrypt_body(
             master,
             human_password: None,
             devices,
-            chips,
             prfs,
         },
         None,
@@ -186,15 +184,15 @@ pub fn reencrypt_body(
 /// passphrase and the live outputs of every kept human factor.
 ///
 /// Device and chip wraps are sealed to public keys, so revoking one of them
-/// needs no secret from the revoked device.
+/// needs no secret from any device. Chip publics come from the chip wrap
+/// itself; device publics come from the device book or `devices`.
 #[derive(Clone, Copy, Debug)]
 pub struct RotateCreds<'a> {
     /// Seals the password (recovery) wrap.
     pub master: &'a [u8; 64],
-    /// Public keys of every kept device wrap.
+    /// Public keys of kept device wraps missing from the device book
+    /// ([`crate::enroll_device`]).
     pub devices: &'a [DevicePublics],
-    /// Platform public key plus its P-256 shared secret, per kept chip wrap.
-    pub chips: &'a [(ChipPublics, [u8; 32])],
     /// hmac-secret output, per kept PRF wrap.
     pub prfs: &'a [(PrfPublics, [u8; 32])],
     /// The human password, needed only when a human password wrap must be
@@ -220,14 +218,14 @@ pub enum Revoke<'a> {
 /// decrypted, so dropping the wrap alone proves nothing. The vault key is
 /// drawn fresh and the body is re-encrypted, so old key material cannot read
 /// records written after this call. Every remaining wrap needs matching
-/// material in `creds`; device and chip wraps need only their public keys.
+/// material in `creds`; device and chip wraps need only public keys.
 /// The session's decrypted frame body becomes empty. On error, `file` and
 /// `session` are left as they were.
 ///
 /// # Errors
 ///
 /// `wrap not found` when no wrap of the target kind has the id, or a
-/// remaining device or chip wrap has no matching public id in `creds`.
+/// remaining device wrap has no public keys in the book or `creds`.
 /// `prf factor required` when a remaining PRF wrap has no matching output.
 /// `human factor required` when a remaining human wrap has no password in
 /// `creds`.

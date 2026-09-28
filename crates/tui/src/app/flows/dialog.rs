@@ -21,6 +21,8 @@ pub enum ConfirmKind {
     Delete(u32),
     /// Remove a wrap without rotation.
     RemoveWrap(FactorRef),
+    /// Remove the password wrap.
+    RemovePassword,
     /// Drop superseded revisions.
     ClearHistory,
     /// Restore a revision.
@@ -50,8 +52,9 @@ pub struct Info {
 }
 
 /// Add-factor choices.
-pub const ADD_FACTOR: [&str; 3] = [
+pub const ADD_FACTOR: [&str; 4] = [
     "Password (Argon2id)",
+    "This device (keychain, ML-KEM hybrid)",
     "Secure chip",
     "Hardware key (FIDO2 PRF)",
 ];
@@ -194,7 +197,7 @@ fn form_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
                         edit_secret(input, event);
                     }
                 }
-                FormFocus::Path | FormFocus::Text => {
+                FormFocus::Text => {
                     if let Some(input) = form.text_mut(form.focus) {
                         edit_text(input, event);
                     }

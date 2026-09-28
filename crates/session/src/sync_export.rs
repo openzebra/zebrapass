@@ -10,9 +10,8 @@ use sha2::{Digest, Sha256};
 
 use crate::create::Session;
 use crate::error::SessionError;
-use crate::sync_sig::{
-    sign_record, verify_record, DeviceSignKey, SyncRecord, MSG_VERSION, SYNC_VK_LEN,
-};
+use crate::sync_msg::MSG_VERSION;
+use crate::sync_sig::{sign_record, verify_record, DeviceSignKey, SyncRecord, SYNC_VK_LEN};
 
 /// True when a remote frame should replace the local one. Equal revisions
 /// tie-break on `(revision, origin_device)` at frame level; same revision
@@ -40,10 +39,13 @@ pub const fn check_fresh(last_seen: Option<u64>, incoming: u64) -> Result<(), Se
 
 /// Sign and export the latest frame of `record_id`.
 ///
-/// `device` is this device's ML-DSA key; the signature binds `vault_id`,
-/// `record_id`, `revision`, the content hash, the wire-format version, and
-/// the vault-key generation the frame was written under, so the receiver can
-/// detect a foreign vault, a replayed revision, and a stale key epoch.
+/// `device` is this device's ML-DSA key; the signature binds the server
+/// origin, the account `client_id`, the sealing device, `vault_id`,
+/// `record_id`, `revision`, the hash of the superseded frame, the content
+/// hash, the wire-format version, and the vault-key generation, so the
+/// receiver can detect a foreign server, account or vault, a replayed
+/// revision, and a stale key epoch. `server_origin` is empty until a sync
+/// server exists.
 ///
 /// # Errors
 ///
@@ -55,10 +57,20 @@ pub fn export_record(
     session: &Session,
     device: &DeviceSignKey,
     record_id: u32,
+    client_id: &[u8; 64],
+    server_origin: &[u8],
 ) -> anyhow::Result<SyncRecord> {
     let refs = frame::parse_index(session.records.expose())?;
     let reference =
         frame::latest(&refs, record_id).ok_or_else(|| anyhow::anyhow!("unknown record"))?;
+    let prev_hash = refs
+        .iter()
+        .filter(|r| r.record_id == record_id && r.known() && r.start != reference.start)
+        .max_by_key(|r| (r.revision, r.origin_device))
+        .map_or(Ok([0u8; 32]), |prev| {
+            frame::frame_at(session.records.expose(), prev)
+                .map(|bytes| <[u8; 32]>::from(Sha256::digest(bytes)))
+        })?;
     let frame_bytes = frame::frame_at(session.records.expose(), reference)?.to_vec();
     let origin = frame::parse(&frame_bytes)?.origin_device;
     if origin == [0u8; 16] {
@@ -68,13 +80,17 @@ pub fn export_record(
     let generation =
         u32::try_from(session.generation()).map_err(|_| anyhow::anyhow!("ciphertext too large"))?;
     let unsigned = SyncRecord {
+        client_id: *client_id,
+        prev_hash,
+        content_hash,
         vault_id: *session.vault_id(),
+        device_id: origin,
         record_id,
         revision: reference.revision,
         msg_version: MSG_VERSION,
         key_generation: generation,
+        server_origin: Box::from(server_origin),
         frame: frame_bytes,
-        content_hash,
         signature: Vec::new(),
     };
     let signature = sign_record(device, &unsigned)?;

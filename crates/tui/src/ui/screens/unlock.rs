@@ -118,6 +118,23 @@ fn draw_input(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
                 theme,
             );
         }
+        Mode::Device => {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(
+                            "{}  Press Enter to unlock with this device ({})",
+                            theme.glyphs.device,
+                            ctx.chips.keyring().kind()
+                        ),
+                        theme.text(),
+                    )),
+                ])
+                .alignment(Alignment::Center),
+                area,
+            );
+        }
         Mode::Chip => {
             frame.render_widget(
                 Paragraph::new(vec![

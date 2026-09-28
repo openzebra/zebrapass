@@ -4,23 +4,20 @@
 //! advances the rollback cursor. The vault moves into the worker and back;
 //! it is never cloned.
 
-use std::path::PathBuf;
-
 use record::{Document, TAG_PASSWORD};
 use seed::SeedPhrase;
 use session::{
     clear_history, delete_record, drop_recovery_wrap, remove_chip_unlock, remove_device,
-    remove_prf_unlock, restore_revision, revoke, rotate_vault_key, unlock, write_record,
-    KdfProfile, Revoke, RotateCreds, UnlockCreds,
+    remove_human_password, remove_prf_unlock, replace_human_password, restore_revision, revoke,
+    rotate_vault_key, unlock, write_record, Factor, KdfProfile, Revoke, RotateCreds, UnlockCreds,
 };
 use zeroize::Zeroizing;
 
 use crate::secure::health::{analyze, Candidate, HealthReport};
 use crate::vault::chip::Chips;
-use crate::vault::create::{add_password, unix_ms};
+use crate::vault::create::{add_password, password_publics, unix_ms};
 use crate::vault::factors::{presence, FactorKind};
 use crate::vault::open::Vault;
-use crate::vault::sync::{export, import, ExportReport, ImportReport};
 
 /// A wrap addressed by kind and id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,15 +30,12 @@ pub enum FactorRef {
     HwKey([u8; 16]),
 }
 
-/// A vault-key rotation, optionally revoking one factor and/or changing the
-/// password.
+/// A vault-key rotation, optionally revoking one factor.
 pub struct Rotation {
     /// The recovery phrase (seals the new recovery wrap).
     pub phrase: Box<SeedPhrase>,
     /// The current password, when the vault has one.
     pub current: Option<Zeroizing<Vec<u8>>>,
-    /// A new password to seal instead of the current one.
-    pub new_password: Option<Zeroizing<Vec<u8>>>,
     /// The factor to revoke.
     pub revoke: Option<FactorRef>,
 }
@@ -73,6 +67,17 @@ pub enum Op {
     Rename(String),
     /// Add the password factor.
     AddPassword(Zeroizing<Vec<u8>>, KdfProfile),
+    /// Replace the password wrap; the vault key stays.
+    ChangePassword {
+        /// The password that opens the vault now.
+        current: Zeroizing<Vec<u8>>,
+        /// Its replacement.
+        new: Zeroizing<Vec<u8>>,
+    },
+    /// Drop the password wrap.
+    RemovePassword,
+    /// Add this device's keyring factor.
+    AddDevice,
     /// Add a development chip factor.
     #[cfg(feature = "dev-chip")]
     AddChip,
@@ -84,10 +89,6 @@ pub enum Op {
     DropRecovery,
     /// Analyze password health.
     Health,
-    /// Export signed frames.
-    Export(Box<SeedPhrase>, Box<[u32]>, PathBuf),
-    /// Import signed frames.
-    Import(Box<SeedPhrase>, PathBuf),
 }
 
 impl std::fmt::Debug for Op {
@@ -113,21 +114,14 @@ pub enum Outcome {
     FactorAdded(FactorKind),
     /// A wrap was removed.
     FactorRemoved,
-    /// The vault key rotated.
-    Rotated {
-        /// A factor was revoked.
-        revoked: bool,
-        /// The password changed.
-        password_changed: bool,
-    },
+    /// The vault key rotated; `true` when a factor was revoked.
+    Rotated(bool),
+    /// The password wrap was replaced.
+    PasswordChanged,
     /// The recovery wrap is gone from this copy.
     RecoveryDropped,
     /// Health analysis.
     Health(Box<HealthReport>),
-    /// Frames exported.
-    Exported(Box<ExportReport>),
-    /// Frames imported.
-    Imported(Box<ImportReport>),
 }
 
 /// Run `op` on `vault`.
@@ -163,6 +157,31 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
             add_password(&mut vault.session, &mut vault.file, &password, profile)?;
             Outcome::FactorAdded(FactorKind::Password)
         }
+        Op::ChangePassword { current, new } => {
+            check_password(vault, &current)?;
+            let cost = vault
+                .directory
+                .factors
+                .iter()
+                .find_map(|factor| match factor {
+                    Factor::Password { m_kib, t, p } => Some((*m_kib, *t, *p)),
+                    _ => None,
+                })
+                .ok_or_else(|| anyhow::anyhow!("this vault has no password factor"))?;
+            let publics = password_publics(&new, cost)?;
+            replace_human_password(&mut vault.session, &mut vault.file, &publics)?;
+            Outcome::PasswordChanged
+        }
+        Op::RemovePassword => {
+            remove_human_password(&mut vault.session, &mut vault.file)?;
+            Outcome::FactorRemoved
+        }
+        Op::AddDevice => {
+            chips
+                .keyring()
+                .enroll(&mut vault.session, &mut vault.file)?;
+            Outcome::FactorAdded(FactorKind::Device)
+        }
         #[cfg(feature = "dev-chip")]
         Op::AddChip => {
             chips.enroll(&mut vault.session, &mut vault.file)?;
@@ -170,7 +189,10 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
         }
         Op::RemoveWrap(factor) => {
             match factor {
-                FactorRef::Device(id) => remove_device(&mut vault.session, &mut vault.file, &id)?,
+                FactorRef::Device(id) => {
+                    remove_device(&mut vault.session, &mut vault.file, &id)?;
+                    chips.keyring().forget(vault.session.vault_id(), &id);
+                }
                 FactorRef::Chip(id) => {
                     remove_chip_unlock(&mut vault.session, &mut vault.file, &id)?;
                     chips.forget(&id);
@@ -187,14 +209,6 @@ pub fn apply(vault: &mut Vault, op: Op, chips: &Chips) -> anyhow::Result<Outcome
             Outcome::RecoveryDropped
         }
         Op::Health => return Ok(Outcome::Health(Box::new(health(vault)?))),
-        Op::Export(phrase, ids, path) => {
-            return Ok(Outcome::Exported(Box::new(export(
-                vault, &phrase, &ids, &path,
-            )?)))
-        }
-        Op::Import(phrase, path) => {
-            return Ok(Outcome::Imported(Box::new(import(vault, &phrase, &path)?)))
-        }
     };
     vault.persist()?;
     Ok(outcome)
@@ -207,41 +221,30 @@ fn rotate(vault: &mut Vault, rotation: &Rotation, chips: &Chips) -> anyhow::Resu
         let current = rotation
             .current
             .as_deref()
-            .map(Vec::as_slice)
             .ok_or_else(|| anyhow::anyhow!("the current password is needed"))?;
-        // A wrong current password would otherwise be sealed as the new one.
-        unlock(
-            &vault.file,
-            &UnlockCreds::default().with_human(current),
-            None,
-        )
-        .map_err(|_| anyhow::anyhow!("the current password is not correct"))?;
+        check_password(vault, current)?;
     }
     let human: Option<&[u8]> = rotation
-        .new_password
+        .current
         .as_deref()
-        .or(rotation.current.as_deref())
         .map(Vec::as_slice)
         .filter(|_| has_password);
-    let skip = match rotation.revoke {
-        Some(FactorRef::Chip(id)) => Some(id),
-        Some(FactorRef::Device(_) | FactorRef::HwKey(_)) | None => None,
-    };
-    let material = chips.rotation_material(&vault.directory, skip)?;
     let creds = RotateCreds {
         master: rotation.phrase.seed(),
         devices: &[],
-        chips: material.as_slice(),
         prfs: &[],
         human_password: human,
     };
     match rotation.revoke {
-        Some(FactorRef::Device(id)) => revoke(
-            &mut vault.session,
-            &mut vault.file,
-            &Revoke::Device(&id),
-            &creds,
-        )?,
+        Some(FactorRef::Device(id)) => {
+            revoke(
+                &mut vault.session,
+                &mut vault.file,
+                &Revoke::Device(&id),
+                &creds,
+            )?;
+            chips.keyring().forget(vault.session.vault_id(), &id);
+        }
         Some(FactorRef::Chip(id)) => {
             revoke(
                 &mut vault.session,
@@ -259,10 +262,18 @@ fn rotate(vault: &mut Vault, rotation: &Rotation, chips: &Chips) -> anyhow::Resu
         )?,
         None => rotate_vault_key(&mut vault.session, &mut vault.file, &creds)?,
     }
-    Ok(Outcome::Rotated {
-        revoked: rotation.revoke.is_some(),
-        password_changed: rotation.new_password.is_some() && has_password,
-    })
+    Ok(Outcome::Rotated(rotation.revoke.is_some()))
+}
+
+/// A wrong current password would otherwise be re-sealed or replaced.
+fn check_password(vault: &Vault, current: &[u8]) -> anyhow::Result<()> {
+    unlock(
+        &vault.file,
+        &UnlockCreds::default().with_human(current),
+        None,
+    )
+    .map(drop)
+    .map_err(|_| anyhow::anyhow!("the current password is not correct"))
 }
 
 /// Open every record's password and analyze it. The documents stay owned

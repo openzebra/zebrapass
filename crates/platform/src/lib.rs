@@ -1,4 +1,8 @@
-//! Platform backends for the fast unlock factor: the secure chip.
+//! Platform backends for the fast unlock factors: the secure chip and the
+//! OS secret store that keeps device keys.
+//!
+//! [`SecretStore`] — small per-account secrets: [`MacKeychain`] on macOS,
+//! [`MemoryStore`] for tests.
 //!
 //! [`ChipBackend`] — a secure chip that owns a non-exportable P-256 key
 //! per alias (`iOS` Secure Enclave, `Android` `StrongBox`). The
@@ -28,6 +32,12 @@
 //! `add_prf_unlock` / `remove_prf_unlock`, the `prfs` parameter of
 //! `reencrypt_body`. The vault format already reserves wrap kind `0x0004`
 //! and `wraps::prf` still compiles, so files stay forward-compatible.
+
+mod keychain;
+
+#[cfg(target_os = "macos")]
+pub use keychain::MacKeychain;
+pub use keychain::{MemoryStore, SecretStore};
 
 use std::collections::HashMap;
 use std::sync::Mutex;

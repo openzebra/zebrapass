@@ -7,12 +7,12 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::ceremony::{words, Verify, CARDS, PER_ROW, ROWS};
+use crate::app::flows::ceremony::{words, CeremonyFocus, Verify, CARDS, PER_ROW, ROWS};
 use crate::app::flows::create::{CreateState, Step};
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::create::titled;
-use crate::ui::widgets::chrome::{checkbox, hint_bar, panel};
+use crate::ui::widgets::chrome::{button, checkbox, hint_bar, panel};
 use crate::ui::widgets::stripes::mask;
 
 /// Mask cells per hidden word.
@@ -70,7 +70,11 @@ fn draw_phrase(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme.muted());
+        .border_style(if state.ceremony.focus == CeremonyFocus::Grid {
+            theme.accent()
+        } else {
+            theme.muted()
+        });
     let grid_inner = block.inner(grid_rect);
     frame.render_widget(block, grid_rect);
     let phrase_words: Vec<&str> = state
@@ -207,19 +211,26 @@ fn draw_verify(frame: &mut Frame<'_>, area: Rect, verify: &Verify, ctx: &Ctx) {
     hint_bar(frame, hints, Scope::Verify, "", ctx);
 }
 
-/// The "written" box and how reveal works.
+/// The "written" box, the continue button, and how reveal works.
 fn draw_footer(frame: &mut Frame<'_>, footer: Rect, state: &CreateState, ctx: &Ctx) {
     let theme = &ctx.theme;
+    let ceremony = &state.ceremony;
     let reveal = if ctx.caps.key_release {
-        "Hold SPACE to reveal the marked row (hides on release)."
+        "Hold Space on the grid to reveal the marked row."
     } else {
-        "Press SPACE to reveal the marked row (hides after 5 s)."
+        "Space on the grid reveals the marked row for 5 s."
     };
+    let focused = ceremony.focus == CeremonyFocus::Written;
+    let pointer = if focused { theme.glyphs.pointer } else { " " };
+    let [text, action] =
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(18)]).areas(footer);
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                format!("   {} I wrote it down", checkbox(state.ceremony.written)),
-                if state.ceremony.written {
+                format!(" {pointer} {} I wrote it down", checkbox(ceremony.written)),
+                if focused {
+                    theme.selected()
+                } else if ceremony.written {
                     theme.accent()
                 } else {
                     theme.text()
@@ -227,11 +238,25 @@ fn draw_footer(frame: &mut Frame<'_>, footer: Rect, state: &CreateState, ctx: &C
             )),
             Line::from(Span::styled(format!("   {reveal}"), theme.muted())),
             Line::from(Span::styled(
-                "   One row at a time, so all 24 words are never on screen together.",
+                "   One row at a time: all 24 words never share the screen.",
                 theme.muted(),
             )),
         ])
         .wrap(ratatui::widgets::Wrap { trim: false }),
-        footer,
+        text,
+    );
+    let rect = Rect {
+        x: action.x + 2,
+        width: action.width.saturating_sub(4),
+        height: 3.min(action.height),
+        ..action
+    };
+    button(
+        frame,
+        rect,
+        "Continue →",
+        ceremony.written,
+        ceremony.focus == CeremonyFocus::Continue,
+        theme,
     );
 }

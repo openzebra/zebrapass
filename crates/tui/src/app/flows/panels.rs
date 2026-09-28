@@ -83,7 +83,7 @@ pub struct SettingsState {
 /// Handle a key on the sync, health, or settings view.
 pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
     match state.view {
-        View::Sync(_) => sync_key(state, event, ctx),
+        View::Sync => sync_key(state, event, ctx),
         View::Health(_) => health_key(state, event, ctx),
         View::Settings(_) => settings_key(state, event, ctx),
         _ => Nav::Stay,
@@ -94,14 +94,12 @@ fn sync_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
     let Some(action) = resolve(Scope::Sync, event) else {
         return Nav::Stay;
     };
-    let rows = state.pending_sync.len();
-    match (action, &mut state.view) {
-        (Action::Up, View::Sync(cursor)) => *cursor = cursor.saturating_sub(1),
-        (Action::Down, View::Sync(cursor)) => *cursor = (*cursor + 1).min(rows.saturating_sub(1)),
-        (Action::Back, _) => state.view = View::Home,
-        (action, _) => return palette_action(state, action, ctx),
+    if action == Action::Back {
+        state.view = View::Home;
+        Nav::Stay
+    } else {
+        palette_action(state, action, ctx)
     }
-    Nav::Stay
 }
 
 fn health_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {

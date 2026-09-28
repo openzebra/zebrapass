@@ -29,6 +29,8 @@ argon2 = { version = "=0.6.0", default-features = false }
 hkdf = "=0.13.0"
 sha2 = "=0.11.0"
 hmac = "=0.13.0"
+# TOTP codes only (RFC 6238 mandates HMAC-SHA1); never used for keys or integrity.
+sha1 = "=0.11.0"
 x25519-dalek = "=3.0.0"
 # p256 0.14 zeroizes its scalar types unconditionally (no opt-in feature).
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdh", "arithmetic", "alloc"] }
@@ -47,6 +49,8 @@ subtle = "=2.6.1"
 # Terminal UI only (crates/tui). ratatui 0.29 is the last line on the 1.85 MSRV;
 # Cargo.lock pins its `instability` proc-macro to 0.3.7 for the same reason.
 ratatui = "=0.29.0"
+# macOS login keychain for per-device keys (crates/platform only).
+security-framework = { version = "=3.7.0", default-features = false }
 crossterm = "=0.28.1"
 
 [workspace.lints.rust]
@@ -62,3 +66,10 @@ expect_used = "deny"
 panic = "deny"
 indexing_slicing = "deny"
 cargo_common_metadata = "allow"
+
+# Argon2 dominates debug-build test time; optimize it even in dev.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

@@ -90,6 +90,8 @@ pub enum Credential {
     Password(Zeroizing<Vec<u8>>),
     /// The recovery phrase.
     Phrase(Box<SeedPhrase>),
+    /// This device's keys from the keyring.
+    Device,
     /// This process's development chip key.
     #[cfg(feature = "dev-chip")]
     Chip,
@@ -146,14 +148,23 @@ pub fn unlock_vault(
             unlock(&file, &UnlockCreds::default().with_human(password), None)
         }
         Credential::Phrase(phrase) => unlock(&file, &UnlockCreds::master(phrase.seed()), None),
+        Credential::Device => unlock_device(&file, chips),
         #[cfg(feature = "dev-chip")]
         Credential::Chip => chips.unlock(&file),
     };
-    #[cfg(not(feature = "dev-chip"))]
-    let _ = chips;
     drop(credential);
     let session = opened.map_err(|error| UnlockError::from(&error))?;
     finish_open(file, session, paths)
+}
+
+/// Open `file` with this device's keys from the keyring.
+fn unlock_device(file: &VaultFile, chips: &Chips) -> anyhow::Result<Session> {
+    let vault_id = file.parse()?.header.vault_id;
+    let keys = chips
+        .keyring()
+        .keys(&vault_id)?
+        .ok_or_else(|| anyhow::anyhow!("no usable wrap"))?;
+    unlock(file, &UnlockCreds::default().with_device(&keys), None)
 }
 
 /// Apply the rollback cursor and hand back the vault.

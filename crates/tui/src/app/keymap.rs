@@ -169,7 +169,9 @@ pub const KEYMAP: &[Binding] = bindings! {
     Setup: key(KeyCode::Enter) => Confirm, "continue";
     Setup: key(KeyCode::Esc) => Back, "back";
 
-    Ceremony: ch(' ') => Reveal, "reveal row";
+    Ceremony: key(KeyCode::Tab) => NextField, "focus";
+    Ceremony: key(KeyCode::BackTab) => PrevField;
+    Ceremony: ch(' ') => Reveal, "reveal / tick";
     Ceremony: key(KeyCode::Up) => Up, "row";
     Ceremony: key(KeyCode::Down) => Down;
     Ceremony: ch('x') => ToggleWritten, "written";
@@ -183,13 +185,14 @@ pub const KEYMAP: &[Binding] = bindings! {
     Verify: key(KeyCode::Enter) => Confirm, "confirm";
     Verify: key(KeyCode::Esc) => Back, "back to phrase";
 
-    Restore: key(KeyCode::Tab) => AcceptSuggestion, "accept";
+    Restore: key(KeyCode::Tab) => AcceptSuggestion, "accept / next field";
+    Restore: key(KeyCode::BackTab) => PrevField;
     Restore: ch(' ') => NextWord, "next word";
     Restore: ctrl('r') => RevealWord, "reveal last";
-    Restore: ctrl('h') => HideWord, "hide current";
+    Restore: ctrl('e') => HideWord, "hide current";
     Restore: key(KeyCode::Down) => NextField, "field";
     Restore: key(KeyCode::Up) => PrevField;
-    Restore: key(KeyCode::Enter) => Confirm, "restore";
+    Restore: key(KeyCode::Enter) => Confirm, "continue";
     Restore: key(KeyCode::Esc) => Back, "back";
 
     Enroll: key(KeyCode::Left) => Left, "factor";
@@ -307,11 +310,6 @@ pub const KEYMAP: &[Binding] = bindings! {
     Devices: ch('?') => Help;
     Devices: key(KeyCode::Esc) => Back, "back";
 
-    Sync: ch('x') => ExportFrames, "export";
-    Sync: ch('X') => ExportAll, "export all";
-    Sync: ch('i') => ImportFrames, "import";
-    Sync: key(KeyCode::Up) => Up;
-    Sync: key(KeyCode::Down) => Down;
     Sync: ch('?') => Help;
     Sync: key(KeyCode::Esc) => Back, "back";
 

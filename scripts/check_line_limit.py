@@ -2,8 +2,9 @@
 """Fail when a production Rust file reaches 500 lines.
 
 Production files are the `.rs` files under `crates/*/src`. Integration tests,
-examples, and benches are exempt, and so are the data files listed in
-`EXEMPT` (they declare the exemption in their own header).
+unit-test modules split into their own `tests.rs`, examples, and benches are
+exempt, and so are the data files listed in `EXEMPT` (they declare the
+exemption in their own header).
 """
 
 import sys
@@ -17,7 +18,7 @@ EXEMPT = {Path("crates/seed/src/en_words.rs")}
 def production_files():
     for path in sorted(ROOT.glob("crates/*/src/**/*.rs")):
         relative = path.relative_to(ROOT)
-        if relative not in EXEMPT:
+        if relative not in EXEMPT and path.name != "tests.rs":
             yield relative
 
 

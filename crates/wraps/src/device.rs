@@ -2,10 +2,10 @@
 
 use container::{encode_device_entry, DeviceWrap, StaticHeader, KEM_MLKEM768};
 use kdf::{hkdf_sha512, INFO_DEVICE_WRAP};
-use pq::{decrypt_shared, encrypt_shared, PQ_PK_LEN, PQ_SK_LEN};
+use pq::{decrypt_shared, encrypt_shared, keypair_from_seed, PQ_PK_LEN, PQ_SK_LEN};
 use secret::Secret;
 use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::grant::{self, DeviceGrant};
 use crate::wad::{self, device_wad};
@@ -30,6 +30,74 @@ pub struct DeviceKeys {
     pub x_sk: Secret<[u8; 32]>,
     /// ML-KEM-768 seed.
     pub pq_sk: Secret<[u8; PQ_SK_LEN]>,
+}
+
+/// Storage encoding length of [`DeviceKeys`]: `id ‖ x_sk ‖ pq_seed`.
+pub const DEVICE_KEYS_LEN: usize = 16 + 32 + PQ_SK_LEN;
+
+impl DeviceKeys {
+    /// Fresh keys under a random id: the X25519 scalar and the ML-KEM seed
+    /// come from the OS RNG and are written straight into their secrets.
+    ///
+    /// # Errors
+    ///
+    /// `os entropy failed` when the OS RNG fails.
+    pub fn generate() -> anyhow::Result<Self> {
+        let mut raw = Zeroizing::new([0u8; DEVICE_KEYS_LEN]);
+        getrandom::fill(raw.as_mut()).map_err(|_| anyhow::anyhow!("os entropy failed"))?;
+        Self::try_from(raw.as_slice())
+    }
+
+    /// The public halves a vault seals to.
+    ///
+    /// # Errors
+    ///
+    /// `kem length` when the derived ML-KEM key has the wrong length.
+    pub fn publics(&self) -> anyhow::Result<DevicePublics> {
+        let (pq_pk, _seed) = keypair_from_seed(self.pq_sk.expose());
+        Ok(DevicePublics {
+            id: self.id,
+            x_pk: x25519(*self.x_sk.expose(), X25519_BASEPOINT_BYTES),
+            pq_pk: pq_pk
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("kem length"))?,
+        })
+    }
+
+    /// The storage encoding `id ‖ x_sk ‖ pq_seed`, wiped on drop.
+    #[must_use]
+    pub fn to_bytes(&self) -> Zeroizing<[u8; DEVICE_KEYS_LEN]> {
+        let mut out = Zeroizing::new([0u8; DEVICE_KEYS_LEN]);
+        let (id, rest) = out.split_at_mut(16);
+        let (x_sk, pq_sk) = rest.split_at_mut(32);
+        id.copy_from_slice(&self.id);
+        x_sk.copy_from_slice(self.x_sk.expose());
+        pq_sk.copy_from_slice(self.pq_sk.expose());
+        out
+    }
+}
+
+impl TryFrom<&[u8]> for DeviceKeys {
+    type Error = anyhow::Error;
+
+    /// Parse the storage encoding written by [`DeviceKeys::to_bytes`].
+    fn try_from(bytes: &[u8]) -> anyhow::Result<Self> {
+        let corrupted = || anyhow::anyhow!("corrupted length");
+        if bytes.len() != DEVICE_KEYS_LEN {
+            return Err(corrupted());
+        }
+        let (id, rest) = bytes.split_first_chunk::<16>().ok_or_else(corrupted)?;
+        let (x_sk, pq_sk) = rest.split_first_chunk::<32>().ok_or_else(corrupted)?;
+        let mut keys = Self {
+            id: *id,
+            x_sk: Secret::new([0u8; 32]),
+            pq_sk: Secret::new([0u8; PQ_SK_LEN]),
+        };
+        keys.x_sk.expose_mut().copy_from_slice(x_sk);
+        keys.pq_sk.expose_mut().copy_from_slice(pq_sk);
+        Ok(keys)
+    }
 }
 
 /// Seal `vk` to `dev`.
@@ -316,5 +384,23 @@ mod tests {
                 .to_string(),
             "unsupported kem 0xc001"
         );
+    }
+
+    #[test]
+    fn generated_keys_round_trip_storage_and_open_their_wrap() {
+        let keys = super::DeviceKeys::generate().unwrap();
+        let publics = keys.publics().unwrap();
+        let restored = super::DeviceKeys::try_from(keys.to_bytes().as_slice()).unwrap();
+        assert_eq!(restored.publics().unwrap(), publics);
+        assert!(super::DeviceKeys::try_from(&keys.to_bytes()[1..]).is_err());
+
+        let header = floor_header();
+        let vk = [0x5Au8; 32];
+        let (record, _grant) = seal_device(&header, &publics, &vk).unwrap();
+        let WrapEntry::Device(parsed) = WrapEntry::try_from(record.as_slice()).unwrap() else {
+            panic!("device record");
+        };
+        let opened = open_device(&header, &parsed, &restored).unwrap();
+        assert_eq!(opened.expose(), &vk);
     }
 }

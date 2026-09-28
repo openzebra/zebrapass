@@ -5,16 +5,6 @@
 /// full record log at the per-record limits stays far below this).
 pub const MAX_VAULT_FILE: u64 = 512 * 1024 * 1024;
 
-/// Largest sync export file.
-pub const MAX_SYNC_FILE: u64 = 64 * 1024 * 1024;
-
-/// Most records in one sync export file.
-pub const MAX_SYNC_RECORDS: u32 = 4096;
-
-/// Largest sealed frame in a sync export (a 1 MiB document padded into its
-/// bucket, plus the frame header and tag, fits well below this).
-pub const MAX_SYNC_FRAME: u32 = 2 * 1024 * 1024;
-
 /// Most vault directories listed under the data directory.
 pub const MAX_VAULTS: usize = 256;
 

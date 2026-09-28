@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use frame::{seal, FrameMeta, ALG_AEGIS256, KIND_REVISION};
+use frame::{seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
 use record::{
     Document, ValueType, TAG_CLIENT_ID, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME,
     TAG_SEEN_COMMIT, TAG_SEEN_GENERATION,
@@ -124,7 +124,7 @@ pub fn save_local_meta(
         revision: 1,
         origin_device: meta.device_id,
         timestamp_ms: meta.created_at_ms,
-        alg: ALG_AEGIS256,
+        alg: ALG_CASCADE,
     };
     let frame_bytes = seal(key, &frame_meta, &meta_document(meta).encode()?)?;
     crate::write_atomic(path, &frame_bytes)

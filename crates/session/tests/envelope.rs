@@ -94,7 +94,7 @@ fn device_identity(id_byte: u8) -> (DevicePublics, DeviceKeys) {
 fn gee1_correctness_password_and_device_lifecycle() {
     // GEE1 = (KEKGen, DEKGen, Enc, Wrap, Dec): create seals an empty record
     // body; Wrap adds KEKs; Dec must work through any wrap.
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     assert_eq!(session.generation(), 1);
 
     let s = unlock(&file, &UnlockCreds::master(&SEED), None).unwrap();
@@ -120,7 +120,7 @@ fn gee1_correctness_password_and_device_lifecycle() {
 #[test]
 fn gee1_wrap_rotation_leaves_body_bytes_untouched() {
     // GEE1 Wrap replaces wrapped-DEK entries without touching C (the body).
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let body_before = {
         let (a, b) = body_span(&file);
         file.as_bytes()[a..b].to_vec()
@@ -140,7 +140,7 @@ fn gee1_wrap_rotation_leaves_body_bytes_untouched() {
 
 #[test]
 fn correctness_remove_device_revokes_only_target_kek() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (pubs1, keys1) = device_identity(0x03);
     let (pubs2, keys2) = device_identity(0x04);
     add_device(&mut session, &mut file, &pubs1).unwrap();
@@ -159,7 +159,7 @@ fn correctness_remove_device_revokes_only_target_kek() {
 #[test]
 fn correctness_seen_blocks_rollback_to_older_file() {
     // MU-UNLKAG §5: the caller's Seen rejects an older, still-valid blob.
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let old_file = file.clone();
     change_master(&mut session, &mut file, &SEED2, &[]).unwrap();
 
@@ -193,7 +193,7 @@ fn correctness_seen_blocks_rollback_to_older_file() {
 
 #[test]
 fn conf_wrong_password_rejected() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let err = unlock(&file, &UnlockCreds::master(&SEED2), None).unwrap_err();
     // Wrong password and tampered wrap must be indistinguishable.
     assert!(err.to_string().contains("wrap authentication failed"));
@@ -202,7 +202,7 @@ fn conf_wrong_password_rejected() {
 #[test]
 fn conf_wrong_device_secret_same_id_rejected() {
     // KCI: attacker knows the public wrap (id, pks) but not the secrets.
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (pubs, _keys) = device_identity(0x11);
     add_device(&mut session, &mut file, &pubs).unwrap();
     let (_forged_pubs, forged_keys) = device_identity(0x11); // same id, own secrets
@@ -218,8 +218,8 @@ fn conf_wrong_device_secret_same_id_rejected() {
 fn conf_cross_vault_transplant_password_wrap_rejected() {
     // Two vaults, same password, different vault_id/salt: the wrapped DEK of
     // vault A must not open vault B (wrap AAD binds the header).
-    let (file_a, _sa) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    let (file_b, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file_a, _sa) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
+    let (file_b, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let mut bytes_b = file_b.as_bytes().to_vec();
     bytes_b[OFF_ENTRY..ENTRY_END].copy_from_slice(&file_a.as_bytes()[OFF_ENTRY..ENTRY_END]);
     let forged = VaultFile::new(bytes_b);
@@ -229,10 +229,10 @@ fn conf_cross_vault_transplant_password_wrap_rejected() {
 
 #[test]
 fn conf_cross_vault_transplant_device_wrap_rejected() {
-    let (mut file_a, mut session_a) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file_a, mut session_a) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (pubs, _keys) = device_identity(0x12);
     add_device(&mut session_a, &mut file_a, &pubs).unwrap();
-    let (file_b, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file_b, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
 
     // Splice A's [password+device] entries in front of B's body.
     let a_bytes = file_a.as_bytes();
@@ -247,8 +247,8 @@ fn conf_cross_vault_transplant_device_wrap_rejected() {
 
 #[test]
 fn conf_cross_vault_body_swap_rejected() {
-    let (file_a, _sa) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    let (file_b, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file_a, _sa) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
+    let (file_b, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (ab, ae) = body_span(&file_a);
     let mut bytes_b = file_b.as_bytes().to_vec();
     let (bb, _be) = body_span(&file_b);
@@ -261,8 +261,8 @@ fn conf_cross_vault_body_swap_rejected() {
 fn conf_cross_vault_tail_swap_rejected() {
     // Swap body+commit wholesale: commit is HMAC under k_commit of vault B,
     // so vault A's tail must fail.
-    let (file_a, _sa) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    let (file_b, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file_a, _sa) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
+    let (file_b, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let mut bytes_b = file_b.as_bytes()[..ENTRY_END].to_vec();
     bytes_b.extend_from_slice(&file_a.as_bytes()[ENTRY_END..]);
     assert!(unlock(&VaultFile::new(bytes_b), &UnlockCreds::master(&SEED), None).is_err());
@@ -274,7 +274,7 @@ fn conf_cross_vault_tail_swap_rejected() {
 
 #[test]
 fn int_header_field_flips_all_rejected() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     // magic@0, version@4, kdf_alg@6, kdf_m@8, kdf_t@12, kdf_p@16, salt@20,
     // vault_id@52, body_alg@68, wrap_alg@70.
     for idx in [0, 4, 6, 8, 12, 16, 20, 52, 68, 70] {
@@ -288,7 +288,7 @@ fn int_header_field_flips_all_rejected() {
 
 #[test]
 fn int_password_record_field_flips_all_rejected() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     for idx in [OFF_KID, OFF_NONCE, OFF_CT, OFF_TAG] {
         let f = flip(&file, idx);
         let err = unlock(&f, &UnlockCreds::master(&SEED), None).unwrap_err();
@@ -301,7 +301,7 @@ fn int_password_record_field_flips_all_rejected() {
 
 #[test]
 fn int_device_record_field_flips_all_rejected() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (pubs, keys) = device_identity(0x13);
     add_device(&mut session, &mut file, &pubs).unwrap();
 
@@ -335,7 +335,7 @@ fn int_device_record_field_flips_all_rejected() {
 
 #[test]
 fn int_wrapdir_generation_flip_detected_by_commit() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     // wrap_count@72 and generation@74 are covered by the commit HMAC.
     for idx in [OFF_COUNT, OFF_DIR_GEN] {
         let f = flip(&file, idx);
@@ -348,7 +348,7 @@ fn int_wrapdir_generation_flip_detected_by_commit() {
 
 #[test]
 fn int_commit_tag_flip_detected() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let f = flip(&file, file.as_bytes().len() - 1);
     let err = unlock(&f, &UnlockCreds::master(&SEED), None).unwrap_err();
     assert!(err.to_string().contains("commit"), "got: {err}");
@@ -356,7 +356,7 @@ fn int_commit_tag_flip_detected() {
 
 #[test]
 fn int_truncation_and_extension_rejected() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let bytes = file.as_bytes();
 
     // Below minimum file length.
@@ -376,7 +376,7 @@ fn int_truncation_and_extension_rejected() {
 
 #[test]
 fn int_wrapdir_invariants_enforced() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     // A second password entry must not parse (exactly one is required).
     let pw_rec = file.as_bytes()[OFF_ENTRY..ENTRY_END].to_vec();
     let bytes = file.as_bytes().to_vec();
@@ -423,8 +423,8 @@ fn kci_hkdf_domains_distinct_keys() {
 fn kci_no_key_ambiguity_cross_body_with_own_keys() {
     // B's session keys must not decrypt A's body even with B's commit intact
     // at B's tail layout: swap bodies but keep B's commit.
-    let (file_a, _sa) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    let (file_b, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file_a, _sa) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
+    let (file_b, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let (ab, ae) = body_span(&file_a);
     let (bb, _be) = body_span(&file_b);
     let mut bytes_b = file_b.as_bytes().to_vec();
@@ -440,7 +440,7 @@ fn kci_no_key_ambiguity_cross_body_with_own_keys() {
 
 #[test]
 fn mu_three_devices_interleaved_unlocks() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let mut devs = Vec::new();
     for b in [0x21u8, 0x22, 0x23] {
         let (pubs, keys) = device_identity(b);
@@ -467,7 +467,7 @@ fn mu_three_devices_interleaved_unlocks() {
 
 #[test]
 fn policy_kdf_bounds_rejected_pre_argon() {
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     // Below floor: 19 MiB - 1 KiB and t = 1.
     let f = set_u32_le(&file, 8, KDF_M_KIB_MIN - 1);
     let err = unlock(&f, &UnlockCreds::master(&SEED), None).unwrap_err();
@@ -485,8 +485,8 @@ fn policy_kuzmgm_rejected_pre_kdf() {
     // seed is `&[u8; 64]` — an empty master is unrepresentable, so no
     // factor at all is the remaining pre-KDF rejection path.
     let t0 = std::time::Instant::now();
-    assert!(create(&SEED, KdfProfile::Mobile, BodyAlg::KuzMgm).is_err());
-    let (file, _s) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    assert!(create(&SEED, KdfProfile::Fast, BodyAlg::KuzMgm).is_err());
+    let (file, _s) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     assert!(unlock(&file, &UnlockCreds::default(), None).is_err());
     assert!(
         t0.elapsed() < std::time::Duration::from_secs(30),
@@ -500,8 +500,8 @@ fn policy_kuzmgm_rejected_pre_kdf() {
 
 #[test]
 fn rnd_two_vaults_distinct_kid_nonce_body() {
-    let (fa, _sa) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
-    let (fb, _sb) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (fa, _sa) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
+    let (fb, _sb) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let a = fa.as_bytes();
     let b = fb.as_bytes();
     assert_ne!(&a[OFF_KID..OFF_NONCE], &b[OFF_KID..OFF_NONCE], "kid");

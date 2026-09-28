@@ -36,37 +36,21 @@ impl Paths {
     }
 }
 
-/// The platform data directory for zebrapass.
-///
-/// macOS: `$HOME/Library/Application Support/zebrapass`; other Unix:
-/// `$XDG_DATA_HOME/zebrapass` or `$HOME/.local/share/zebrapass`; Windows:
-/// `%APPDATA%\zebrapass`.
+/// The zebrapass data directory: `~/.zebrapass` on every platform.
 ///
 /// # Errors
 ///
-/// `home directory not found` when neither the platform-specific variable
-/// nor `$HOME` is set.
+/// `home directory not found` when neither `$HOME` nor `%USERPROFILE%` is set.
 pub fn base_dir() -> anyhow::Result<PathBuf> {
-    let base = if cfg!(target_os = "macos") {
-        let home = home_dir()?;
-        home.join("Library/Application Support/zebrapass")
-    } else if cfg!(windows) {
-        let appdata = std::env::var_os("APPDATA")
-            .ok_or_else(|| anyhow::anyhow!("home directory not found"))?;
-        PathBuf::from(appdata).join("zebrapass")
-    } else {
-        match std::env::var_os("XDG_DATA_HOME") {
-            Some(xdg) => PathBuf::from(xdg).join("zebrapass"),
-            None => home_dir()?.join(".local/share/zebrapass"),
-        }
-    };
-    Ok(base)
+    Ok(home_dir()?.join(".zebrapass"))
 }
 
 fn home_dir() -> anyhow::Result<PathBuf> {
-    std::env::var_os("HOME")
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
         .map(PathBuf::from)
-        .filter(|home| !home.as_os_str().is_empty())
+        .find(|home| !home.as_os_str().is_empty())
         .ok_or_else(|| anyhow::anyhow!("home directory not found"))
 }
 
@@ -201,6 +185,6 @@ mod tests {
     fn base_dir_is_found() {
         // At least one platform source must exist in the test environment.
         let base = base_dir().unwrap();
-        assert!(base.ends_with("zebrapass"));
+        assert!(base.ends_with(".zebrapass"));
     }
 }

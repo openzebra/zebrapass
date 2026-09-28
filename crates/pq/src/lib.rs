@@ -5,7 +5,8 @@ mod sign;
 
 pub use kem::{
     kem_decapsulate as decrypt_shared, kem_encapsulate as encrypt_shared, kem_keypair as keypair,
-    KEM_CT_LEN, KEM_DK_LEN as PQ_SK_LEN, KEM_EK_LEN as PQ_PK_LEN,
+    kem_keypair_from_seed as keypair_from_seed, KEM_CT_LEN, KEM_DK_LEN as PQ_SK_LEN,
+    KEM_EK_LEN as PQ_PK_LEN,
 };
 
 /// Encapsulation-key length. Kept so existing call sites do not hard-code a number.

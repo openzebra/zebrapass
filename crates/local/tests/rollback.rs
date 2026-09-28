@@ -49,7 +49,7 @@ fn persisted_seen_stops_rollback_without_caller_state() {
     let seed = *phrase.seed();
     let base = temp_base("cursor");
     let (paths, mut session, mut file, mut meta) =
-        create_vault(&base, &seed, KdfProfile::Mobile, BodyAlg::Frames).unwrap();
+        create_vault(&base, &seed, KdfProfile::Fast, BodyAlg::Frames).unwrap();
 
     // create_vault writes generation 1; mark it accepted, then bump.
     mark_seen(&paths, &mut meta, &session).unwrap();
@@ -99,7 +99,7 @@ fn meta_without_cursor_still_loads() {
     let seed = *phrase.seed();
     let base = temp_base("legacy");
     let (paths, session, _file, mut meta) =
-        create_vault(&base, &seed, KdfProfile::Desktop, BodyAlg::Aegis256).unwrap();
+        create_vault(&base, &seed, KdfProfile::Balanced, BodyAlg::Aegis256).unwrap();
     meta.seen = None;
     local::save_local_meta(&paths.local_meta, &meta, &session.local_meta_key().unwrap()).unwrap();
     let meta_key = session.local_meta_key().unwrap();

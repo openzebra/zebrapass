@@ -19,6 +19,12 @@ impl<T: Zeroize> Secret<T> {
     pub const fn expose(&self) -> &T {
         &self.0
     }
+
+    /// Mutably borrows the secret bytes, so a producer can fill them in place.
+    #[must_use]
+    pub const fn expose_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
 }
 
 impl<T: Zeroize> Drop for Secret<T> {

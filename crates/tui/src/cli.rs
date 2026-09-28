@@ -20,7 +20,7 @@ pub const USAGE: &str = "\
 usage: zebrapass [options]
 
   --vault <file>        open this vault file instead of the default location
-  --data-dir <dir>      use <dir> instead of the platform data directory
+  --data-dir <dir>      use <dir> instead of ~/.zebrapass
   --theme <name>        stripes-dark (default), stripes-light, or mono
   --no-color            monochrome theme (also set by NO_COLOR)
   --ascii               ASCII glyphs instead of Unicode symbols
@@ -29,6 +29,7 @@ usage: zebrapass [options]
   --lock-after <secs>   auto-lock after this much inactivity (30-3600, default 300)
   --clip-clear <secs>   clear the clipboard after this long (5-90, default 20)
   --focus-lock          lock when the terminal loses focus
+  --no-keychain         keep this device's keys in memory only (they die on quit)
   --trace-events        debug builds: log key kinds (never characters) to stderr
   -h, --help            show this help
   -V, --version         show the version
@@ -66,6 +67,8 @@ impl Flags {
     pub const FOCUS_LOCK: u8 = 1 << 3;
     /// Key kinds are traced to stderr (debug builds only).
     pub const TRACE: u8 = 1 << 4;
+    /// Device keys go to the OS keychain.
+    pub const KEYCHAIN: u8 = 1 << 5;
 
     /// Whether `bit` is set.
     #[must_use]
@@ -94,7 +97,8 @@ impl Default for Config {
             theme: ThemeName::StripesDark,
             flags: Flags::default()
                 .with(Flags::ANIM, true)
-                .with(Flags::BENCH, true),
+                .with(Flags::BENCH, true)
+                .with(Flags::KEYCHAIN, true),
         }
     }
 }
@@ -140,6 +144,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, no_color: bool) -> Result
             "--no-anim" => config.flags = config.flags.with(Flags::ANIM, false),
             "--no-bench" => config.flags = config.flags.with(Flags::BENCH, false),
             "--focus-lock" => config.flags = config.flags.with(Flags::FOCUS_LOCK, true),
+            "--no-keychain" => config.flags = config.flags.with(Flags::KEYCHAIN, false),
             "--trace-events" => {
                 config.flags = config.flags.with(Flags::TRACE, cfg!(debug_assertions));
             }

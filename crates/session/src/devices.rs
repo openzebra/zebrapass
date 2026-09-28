@@ -1,6 +1,8 @@
 //! Add and remove device, chip, and PRF wraps. The body bytes stay as they are.
 
-use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PRF};
+use container::{
+    VaultFile, WrapEntry, KIND_CHIP, KIND_DEVICE, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF,
+};
 use wraps::{
     seal_chip, seal_device, seal_human_password, seal_prf, ChipGrant, ChipPublics, DeviceGrant,
     DevicePublics, HumanPasswordPublics, PrfGrant, PrfPublics,
@@ -257,4 +259,67 @@ pub fn add_human_password(
         records.push(record);
         Ok((records, ()))
     })
+}
+
+/// Replace the human password wrap with one sealed under `input`.
+///
+/// Wrap-only: the vault key does not change, so no phrase is needed. A copy
+/// of the file taken before this call still opens with the old password;
+/// rotate the vault key when the old password is compromised. Generation
+/// increases by one. On error, `file` and `session` are left as they were.
+///
+/// # Errors
+///
+/// `wrap not found` when the vault has no human password wrap; sealing
+/// errors as in [`add_human_password`].
+pub fn replace_human_password(
+    session: &mut Session,
+    file: &mut VaultFile,
+    input: &HumanPasswordPublics,
+) -> anyhow::Result<()> {
+    rewrap(session, file, |parsed, vk| {
+        let mut records = without_human(&parsed.entries)?;
+        records.push(seal_human_password(
+            &parsed.header,
+            input.kid,
+            &input.password,
+            vk,
+            input.m_kib,
+            input.t,
+            input.p,
+        )?);
+        Ok((records, ()))
+    })
+}
+
+/// Drop the human password wrap.
+///
+/// Refuses when no other factor (phrase, device, chip, PRF) would remain.
+/// The vault key does not change. Generation increases by one. On error,
+/// `file` and `session` are left as they were.
+///
+/// # Errors
+///
+/// `wrap not found` when the vault has no human password wrap;
+/// `no usable wrap` when dropping it would leave no unlock factor.
+pub fn remove_human_password(session: &mut Session, file: &mut VaultFile) -> anyhow::Result<()> {
+    rewrap(session, file, |parsed, _| {
+        let records = without_human(&parsed.entries)?;
+        if records.is_empty() {
+            return Err(anyhow::anyhow!("no usable wrap"));
+        }
+        Ok((records, ()))
+    })
+}
+
+fn without_human(entries: &[WrapEntry<'_>]) -> anyhow::Result<Vec<Vec<u8>>> {
+    let kept: Vec<WrapEntry<'_>> = entries
+        .iter()
+        .copied()
+        .filter(|entry| entry.kind() != KIND_PASSWORD_HUMAN)
+        .collect();
+    if kept.len() == entries.len() {
+        return Err(anyhow::anyhow!("wrap not found"));
+    }
+    owned_entries(&kept)
 }

@@ -16,7 +16,6 @@ use std::time::Duration;
 
 use crossterm::event::KeyCode;
 use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
-use session::BodyAlg;
 use tui::app::ctx::Task;
 use tui::app::screen::Screen;
 use tui::cli::{Config, Flags};
@@ -68,7 +67,7 @@ fn copy_password(app: &mut App) {
 #[test]
 fn idle_lock_drops_the_session_and_clears_the_clipboard() {
     let base = temp_dir("lock-idle");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let config = Config {
         lock_after: Duration::from_secs(30),
         ..config(&base)
@@ -97,7 +96,7 @@ fn idle_lock_drops_the_session_and_clears_the_clipboard() {
 #[test]
 fn manual_focus_and_quit_locks() {
     let base = temp_dir("lock-manual");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let focus = Config {
         flags: Flags::default().with(Flags::FOCUS_LOCK, true),
         ..config(&base)
@@ -136,7 +135,7 @@ fn manual_focus_and_quit_locks() {
 #[test]
 fn clipboard_clears_on_its_own_timer() {
     let base = temp_dir("lock-clip");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let mut app = unlocked_with_record(&config(&base), &base);
     copy_password(&mut app);
     tick(&mut app, Duration::from_secs(21));

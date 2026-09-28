@@ -33,9 +33,11 @@ pub fn text_line<'a>(input: &'a TextInput, width: u16, focused: bool, theme: &Th
     if focused {
         let split = cursor.saturating_sub(start).min(visible.len());
         let (before, after) = visible.split_at_checked(split).unwrap_or((visible, ""));
+        let under = after.chars().next().map_or(0, char::len_utf8);
+        let (under, rest) = after.split_at_checked(under).unwrap_or(("", after));
         spans.push(Span::styled(before, theme.text()));
-        spans.push(Span::styled(theme.glyphs.cursor, theme.accent()));
-        spans.push(Span::styled(after, theme.text()));
+        spans.push(block_cursor(under, theme));
+        spans.push(Span::styled(rest, theme.text()));
     } else {
         spans.push(Span::styled(visible, theme.text()));
     }
@@ -58,9 +60,17 @@ pub fn secret_line<'a>(
         spans.push(Span::styled(mask(theme.glyphs, MASK_CELLS), theme.zebra()));
     }
     if focused {
-        spans.push(Span::styled(theme.glyphs.cursor, theme.accent()));
+        spans.push(block_cursor("", theme));
     }
     Line::from(spans)
+}
+
+/// The vim-style block cursor over `under`, or over an empty cell at the end
+/// of the text. It covers a cell instead of inserting one, so the text
+/// around it never shifts.
+#[must_use]
+pub fn block_cursor<'a>(under: &'a str, theme: &Theme) -> Span<'a> {
+    Span::styled(if under.is_empty() { " " } else { under }, theme.cursor())
 }
 
 /// Draw `line` inside a bordered box.

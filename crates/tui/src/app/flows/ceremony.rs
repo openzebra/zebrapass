@@ -28,9 +28,33 @@ pub fn words(phrase: &SeedPhrase) -> impl Iterator<Item = &str> {
     phrase.phrase_normalized().split(' ')
 }
 
+/// Focusable parts of the phrase step, in Tab order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CeremonyFocus {
+    /// The phrase grid: arrows pick a row, Space reveals it.
+    #[default]
+    Grid,
+    /// The "I wrote it down" checkbox: Space ticks it.
+    Written,
+    /// The continue button.
+    Continue,
+}
+
+impl CeremonyFocus {
+    const fn shift(self, forward: bool) -> Self {
+        match (self, forward) {
+            (Self::Grid, true) | (Self::Continue, false) => Self::Written,
+            (Self::Written, true) | (Self::Grid, false) => Self::Continue,
+            (Self::Continue, true) | (Self::Written, false) => Self::Grid,
+        }
+    }
+}
+
 /// Phrase display.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Ceremony {
+    /// Focused part.
+    pub focus: CeremonyFocus,
     /// Row that a reveal shows.
     pub row: usize,
     /// "I wrote it down" ticked.
@@ -52,6 +76,16 @@ impl Ceremony {
     /// Handle an action; `true` means the step is done.
     pub fn on_action(&mut self, action: Action, ctx: &mut Ctx) -> bool {
         match action {
+            Action::NextField | Action::PrevField => {
+                self.focus = self.focus.shift(action == Action::NextField);
+                if self.reveal.hide() {
+                    ctx.redraw();
+                }
+            }
+            Action::Reveal if self.focus == CeremonyFocus::Written => {
+                self.written = !self.written;
+            }
+            Action::Reveal if self.focus == CeremonyFocus::Continue => {}
             Action::Reveal => {
                 let key = RevealKey(u32::try_from(self.row).unwrap_or(0));
                 if ctx.caps.key_release {
@@ -62,6 +96,7 @@ impl Ceremony {
                 }
             }
             Action::Up | Action::Down => {
+                self.focus = CeremonyFocus::Grid;
                 self.row = if action == Action::Up {
                     self.row.saturating_sub(1)
                 } else {
@@ -77,6 +112,9 @@ impl Ceremony {
             Action::Confirm => {
                 if self.reveal.hide() {
                     ctx.redraw();
+                }
+                if !self.written {
+                    self.focus = CeremonyFocus::Written;
                 }
                 return self.written;
             }

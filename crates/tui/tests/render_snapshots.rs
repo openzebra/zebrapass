@@ -17,7 +17,6 @@ mod common;
 
 use crossterm::event::KeyCode;
 use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE, TAG_URL, TAG_USERNAME};
-use session::BodyAlg;
 use tui::app::ctx::Task;
 use tui::app::screen::Screen;
 use tui::vault::ops::Op;
@@ -81,8 +80,10 @@ fn create_wizard_steps_render() {
     let mut app = app(&base);
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.screen.name(), "create");
-    assert_all(&render_all(&app), &["New vault", "Desktop", "AEGIS-256"]);
-    assert!(render(&app, 100, 30).contains("Kuznyechik-MGM"));
+    assert_all(&render_all(&app), &["New vault", "Balanced", "Encryption"]);
+    let wide = render(&app, 100, 30);
+    assert!(wide.contains("AEGIS-256 inside Kuznyechik-CTR"), "{wide}");
+    assert!(!wide.contains("Body cipher"), "no cipher choice: {wide}");
     press(&mut app, KeyCode::Enter);
     let screens = render_all(&app);
     assert_all(&screens, &["Your recovery phrase", "I wrote it down"]);
@@ -119,7 +120,7 @@ fn restore_and_unlock_screens_render() {
         &render_all(&app),
         &["Restore from phrase", "Passphrase", "Vault file"],
     );
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let app = common::app(&base);
     assert_eq!(app.screen.name(), "unlock");
     assert_all(&render_all(&app), &["factors", "Password"]);
@@ -128,7 +129,7 @@ fn restore_and_unlock_screens_render() {
 #[test]
 fn unlocked_views_render_at_every_size() {
     let base = temp_dir("views");
-    make_vault(&base, BodyAlg::Aegis256);
+    make_vault(&base);
     let mut app = app(&base);
     unlock(&mut app, PASSWORD);
     assert_eq!(app.screen.name(), "unlocked");

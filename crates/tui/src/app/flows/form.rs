@@ -11,9 +11,8 @@ use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
 use crate::ui::widgets::toast::Tone;
 use crate::vault::chip::Chips;
-use crate::vault::create::unix_ms;
 use crate::vault::factors::presence;
-use crate::vault::limits::{MAX_PATH_INPUT, MAX_VAULT_NAME};
+use crate::vault::limits::MAX_VAULT_NAME;
 use crate::vault::ops::{FactorRef, Op};
 
 /// What the form is for.
@@ -29,10 +28,6 @@ pub enum FormKind {
     AddPassword,
     /// Drop the recovery wrap (type `DROP`).
     DropRecovery,
-    /// Export these records.
-    Export(Box<[u32]>),
-    /// Import a bundle.
-    Import,
     /// Rename the vault on this device.
     Rename,
 }
@@ -50,19 +45,16 @@ pub enum FormFocus {
     New,
     /// Repeat.
     Repeat,
-    /// File path.
-    Path,
     /// Free text (name, `DROP`).
     Text,
 }
 
-const ORDER: [FormFocus; 7] = [
+const ORDER: [FormFocus; 6] = [
     FormFocus::Phrase,
     FormFocus::Passphrase,
     FormFocus::Current,
     FormFocus::New,
     FormFocus::Repeat,
-    FormFocus::Path,
     FormFocus::Text,
 ];
 
@@ -85,8 +77,6 @@ pub struct Form {
     pub new: Option<SecretInput>,
     /// Repeat.
     pub repeat: Option<SecretInput>,
-    /// File path.
-    pub path: Option<TextInput>,
     /// Free text.
     pub text: Option<TextInput>,
     /// Focus.
@@ -114,7 +104,6 @@ impl Form {
             current: None,
             new: None,
             repeat: None,
-            path: None,
             text: None,
             focus: FormFocus::Phrase,
             hold: None,
@@ -192,9 +181,12 @@ impl Form {
         Self::blank(
             FormKind::ChangePassword,
             "Change password",
-            &["The vault key rotates with the password, so the old one opens nothing new."],
+            &[
+                "Only the password wrap changes; the recovery phrase is not needed.",
+                "Old copies of this file still open with the old password:",
+                "rotate the vault key too if the old password leaked.",
+            ],
         )
-        .with_phrase()
         .with_current(true)
         .with_new()
         .focus_first()
@@ -229,43 +221,6 @@ impl Form {
         form.focus_first()
     }
 
-    /// Export records.
-    #[must_use]
-    pub fn export(ids: Box<[u32]>, base: &std::path::Path) -> Self {
-        let count = ids.len();
-        let default = base
-            .join("exports")
-            .join(format!("zebrapass-{}.zpsx", unix_ms()));
-        let mut form = Self::blank(
-            FormKind::Export(ids),
-            &format!("Export {count} signed frame(s)"),
-            &["The phrase certifies a one-off ML-DSA signing key for this export."],
-        )
-        .with_phrase();
-        form.path = Some(TextInput::with_value(
-            &default.to_string_lossy(),
-            MAX_PATH_INPUT,
-        ));
-        form.focus_first()
-    }
-
-    /// Import a bundle.
-    #[must_use]
-    pub fn import(base: &std::path::Path) -> Self {
-        let mut form = Self::blank(
-            FormKind::Import,
-            "Import a frame file",
-            &["Every frame is checked: certificate, ML-DSA signature, freshness, AEAD."],
-        )
-        .with_phrase();
-        let folder = base.join("exports");
-        form.path = Some(TextInput::with_value(
-            &folder.to_string_lossy(),
-            MAX_PATH_INPUT,
-        ));
-        form.focus_first()
-    }
-
     /// Rename.
     #[must_use]
     pub fn rename(current: &str) -> Self {
@@ -290,7 +245,6 @@ impl Form {
                 FormFocus::Current => self.current.is_some(),
                 FormFocus::New => self.new.is_some(),
                 FormFocus::Repeat => self.repeat.is_some(),
-                FormFocus::Path => self.path.is_some(),
                 FormFocus::Text => self.text.is_some(),
             })
             .collect()
@@ -336,14 +290,13 @@ impl Form {
             FormFocus::Current => self.current.as_mut(),
             FormFocus::New => self.new.as_mut(),
             FormFocus::Repeat => self.repeat.as_mut(),
-            FormFocus::Phrase | FormFocus::Path | FormFocus::Text => None,
+            FormFocus::Phrase | FormFocus::Text => None,
         }
     }
 
     /// The text input behind `focus`.
     pub const fn text_mut(&mut self, focus: FormFocus) -> Option<&mut TextInput> {
         match focus {
-            FormFocus::Path => self.path.as_mut(),
             FormFocus::Text => self.text.as_mut(),
             FormFocus::Phrase
             | FormFocus::Passphrase
@@ -380,6 +333,7 @@ pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
     match kind {
         ConfirmKind::Delete(id) => state.run(Op::Delete(id), Task::Save, ctx),
         ConfirmKind::RemoveWrap(factor) => state.run(Op::RemoveWrap(factor), Task::Factor, ctx),
+        ConfirmKind::RemovePassword => state.run(Op::RemovePassword, Task::Factor, ctx),
         ConfirmKind::ClearHistory => state.run(Op::ClearHistory, Task::Save, ctx),
         ConfirmKind::RestoreRevision(id, revision) => {
             state.run(Op::RestoreRevision(id, revision), Task::Save, ctx);
@@ -390,17 +344,27 @@ pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
 
 /// Carry out an add-factor menu choice.
 pub fn add_factor(state: &mut Unlocked, choice: usize, ctx: &mut Ctx) {
-    let has_password = presence(&state.info.directory, &ctx.chips).password;
+    let found = presence(&state.info.directory, &ctx.chips);
     match choice {
-        0 if has_password => ctx.toast(
+        0 if found.password => ctx.toast(
             Tone::Info,
             "This vault already has a password. Use Change password.",
         ),
         0 => state.dialog = Some(Box::new(Dialog::Form(Box::new(Form::add_password())))),
-        1 if Chips::available() => add_chip(state, ctx),
-        1 => ctx.toast(
+        1 if found.owned_devices > 0 => ctx.toast(Tone::Info, "This device is already enrolled."),
+        1 => {
+            if !ctx.chips.keyring().persistent() {
+                ctx.toast(
+                    Tone::Warn,
+                    "Keychain is off: this device key lives in memory and is lost on quit.",
+                );
+            }
+            state.run(Op::AddDevice, Task::Factor, ctx);
+        }
+        2 if Chips::available() => add_chip(state, ctx),
+        2 => ctx.toast(
             Tone::Warn,
-            "No secure chip backend in this build (native keychain is not built yet).",
+            "No secure chip backend in this build (Secure Enclave is not built yet).",
         ),
         // TODO(hw-key): FIDO2 PRF enrollment plugs in here; until then it fails closed.
         _ => ctx.toast(Tone::Warn, "Hardware keys are not available yet."),

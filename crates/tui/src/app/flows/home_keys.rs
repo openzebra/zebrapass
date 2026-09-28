@@ -2,7 +2,7 @@
 //! to the other views.
 
 use crossterm::event::KeyEvent;
-use record::{TAG_EMAIL, TAG_PASSWORD, TAG_URL, TAG_USERNAME};
+use record::{TAG_EMAIL, TAG_PASSWORD, TAG_TOTP, TAG_URL, TAG_USERNAME};
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
@@ -18,8 +18,10 @@ use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::Nav;
 use crate::secure::reveal::RevealKey;
+use crate::secure::totp::Totp;
 use crate::ui::layout::Breakpoint;
 use crate::ui::widgets::toast::Tone;
+use crate::vault::create::unix_ms;
 use crate::vault::ops::Op;
 use crate::vault::records::{custom_text, set_custom_text, CUSTOM_FAVORITE};
 
@@ -84,10 +86,7 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
         Action::CopyPassword => copy(state, TAG_PASSWORD, "password", ctx),
         Action::CopyUsername => copy(state, TAG_USERNAME, "username", ctx),
         Action::CopyEmail => copy(state, TAG_EMAIL, "email", ctx),
-        Action::CopyTotp => ctx.toast(
-            Tone::Info,
-            "TOTP codes are off: HMAC-SHA1 is not an allowed primitive. The secret stays masked.",
-        ),
+        Action::CopyTotp => copy_totp(state, ctx),
         Action::ShowUrl => show_url(state, ctx),
         Action::Reveal => reveal(state, ctx),
         Action::NewRecord => state.view = View::Editor(Box::new(EditorState::new_record())),
@@ -98,7 +97,7 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
         Action::OpenHistory => history(state, ctx),
         Action::OpenFactors => state.view = View::Factors(FactorsState::default()),
         Action::OpenDevices => state.view = View::Devices(0),
-        Action::OpenSync => state.view = View::Sync(0),
+        Action::OpenSync => state.view = View::Sync,
         Action::OpenHealth => match state.health {
             Some(_) => state.view = View::Health(0),
             None => state.run(Op::Health, Task::Health, ctx),
@@ -203,6 +202,23 @@ fn copy(state: &Unlocked, tag: u16, label: &'static str, ctx: &mut Ctx) {
     match data {
         Some(bytes) => ctx.copy(bytes, label),
         None => ctx.toast(Tone::Info, format!("This record has no {label}.")),
+    }
+}
+
+fn copy_totp(state: &Unlocked, ctx: &mut Ctx) {
+    let field = state
+        .home
+        .detail
+        .as_ref()
+        .and_then(|detail| detail.doc.data(TAG_TOTP).ok().flatten())
+        .filter(|data| !data.is_empty());
+    let Some(field) = field else {
+        ctx.toast(Tone::Info, "This record has no TOTP secret.");
+        return;
+    };
+    match Totp::try_from(field) {
+        Ok(totp) => ctx.copy(totp.code(unix_ms() / 1000).as_bytes(), "TOTP code"),
+        Err(error) => ctx.toast(Tone::Warn, format!("No code: {error}.")),
     }
 }
 

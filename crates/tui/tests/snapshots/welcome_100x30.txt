@@ -17,7 +17,7 @@
                   ┃     ✦  Create a new vault    ┃│    ↺  Restore from phrase    │                  
                   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└──────────────────────────────┘                  
                                                                                                     
-                  PQ  ML-KEM hybrid  ·  ML-DSA signatures  ·  AEGIS-256  ·  Argon2id                
+                 PQ  ML-KEM hybrid  ·  ML-DSA  ·  AEGIS-256 + Kuznyechik  ·  Argon2id               
                                                                                                     
                                                                                                     
                                                                                                     

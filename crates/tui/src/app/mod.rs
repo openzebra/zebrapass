@@ -345,11 +345,8 @@ impl App {
     }
 
     fn on_job(&mut self, ticket: u64, result: JobResult) {
-        if let JobResult::Bench(profile, time) = result {
-            let slot = usize::from(profile == session::KdfProfile::Mobile);
-            if let Some(entry) = self.ctx.timings.get_mut(slot) {
-                *entry = time;
-            }
+        if let JobResult::Bench(time) = result {
+            self.ctx.kdf_fast = time;
             return;
         }
         let waited = self

@@ -16,22 +16,24 @@ default = ["osc52"]
 # Clipboard through the OSC 52 terminal escape (works over SSH, no native dependency).
 osc52 = []
 # Development-only secure-chip factor backed by the in-memory `SoftwareChip`.
-dev-chip = ["dep:platform", "dep:pq"]
+dev-chip = ["dep:pq"]
 
 [dependencies]
 anyhow.workspace = true
 crossterm.workspace = true
 frame = { path = "../frame" }
 getrandom.workspace = true
+hmac.workspace = true
 kdf = { path = "../kdf" }
 local = { path = "../local" }
-platform = { path = "../platform", optional = true }
+platform = { path = "../platform" }
 pq = { path = "../pq", optional = true }
 ratatui.workspace = true
 record = { path = "../record" }
 secrecy.workspace = true
 seed = { path = "../seed" }
 session = { path = "../session" }
+sha1.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
 

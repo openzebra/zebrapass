@@ -25,7 +25,7 @@ fn sample_doc(title: &str, password: &str) -> Document {
 
 fn fresh_vault() -> (container::VaultFile, crate::Session) {
     let master = [1u8; 64];
-    create(&master, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap()
+    create(&master, KdfProfile::Fast, BodyAlg::Aegis256).unwrap()
 }
 
 #[test]

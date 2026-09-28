@@ -18,6 +18,7 @@ use kdf::derive_vault_keys;
 use frame::encode_frames;
 
 use crate::create::fold_log;
+use crate::device_book::known_devices;
 use crate::error::SessionError;
 use crate::rotate::RotateCreds;
 
@@ -46,8 +47,13 @@ pub fn rotate_all(
             }
             None => parsed.entries.clone(),
         };
+        let mut devices = known_devices(session)?;
+        devices.extend_from_slice(creds.devices);
+        let creds = &RotateCreds {
+            devices: &devices,
+            ..*creds
+        };
         require_device_publics(&entries, creds.devices)?;
-        require_chip_publics(&entries, creds.chips)?;
         require_prf_publics(&entries, creds.prfs)?;
         let vk = draw_secret()?;
         let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
@@ -95,7 +101,8 @@ pub fn rotate_all(
 
 /// Re-key every frame in the raw log: open under `old_vk`, seal under
 /// `new_vk`. Frame metadata (kind, record, revision, origin, timestamp) and
-/// ordering are preserved; only the sealing key and nonce change.
+/// ordering are preserved; the sealing key and nonce change, and every frame
+/// is re-sealed as a cascade frame, so legacy AEGIS-only frames upgrade.
 ///
 /// # Errors
 ///
@@ -124,7 +131,7 @@ fn reseal_frames(
             revision: header.revision,
             origin_device: header.origin_device,
             timestamp_ms: header.timestamp_ms,
-            alg: header.alg,
+            alg: frame::ALG_CASCADE,
         };
         out.extend_from_slice(&frame::seal(
             &kdf::frame_key(new_vk, vault_id, header.record_id)?,
@@ -217,20 +224,6 @@ fn require_device_publics(
     Ok(())
 }
 
-fn require_chip_publics(
-    entries: &[WrapEntry<'_>],
-    chips: &[(ChipPublics, [u8; 32])],
-) -> anyhow::Result<()> {
-    for entry in entries {
-        if let WrapEntry::Chip(chip) = entry {
-            if !chips.iter().any(|(publics, _)| publics.id == chip.id) {
-                return Err(anyhow::anyhow!("wrap not found"));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn require_prf_publics(
     entries: &[WrapEntry<'_>],
     prfs: &[(PrfPublics, [u8; 32])],
@@ -281,13 +274,15 @@ pub fn reseal(
                 let (record, _grant) = seal_device(header, publics, vk)?;
                 record
             }
+            // The chip wrap carries both of its public keys, authenticated by
+            // the commit, so it re-seals from the file alone.
             WrapEntry::Chip(chip) => {
-                let (publics, _) = creds
-                    .chips
-                    .iter()
-                    .find(|(item, _)| item.id == chip.id)
-                    .ok_or_else(|| anyhow::anyhow!("wrap not found"))?;
-                let (record, _grant) = seal_chip(header, publics, vk)?;
+                let publics = ChipPublics {
+                    id: chip.id,
+                    chip_pub: chip.chip_pub,
+                    pq_pk: chip.pq_pk,
+                };
+                let (record, _grant) = seal_chip(header, &publics, vk)?;
                 record
             }
             WrapEntry::Prf(wrap) => {

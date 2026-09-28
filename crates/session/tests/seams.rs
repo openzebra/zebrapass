@@ -18,9 +18,9 @@ fn human(password: &[u8]) -> HumanPasswordPublics {
     HumanPasswordPublics {
         kid: [0x33; 8],
         password: password.to_vec(),
-        m_kib: KdfProfile::Mobile.m_kib(),
-        t: KdfProfile::Mobile.t(),
-        p: KdfProfile::Mobile.p(),
+        m_kib: KdfProfile::Fast.m_kib(),
+        t: KdfProfile::Fast.t(),
+        p: KdfProfile::Fast.p(),
     }
 }
 
@@ -36,7 +36,7 @@ fn session_error(error: &anyhow::Error) -> Option<SessionError> {
 
 #[test]
 fn directory_lists_factor_kinds_without_unlocking() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let fresh = wrap_directory(&file).unwrap();
     assert_eq!(fresh.generation, 1);
     assert_eq!(&*fresh.factors, &[Factor::Recovery]);
@@ -48,7 +48,7 @@ fn directory_lists_factor_kinds_without_unlocking() {
     assert!(matches!(listed.factors.first(), Some(Factor::Recovery)));
     assert!(matches!(
         listed.factors.get(1),
-        Some(Factor::Password { m_kib, .. }) if *m_kib == KdfProfile::Mobile.m_kib()
+        Some(Factor::Password { m_kib, .. }) if *m_kib == KdfProfile::Fast.m_kib()
     ));
 
     // The read goes through the bounded container parse: garbage fails closed.
@@ -57,7 +57,7 @@ fn directory_lists_factor_kinds_without_unlocking() {
 
 #[test]
 fn check_seen_rejects_rollback_and_conflict_after_unlock() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     let old = VaultFile::new(file.as_bytes().to_vec());
     write_record(&mut session, &mut file, None, &titled("newer")).unwrap();
     let seen = Seen {
@@ -83,7 +83,7 @@ fn check_seen_rejects_rollback_and_conflict_after_unlock() {
 
 #[test]
 fn rotation_reseals_human_wrap_under_the_new_password() {
-    let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, BodyAlg::Aegis256).unwrap();
+    let (mut file, mut session) = create(&SEED, KdfProfile::Fast, BodyAlg::Aegis256).unwrap();
     add_human_password(&mut session, &mut file, &human(OLD_PW)).unwrap();
     let id = write_record(&mut session, &mut file, None, &titled("kept")).unwrap();
     let before = file.as_bytes().to_vec();
@@ -91,7 +91,6 @@ fn rotation_reseals_human_wrap_under_the_new_password() {
     let missing = RotateCreds {
         master: &SEED,
         devices: &[],
-        chips: &[],
         prfs: &[],
         human_password: None,
     };
@@ -132,14 +131,13 @@ fn device_publics(id_byte: u8) -> DevicePublics {
 #[test]
 fn revoke_keeps_records_readable_in_every_body_mode() {
     for alg in [BodyAlg::Aegis256, BodyAlg::KuzCtrHmac, BodyAlg::Frames] {
-        let (mut file, mut session) = create(&SEED, KdfProfile::Mobile, alg).unwrap();
+        let (mut file, mut session) = create(&SEED, KdfProfile::Fast, alg).unwrap();
         let id = write_record(&mut session, &mut file, None, &titled("survives")).unwrap();
         let lost = device_publics(0x61);
         add_device(&mut session, &mut file, &lost).unwrap();
         let creds = RotateCreds {
             master: &SEED,
             devices: &[],
-            chips: &[],
             prfs: &[],
             human_password: None,
         };

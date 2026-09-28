@@ -11,6 +11,7 @@ use crate::app::flows::home::{Detail, Pane, RowKind};
 use crate::app::flows::unlocked::Unlocked;
 use crate::secure::reveal::RevealKey;
 use crate::secure::strength::estimate;
+use crate::secure::totp::Totp;
 use crate::ui::widgets::chrome::ago;
 use crate::ui::widgets::meter::strength_spans;
 use crate::ui::widgets::stripes::{mask, MASK_CELLS};
@@ -48,6 +49,28 @@ pub fn draw_pane(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx)
     }
 }
 
+/// The current TOTP code, masked until revealed, with its countdown. The
+/// stored secret itself is never drawn.
+fn totp_span(field: &[u8], shown: bool, ctx: &Ctx) -> Span<'static> {
+    let theme = &ctx.theme;
+    let Ok(totp) = Totp::try_from(field) else {
+        return Span::styled("cannot make codes from this secret", theme.warn());
+    };
+    let now = unix_ms() / 1000;
+    let left = totp.remaining(now);
+    if shown {
+        let code = totp.code(now);
+        let (head, tail) = code.split_at(code.len() / 2);
+        Span::styled(format!("{head} {tail}  {left:>2}s"), theme.warn())
+    } else {
+        let glyphs = theme.glyphs;
+        Span::styled(
+            format!("{} {}  {left:>2}s", mask(glyphs, 3), mask(glyphs, 3)),
+            theme.zebra(),
+        )
+    }
+}
+
 /// Draw the rows of `detail`. `copy_hints` adds the copy keys on the right.
 pub fn draw_rows(
     frame: &mut Frame<'_>,
@@ -68,16 +91,13 @@ pub fn draw_rows(
         let shown = detail.reveal.is_shown(RevealKey(u32::from(row.tag)));
         let data = detail.doc.data(row.tag).ok().flatten().unwrap_or_default();
         let value: Span<'_> = match (row.kind, shown) {
-            (RowKind::Text, _) | (RowKind::Secret | RowKind::Totp, true) => {
+            (RowKind::Totp, _) => totp_span(data, shown, ctx),
+            (RowKind::Text, _) | (RowKind::Secret, true) => {
                 let text = String::from_utf8_lossy(data);
                 let clipped: String = text.chars().take(value_width).collect();
                 Span::styled(clipped, if shown { theme.warn() } else { theme.text() })
             }
             (RowKind::Secret, false) => Span::styled(mask(glyphs, MASK_CELLS), theme.zebra()),
-            (RowKind::Totp, false) => Span::styled(
-                format!("{} {}  codes off", mask(glyphs, 3), mask(glyphs, 3)),
-                theme.zebra(),
-            ),
         };
         let used = value.content.chars().count();
         let hint = match (copy_hints, row.copy_key, row.kind) {

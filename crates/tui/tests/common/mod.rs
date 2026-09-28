@@ -18,8 +18,9 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use secrecy::{ExposeSecret, SecretString};
 use seed::SeedPhrase;
-use session::{BodyAlg, KdfProfile};
+use session::KdfProfile;
 use tui::app::ctx::Caps;
+use tui::app::screen::Screen;
 use tui::cli::{Config, Flags};
 use tui::vault::chip::Chips;
 use tui::vault::create::{create, Enrollment, NewVault};
@@ -69,8 +70,8 @@ pub fn app_with(config: &Config, base: &Path, caps: Caps) -> App {
     app
 }
 
-/// A vault created with the Mobile profile; returns its normalized phrase.
-pub fn make_vault(base: &Path, alg: BodyAlg) -> String {
+/// A vault created with the Fast profile; returns its normalized phrase.
+pub fn make_vault(base: &Path) -> String {
     let phrase = SeedPhrase::generate_24().unwrap();
     let words = phrase.phrase_normalized().to_owned();
     let vault = create(
@@ -78,8 +79,7 @@ pub fn make_vault(base: &Path, alg: BodyAlg) -> String {
             phrase: Box::new(phrase),
             name: String::from("Personal"),
             base: base.to_path_buf(),
-            profile: KdfProfile::Mobile,
-            alg,
+            profile: KdfProfile::Fast,
             factor: Enrollment::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
         },
         &Chips::default(),
@@ -174,4 +174,41 @@ pub fn render_all(app: &App) -> [String; 3] {
         render(app, 60, 20),
         render(app, 140, 40),
     ]
+}
+
+/// Answer the three verify cards with the right words.
+pub fn pass_verify(app: &mut tui::App, wrong_first: bool) {
+    for card in 0..3 {
+        let (choices, expected) = {
+            let Screen::Create(state) = &app.screen else {
+                panic!("not create")
+            };
+            let verify = state.verify.as_ref().unwrap();
+            let phrase = state
+                .phrase
+                .as_ref()
+                .unwrap()
+                .phrase_normalized()
+                .to_owned();
+            let word = phrase
+                .split(' ')
+                .nth(verify.position(card) - 1)
+                .unwrap()
+                .to_owned();
+            (verify.choices(card), word)
+        };
+        let right = choices
+            .iter()
+            .position(|choice| *choice == expected)
+            .unwrap();
+        let pick = if wrong_first && card == 0 {
+            (right + 1) % 4
+        } else {
+            right
+        };
+        for _ in 0..pick {
+            press(app, KeyCode::Down);
+        }
+        press(app, KeyCode::Enter);
+    }
 }

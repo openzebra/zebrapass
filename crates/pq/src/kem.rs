@@ -19,8 +19,8 @@ pub const KEM_CT_LEN: usize = 1088;
 ///
 /// Returns an error when the OS random source fails.
 pub fn kem_keypair() -> anyhow::Result<(Vec<u8>, Secret<[u8; KEM_DK_LEN]>)> {
-    let mut seed = [0u8; KEM_DK_LEN];
-    getrandom::fill(&mut seed).map_err(|_| anyhow!("os rng failed"))?;
+    let mut seed = Zeroizing::new([0u8; KEM_DK_LEN]);
+    getrandom::fill(seed.as_mut()).map_err(|_| anyhow!("os rng failed"))?;
     Ok(kem_keypair_from_seed(&seed))
 }
 

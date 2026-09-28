@@ -6,9 +6,23 @@ pub fn ct_eq_32(a: &[u8; 32], b: &[u8; 32]) -> bool {
     bool::from(a.ct_eq(b))
 }
 
+/// Constant-time equality of two byte slices. Only the lengths are
+/// compared in variable time; they are public.
+#[must_use]
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    bool::from(a.ct_eq(b))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ct_eq_32;
+    use super::{ct_eq, ct_eq_32};
+
+    #[test]
+    fn slices_compare_by_content_and_length() {
+        assert!(ct_eq(&[1u8; 64], &[1u8; 64]));
+        assert!(!ct_eq(&[1u8; 64], &[2u8; 64]));
+        assert!(!ct_eq(&[1u8; 64], &[1u8; 63]));
+    }
 
     #[test]
     fn equal_inputs_match() {

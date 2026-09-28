@@ -9,18 +9,22 @@
 #[cfg(feature = "dev-chip")]
 use std::sync::{Arc, Mutex};
 
+use crate::vault::keyring::Keyring;
+
 #[cfg(feature = "dev-chip")]
 use platform::{ChipBackend, SoftwareChip};
 #[cfg(feature = "dev-chip")]
-use session::{ChipKeys, ChipPublics, Factor, Session, UnlockCreds, VaultFile, WrapDirectory};
+use session::{ChipKeys, ChipPublics, Factor, Session, UnlockCreds, VaultFile};
 #[cfg(feature = "dev-chip")]
 use zeroize::Zeroizing;
 
-/// Handle to the chip backend, shared with the worker thread.
+/// Handle to the platform key backends (the secure chip and the device-key
+/// keyring), shared with the worker thread.
 #[derive(Clone, Default)]
 pub struct Chips {
     #[cfg(feature = "dev-chip")]
     store: Arc<ChipStore>,
+    keyring: Keyring,
 }
 
 impl std::fmt::Debug for Chips {
@@ -37,6 +41,22 @@ struct ChipStore {
 }
 
 impl Chips {
+    /// Backends with device keys in the OS keychain (`keychain`) or in memory.
+    #[must_use]
+    pub fn new(keychain: bool) -> Self {
+        let mut chips = Self::default();
+        if keychain {
+            chips.keyring = Keyring::os();
+        }
+        chips
+    }
+
+    /// The device-key keyring.
+    #[must_use]
+    pub const fn keyring(&self) -> &Keyring {
+        &self.keyring
+    }
+
     /// Whether this build has any chip backend.
     #[must_use]
     pub const fn available() -> bool {
@@ -60,47 +80,9 @@ impl Chips {
         false
     }
 
-    /// No chip backend: a rotation re-seals no chip wraps (the core then
-    /// rejects vaults that have any).
-    ///
-    /// # Errors
-    ///
-    /// Never; the signature matches the `dev-chip` build.
-    #[cfg(not(feature = "dev-chip"))]
-    #[allow(
-        clippy::unnecessary_wraps,
-        reason = "same signature as the dev-chip build"
-    )]
-    pub const fn rotation_material(
-        &self,
-        _directory: &session::WrapDirectory,
-        _skip: Option<[u8; 16]>,
-    ) -> anyhow::Result<ChipMaterial> {
-        Ok(ChipMaterial(Vec::new()))
-    }
-
     /// No chip backend: nothing to forget.
     #[cfg(not(feature = "dev-chip"))]
     pub const fn forget(&self, _id: &[u8; 16]) {}
-}
-
-/// Chip publics with their shared secrets; the secrets are wiped on drop.
-pub struct ChipMaterial(Vec<(session::ChipPublics, [u8; 32])>);
-
-impl ChipMaterial {
-    /// The pairs, as `RotateCreds::chips` takes them.
-    #[must_use]
-    pub fn as_slice(&self) -> &[(session::ChipPublics, [u8; 32])] {
-        &self.0
-    }
-}
-
-impl Drop for ChipMaterial {
-    fn drop(&mut self) {
-        for (_, shared) in &mut self.0 {
-            zeroize::Zeroize::zeroize(shared);
-        }
-    }
 }
 
 #[cfg(feature = "dev-chip")]
@@ -179,33 +161,6 @@ impl Chips {
         let opened = session::unlock(file, &UnlockCreds::default().with_chip(key, *shared), None);
         drop(keys);
         opened
-    }
-
-    /// Publics and fresh shared secrets for every owned chip wrap except
-    /// `skip`, for a rotation. Chip wraps this process does not own are left
-    /// out, and the core rejects the rotation for them (`wrap not found`).
-    ///
-    /// # Errors
-    ///
-    /// Backend ECDH errors.
-    pub fn rotation_material(
-        &self,
-        directory: &WrapDirectory,
-        skip: Option<[u8; 16]>,
-    ) -> anyhow::Result<ChipMaterial> {
-        let mut out = ChipMaterial(Vec::new());
-        for factor in &directory.factors {
-            if let Factor::Chip(chip) = factor {
-                if Some(chip.publics.id) != skip && self.owns(&chip.publics.id) {
-                    let shared = self
-                        .store
-                        .chip
-                        .ecdh(&alias(&chip.publics.id), &chip.eph_pub)?;
-                    out.0.push((chip.publics, shared));
-                }
-            }
-        }
-        Ok(out)
     }
 
     /// Delete the chip key behind wrap `id`.

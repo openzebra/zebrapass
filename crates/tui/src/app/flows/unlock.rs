@@ -36,6 +36,8 @@ pub enum Mode {
     Password,
     /// Recovery phrase.
     Recovery,
+    /// This device's keys from the keyring.
+    Device,
     /// Development chip.
     Chip,
 }
@@ -126,6 +128,7 @@ impl UnlockState {
     pub fn modes(&self, ctx: &Ctx) -> Vec<Mode> {
         let found = self.presence(ctx);
         [
+            (Mode::Device, found.owned_devices > 0),
             (Mode::Password, found.password),
             (Mode::Chip, found.owned_chips > 0),
             (Mode::Recovery, found.recovery),
@@ -141,6 +144,14 @@ impl UnlockState {
         self.directory = self.vault().map_or(Err(UnlockError::Io), |vault| {
             read_directory(&vault.paths.vault_file)
         });
+        // Learn whether this device holds keys for the vault; the keys are
+        // dropped at once and read again only when the user unlocks. Only a
+        // vault with device wraps is asked about, so no keychain prompt
+        // appears for vaults that could not use it.
+        let vault_id = self.vault().and_then(|vault| vault.vault_id);
+        if let (Some(vault_id), true) = (vault_id, self.presence(ctx).devices > 0) {
+            let _ = ctx.chips.keyring().keys(&vault_id);
+        }
         self.password.clear();
         self.phrase.clear();
         self.passphrase.clear();
@@ -149,7 +160,8 @@ impl UnlockState {
         self.retry_at = None;
         let found = self.presence(ctx);
         self.mode = self.modes(ctx).first().copied().unwrap_or(Mode::Password);
-        if found.hw_keys > 0 && !found.password && found.owned_chips == 0 && !found.recovery {
+        let other = found.password || found.owned_chips > 0 || found.owned_devices > 0;
+        if found.hw_keys > 0 && !other && !found.recovery {
             self.error = Some(UnlockError::NeedsHwKey);
         }
     }
@@ -182,7 +194,9 @@ impl UnlockState {
         }
         let input = match (self.mode, self.recovery_field) {
             (Mode::Recovery, RecoveryField::Passphrase) => &mut self.passphrase,
-            (Mode::Recovery, RecoveryField::Phrase) | (Mode::Chip, _) => return Nav::Stay,
+            (Mode::Recovery, RecoveryField::Phrase) | (Mode::Chip | Mode::Device, _) => {
+                return Nav::Stay
+            }
             (Mode::Password, _) => &mut self.password,
         };
         edit_secret(input, event);
@@ -224,7 +238,7 @@ impl UnlockState {
                 }
                 self.phrase.space();
             }
-            (Mode::Chip, _) => {}
+            (Mode::Chip | Mode::Device, _) => {}
         }
     }
 
@@ -316,6 +330,7 @@ impl UnlockState {
                     return;
                 }
             },
+            Mode::Device => Credential::Device,
             #[cfg(feature = "dev-chip")]
             Mode::Chip => Credential::Chip,
             #[cfg(not(feature = "dev-chip"))]

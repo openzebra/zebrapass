@@ -8,13 +8,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+aead = { path = "../aead" }
 aegis.workspace = true
 anyhow.workspace = true
 getrandom.workspace = true
-secret = { path = "../secret" }
-
-[dev-dependencies]
 kdf = { path = "../kdf" }
+secret = { path = "../secret" }
 
 [lints]
 workspace = true

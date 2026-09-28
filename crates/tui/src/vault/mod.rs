@@ -6,11 +6,10 @@ pub mod create;
 pub mod discover;
 pub mod error;
 pub mod factors;
+pub mod keyring;
 pub mod limits;
 pub mod open;
 pub mod ops;
 pub mod records;
-pub mod sync;
-pub mod sync_file;
 
 pub use open::Vault;
