@@ -128,7 +128,7 @@ fn restore_and_unlock_screens_render() {
     make_vault(&base);
     let app = common::app(&base);
     assert_eq!(app.screen.name(), "unlock");
-    assert_all(&render_all(&app), &["factors", "Password"]);
+    assert_all(&render_all(&app), &["phrase", "locked"]);
 }
 
 #[test]

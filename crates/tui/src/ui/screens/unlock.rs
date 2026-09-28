@@ -101,7 +101,7 @@ fn draw_input(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
             secret_box(
                 frame,
                 area,
-                "Password  ",
+                "",
                 secret_line(&state.password, true, revealed, theme),
                 ctx,
             );
@@ -229,6 +229,13 @@ fn draw_card(frame: &mut Frame<'_>, header: Rect, title: &str, subtitle: &str, c
 /// A right-aligned label and a boxed secret, centered in `area`.
 fn secret_box(frame: &mut Frame<'_>, area: Rect, label: &str, line: Line<'_>, ctx: &Ctx) {
     let theme = &ctx.theme;
+    if label.is_empty() {
+        let [field] = Layout::horizontal([Constraint::Length(36)])
+            .flex(ratatui::layout::Flex::Center)
+            .areas(area);
+        boxed(frame, field, line, true, theme);
+        return;
+    }
     let [label_rect, field] = Layout::horizontal([Constraint::Length(14), Constraint::Length(36)])
         .flex(ratatui::layout::Flex::Center)
         .areas(area);
@@ -258,29 +265,30 @@ fn chips_line(state: &UnlockState, wide: bool, ctx: &Ctx) -> Line<'static> {
                 if on { glyphs.on } else { glyphs.off },
                 if on { theme.accent() } else { theme.muted() },
             ),
-            Span::raw(if wide { "   " } else { " " }),
         ]
     };
-    let mut spans = vec![Span::styled(
-        if wide {
-            "factors on this vault:   "
-        } else {
-            "factors: "
-        },
-        theme.muted(),
-    )];
-    spans.extend(chip(
-        glyphs.password,
-        if wide { "password" } else { "pw" },
-        found.password,
-    ));
-    spans.extend(chip(
-        glyphs.device,
-        if wide { "device" } else { "dev" },
-        found.devices > 0,
-    ));
-    spans.extend(chip(glyphs.hw_key, "key", found.hw_keys > 0));
-    spans.extend(chip(glyphs.recovery, "phrase", found.recovery));
+    let chips = [
+        chip(
+            glyphs.password,
+            if wide { "password" } else { "pw" },
+            found.password,
+        ),
+        chip(
+            glyphs.device,
+            if wide { "device" } else { "dev" },
+            found.devices > 0,
+        ),
+        chip(glyphs.hw_key, "key", found.hw_keys > 0),
+        chip(glyphs.recovery, "phrase", found.recovery),
+    ];
+    let gap = if wide { "   " } else { " " };
+    let mut spans = Vec::new();
+    for (index, part) in chips.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(gap));
+        }
+        spans.extend(part.iter().cloned());
+    }
     Line::from(spans)
 }
 
