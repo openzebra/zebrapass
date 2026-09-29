@@ -176,8 +176,6 @@ actions! {
     CreateVault,
     /// Restore a vault, or import one from another manager.
     RestoreVault,
-    /// Import records from another password manager.
-    ImportRecords,
     /// Change how CSV columns are read.
     EditColumns,
     /// Include or exclude the selected item.
@@ -242,11 +240,6 @@ pub const PALETTE: &[(Action, &str, Section)] = &[
         Section::Devices,
     ),
     (Action::NewRecord, "New record", Section::Records),
-    (
-        Action::ImportRecords,
-        "Import from another manager…",
-        Section::Records,
-    ),
     (
         Action::OpenGenerator,
         "Password generator",

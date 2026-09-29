@@ -250,9 +250,16 @@ fn open_view_step(app: &App) -> Option<ImportStep> {
     }
 }
 
-/// `i` → Bitwarden → file → review → Enter, inside the open vault.
+/// Settings → Import records: the only way into the in-vault wizard.
+fn open_import_from_settings(app: &mut App) {
+    type_text(app, ",/import");
+    press(app, KeyCode::Enter);
+    press(app, KeyCode::Enter);
+}
+
+/// Settings → Bitwarden → file → review → Enter, inside the open vault.
 fn import_into_open_vault(app: &mut App) {
-    press(app, KeyCode::Char('i'));
+    open_import_from_settings(app);
     assert_eq!(open_view_step(app), Some(ImportStep::Source));
     let chooser = render(app, 120, 40);
     assert!(chooser.contains("Import into this vault"));
@@ -295,10 +302,34 @@ fn esc_leaves_the_open_vault_import() {
     common::make_vault(&base);
     let mut app = app(&base);
     unlock(&mut app, PASSWORD);
-    press(&mut app, KeyCode::Char('i'));
+    open_import_from_settings(&mut app);
+    assert_eq!(open_view_step(&app), Some(ImportStep::Source));
     press(&mut app, KeyCode::Esc);
     assert_eq!(open_view_step(&app), None);
     assert_eq!(app.screen.name(), "unlocked");
+}
+
+#[test]
+fn home_has_no_import_key_and_a_slim_hint_bar() {
+    let base = temp_dir("import-no-home-key");
+    common::make_vault(&base);
+    let mut app = app(&base);
+    unlock(&mut app, PASSWORD);
+    let home = render(&app, 200, 40);
+    for gone in [
+        "i import",
+        "copy pw",
+        "Enter open",
+        "Space reveal",
+        "move",
+        "u user",
+        "Tab pane",
+    ] {
+        assert!(!home.contains(gone), "hint bar still shows {gone}: {home}");
+    }
+    assert!(home.contains(", settings"), "{home}");
+    press(&mut app, KeyCode::Char('i'));
+    assert_eq!(open_view_step(&app), None, "i no longer opens the wizard");
 }
 
 /// Welcome → import → CSV → `file` → Enter.

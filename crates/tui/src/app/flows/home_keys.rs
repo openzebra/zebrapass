@@ -102,7 +102,6 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
             Some(_) => state.view = View::Health(0),
             None => state.run(Op::Health, Task::Health, ctx),
         },
-        Action::ImportRecords => crate::app::flows::import_vault::open(state),
         Action::OpenSettings => {
             state.settings = Some(Box::new(SettingsModal::open(state, ctx)));
         }
