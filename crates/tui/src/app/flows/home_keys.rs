@@ -182,7 +182,7 @@ fn confirm(state: &mut Unlocked, ctx: &mut Ctx) {
 
 /// Copy the focused detail row: any field, standard or custom. A TOTP row
 /// copies the current code, never the secret.
-fn copy_focused(state: &Unlocked, ctx: &mut Ctx) {
+fn copy_focused(state: &mut Unlocked, ctx: &mut Ctx) {
     let Some(detail) = state.home.detail.as_ref() else {
         return;
     };
@@ -215,12 +215,15 @@ fn copy_focused(state: &Unlocked, ctx: &mut Ctx) {
         _ if row.kind == RowKind::Secret => "secret field",
         _ => "field",
     };
-    ctx.copy(bytes, label);
-    if record::is_custom(row.tag) {
+    let copied = ctx.copy(bytes, label);
+    if copied && record::is_custom(row.tag) {
         ctx.toast(
             Tone::Success,
             format!("Copied \u{201c}{}\u{201d}.", row.label),
         );
+    }
+    if copied {
+        state.note_use(ctx);
     }
 }
 
@@ -239,20 +242,23 @@ fn back(state: &mut Unlocked, ctx: &mut Ctx) {
     }
 }
 
-fn copy(state: &Unlocked, tag: u16, label: &'static str, ctx: &mut Ctx) {
+fn copy(state: &mut Unlocked, tag: u16, label: &'static str, ctx: &mut Ctx) {
     let data = state
         .home
         .detail
         .as_ref()
         .and_then(|detail| detail.doc.data(tag).ok().flatten())
         .filter(|data| !data.is_empty());
-    match data {
-        Some(bytes) => ctx.copy(bytes, label),
-        None => ctx.toast(Tone::Info, format!("This record has no {label}.")),
+    let Some(bytes) = data else {
+        ctx.toast(Tone::Info, format!("This record has no {label}."));
+        return;
+    };
+    if ctx.copy(bytes, label) {
+        state.note_use(ctx);
     }
 }
 
-fn copy_totp(state: &Unlocked, ctx: &mut Ctx) {
+fn copy_totp(state: &mut Unlocked, ctx: &mut Ctx) {
     let field = state
         .home
         .detail
@@ -263,9 +269,15 @@ fn copy_totp(state: &Unlocked, ctx: &mut Ctx) {
         ctx.toast(Tone::Info, "This record has no TOTP secret.");
         return;
     };
-    match Totp::try_from(field) {
+    let copied = match Totp::try_from(field) {
         Ok(totp) => ctx.copy(totp.code(unix_ms() / 1000).as_bytes(), "TOTP code"),
-        Err(error) => ctx.toast(Tone::Warn, format!("No code: {error}.")),
+        Err(error) => {
+            ctx.toast(Tone::Warn, format!("No code: {error}."));
+            false
+        }
+    };
+    if copied {
+        state.note_use(ctx);
     }
 }
 

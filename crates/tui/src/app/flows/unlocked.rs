@@ -2,7 +2,7 @@
 //! and every view. Dropping this state is what "lock" means.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use local::{device_key_info, DeviceKeyInfo, Prefs};
+use local::{device_key_info, DeviceKeyInfo, Prefs, Usage};
 use session::WrapDirectory;
 
 use crate::app::ctx::{Ctx, Task};
@@ -19,6 +19,7 @@ use crate::app::screen::Nav;
 use crate::app::worker::Job;
 use crate::secure::health::HealthReport;
 use crate::ui::widgets::toast::Tone;
+use crate::vault::create::unix_ms;
 use crate::vault::discover::VaultRef;
 use crate::vault::ops::{Op, Outcome};
 use crate::vault::records::{build_cache, Summary};
@@ -102,6 +103,8 @@ pub struct Unlocked {
     pub current: usize,
     /// Record summaries (wiped on drop).
     pub cache: Box<[Summary]>,
+    /// Copy usage on this device, for list order.
+    pub usage: Usage,
     /// Active view.
     pub view: View,
     /// Home state (kept across views).
@@ -124,12 +127,14 @@ impl Unlocked {
     pub fn new(vault: Box<Vault>, vaults: Vec<VaultRef>, current: usize) -> Self {
         let cache = build_cache(&vault.session).unwrap_or_default();
         let info = VaultInfo::from(&*vault);
+        let usage = vault.meta.usage.clone();
         let mut state = Self {
             vault: Some(vault),
             info,
             vaults,
             current,
             cache,
+            usage,
             view: View::Home,
             home: Home::default(),
             dialog: None,
@@ -138,6 +143,7 @@ impl Unlocked {
             health: None,
             import_plaintext: false,
         };
+        state.prune_usage();
         state.load_detail();
         state
     }
@@ -175,6 +181,8 @@ impl Unlocked {
             &self.home.filter,
             self.home.query.value(),
             self.health.as_deref(),
+            &self.usage,
+            unix_ms(),
         )
     }
 
@@ -214,7 +222,10 @@ impl Unlocked {
     /// Hand the vault to the worker for `op`.
     pub fn run(&mut self, op: Op, task: Task, ctx: &mut Ctx) {
         match self.vault.take() {
-            Some(vault) => ctx.start(Job::Vault(vault, op), task),
+            Some(mut vault) => {
+                vault.meta.usage.clone_from(&self.usage);
+                ctx.start(Job::Vault(vault, op), task);
+            }
             None => ctx.toast(Tone::Info, "Still working on the last change."),
         }
     }
@@ -410,8 +421,37 @@ impl Unlocked {
         if let Some(vault) = self.vault.as_ref() {
             self.cache = build_cache(&vault.session).unwrap_or_default();
         }
+        self.prune_usage();
         self.home.detail = None;
         self.load_detail();
+    }
+
+    /// Count a copy from the open record, keep it selected as the list
+    /// reorders, and save the usage on this device. While a job holds the
+    /// vault, the count is saved with the next write.
+    pub fn note_use(&mut self, ctx: &mut Ctx) {
+        let Some(id) = self.home.detail.as_ref().map(|detail| detail.id) else {
+            return;
+        };
+        self.usage.note(id, unix_ms());
+        self.select(id);
+        if let Some(vault) = self.vault.as_deref_mut() {
+            vault.meta.usage.clone_from(&self.usage);
+            if local::save_meta(&vault.paths, &vault.meta, &vault.session).is_err() {
+                ctx.toast(Tone::Warn, "Could not save record usage on this device.");
+            }
+        }
+    }
+
+    /// Forget usage of deleted records. An empty cache (possibly a failed
+    /// rebuild) forgets nothing.
+    fn prune_usage(&mut self) {
+        let cache = &self.cache;
+        if cache.is_empty() {
+            return;
+        }
+        self.usage
+            .retain(|id| cache.iter().any(|summary| summary.id == id));
     }
 
     /// Select record `id` if it is visible.

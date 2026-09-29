@@ -172,14 +172,17 @@ impl Ctx {
         self.toasts.push(tone, text, self.now);
     }
 
-    /// Copy a secret with the clear timer, and say so.
-    pub fn copy(&mut self, secret: &[u8], label: &'static str) {
+    /// Copy a secret with the clear timer, and say so; `true` when copied.
+    pub fn copy(&mut self, secret: &[u8], label: &'static str) -> bool {
         match self.clipboard.copy(secret, label, self.now) {
-            Ok(()) => {}
-            Err(CopyError::Unavailable) => self.toast(
-                Tone::Warn,
-                "Clipboard unavailable in this terminal. Use Space to reveal.",
-            ),
+            Ok(()) => true,
+            Err(CopyError::Unavailable) => {
+                self.toast(
+                    Tone::Warn,
+                    "Clipboard unavailable in this terminal. Use Space to reveal.",
+                );
+                false
+            }
         }
     }
 

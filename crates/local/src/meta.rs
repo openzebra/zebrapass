@@ -16,6 +16,7 @@ use record::{
 use secret::Secret;
 
 use crate::prefs::Prefs;
+use crate::usage::Usage;
 
 /// The last file state this device accepted, for rollback detection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,10 +44,12 @@ pub struct LocalMeta {
     pub seen: Option<SeenCursor>,
     /// This device's saved preferences for the vault; `None` until saved.
     pub prefs: Option<Prefs>,
+    /// Which records this device copies from, for list ordering.
+    pub usage: Usage,
 }
 
-/// The document form of the metadata (tags `0x0201..0x0206` and the
-/// preference tags `0x0210..`).
+/// The document form of the metadata (tags `0x0201..0x0206`, the
+/// preference tags `0x0210..`, and the usage tag `0x0220`).
 #[must_use]
 pub fn meta_document(meta: &LocalMeta) -> Document {
     let mut doc = Document::new();
@@ -69,6 +72,7 @@ pub fn meta_document(meta: &LocalMeta) -> Document {
     if let Some(prefs) = meta.prefs.as_ref() {
         prefs.write(&mut doc);
     }
+    meta.usage.write(&mut doc);
     doc
 }
 
@@ -113,6 +117,7 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
         name,
         seen,
         prefs: Prefs::read(doc)?,
+        usage: Usage::read(doc)?,
     })
 }
 
@@ -199,6 +204,12 @@ mod tests {
                 lock_after_s: 60,
                 ..crate::Prefs::default()
             }),
+            usage: {
+                let mut usage = crate::Usage::default();
+                usage.note(12, 1_700_000_000_500);
+                usage.note(4, 1_700_000_000_900);
+                usage
+            },
         }
     }
 
@@ -213,6 +224,27 @@ mod tests {
             meta_from_document(&broken).unwrap_err().to_string(),
             "corrupted length"
         );
+    }
+
+    #[test]
+    fn metadata_without_usage_reads_as_empty() {
+        let mut doc = meta_document(&sample_meta());
+        doc.remove(record::TAG_USAGE);
+        assert!(meta_from_document(&doc).unwrap().usage.is_empty());
+    }
+
+    #[test]
+    fn tampered_usage_frame_does_not_open() {
+        let dir = temp_dir("tamper");
+        let path = dir.join("local.meta");
+        let key = local_meta_key(&[9u8; 32], &[7u8; 16]).unwrap();
+        save_local_meta(&path, &sample_meta(), &key).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        fs::write(&path, &bytes).unwrap();
+        assert!(load_local_meta(&path, &key).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

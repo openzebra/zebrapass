@@ -17,3 +17,6 @@ pub const REVEAL_HIDE_S: RangeInclusive<u8> = 3..=30;
 /// Longest accepted sync server origin in bytes (`https://` + a DNS name +
 /// a port).
 pub const ORIGIN_MAX: usize = 8 + 253 + 6;
+
+/// Most records with saved copy usage (16 bytes each).
+pub const USAGE_MAX: usize = 512;

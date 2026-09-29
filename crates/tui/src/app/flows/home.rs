@@ -1,5 +1,8 @@
 //! Vault home: filters, fuzzy search, the record list, and the detail pane.
 
+use std::cmp::Reverse;
+
+use local::Usage;
 use record::{
     Document, ValueType, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TOTP, TAG_URL, TAG_USERNAME,
 };
@@ -107,14 +110,19 @@ pub fn filter_entries(cache: &[Summary], health: Option<&HealthReport>) -> Vec<(
         .collect()
 }
 
-/// Indexes into `cache` that pass `filter` and `query`, best match first
-/// (by title when there is no query).
+/// Indexes into `cache` that pass `filter` and `query`, in list order.
+///
+/// Without a query, the records this device copies from most (and most
+/// recently) come first, then the rest by title; with one, the best match
+/// comes first and usage breaks ties.
 #[must_use]
 pub fn visible(
     cache: &[Summary],
     filter: &Filter,
     query: &str,
     health: Option<&HealthReport>,
+    usage: &Usage,
+    now_ms: u64,
 ) -> Vec<usize> {
     let mut scored: Vec<(i32, usize)> = cache
         .iter()
@@ -126,14 +134,21 @@ pub fn visible(
                 .map(|score| (score, index))
         })
         .collect();
+    let used = |index: usize| {
+        cache
+            .get(index)
+            .and_then(|summary| usage.get(summary.id))
+            .map_or((0, 0), |entry| (entry.rank(now_ms), entry.last_ms))
+    };
     if query.trim().is_empty() {
-        scored.sort_by(|(_, a), (_, b)| {
-            let (left, right) = (cache.get(*a), cache.get(*b));
-            let key = |summary: Option<&Summary>| summary.map(|s| s.display_title().to_lowercase());
-            key(left).cmp(&key(right))
+        scored.sort_by_cached_key(|(_, index)| {
+            let title = cache
+                .get(*index)
+                .map(|summary| summary.display_title().to_lowercase());
+            (Reverse(used(*index)), title)
         });
     } else {
-        scored.sort_by(|(a, _), (b, _)| b.cmp(a));
+        scored.sort_by_key(|(score, index)| (Reverse(*score), Reverse(used(*index))));
     }
     scored.into_iter().map(|(_, index)| index).collect()
 }
@@ -303,5 +318,111 @@ impl Default for Home {
             detail: None,
             stacked: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "tests may unwrap and index"
+    )]
+
+    use local::Usage;
+    use record::{Document, TAG_TITLE};
+
+    use super::{visible, Filter};
+    use crate::vault::records::{Summary, CUSTOM_FAVORITE};
+
+    const NOW: u64 = 1_800_000_000_000;
+    const DAY_MS: u64 = 86_400_000;
+
+    fn summary(id: u32, title: &str, favorite: bool) -> Summary {
+        let mut doc = Document::new();
+        doc.set_text(TAG_TITLE, title);
+        if favorite {
+            doc.set_custom(0x8000, CUSTOM_FAVORITE, record::ValueType::Text, b"1")
+                .unwrap();
+        }
+        Summary::of(id, 1, 0, &doc)
+    }
+
+    fn cache() -> Vec<Summary> {
+        vec![
+            summary(0, "alpha", true),
+            summary(1, "bank", true),
+            summary(2, "cloud", false),
+            summary(3, "delta", false),
+            summary(4, "bankside", false),
+        ]
+    }
+
+    fn ids(cache: &[Summary], indexes: &[usize]) -> Vec<u32> {
+        indexes.iter().map(|index| cache[*index].id).collect()
+    }
+
+    #[test]
+    fn most_used_first_then_titles() {
+        let cache = cache();
+        let mut usage = Usage::default();
+        assert_eq!(
+            ids(
+                &cache,
+                &visible(&cache, &Filter::All, "", None, &usage, NOW)
+            ),
+            [0, 1, 4, 2, 3]
+        );
+        usage.note(3, NOW - DAY_MS);
+        usage.note(2, NOW - 200 * DAY_MS);
+        usage.note(2, NOW - 200 * DAY_MS);
+        usage.note(2, NOW - 200 * DAY_MS);
+        assert_eq!(
+            ids(
+                &cache,
+                &visible(&cache, &Filter::All, "", None, &usage, NOW)
+            ),
+            [3, 2, 0, 1, 4]
+        );
+    }
+
+    #[test]
+    fn favorites_rank_by_use_too() {
+        let cache = cache();
+        let mut usage = Usage::default();
+        usage.note(1, NOW);
+        assert_eq!(
+            ids(
+                &cache,
+                &visible(&cache, &Filter::Favorites, "", None, &usage, NOW)
+            ),
+            [1, 0]
+        );
+    }
+
+    #[test]
+    fn search_relevance_wins_and_use_breaks_ties() {
+        let cache = vec![summary(0, "bank", false), summary(1, "bank", false)];
+        let mut usage = Usage::default();
+        usage.note(1, NOW);
+        assert_eq!(
+            ids(
+                &cache,
+                &visible(&cache, &Filter::All, "bank", None, &usage, NOW)
+            ),
+            [1, 0]
+        );
+        let cache = vec![
+            summary(0, "bank", false),
+            summary(1, "b-a-n-k notes", false),
+        ];
+        let mut usage = Usage::default();
+        usage.note(1, NOW);
+        let order = visible(&cache, &Filter::All, "bank", None, &usage, NOW);
+        let scores: Vec<i32> = order
+            .iter()
+            .map(|index| cache[*index].search_score("bank").unwrap())
+            .collect();
+        assert!(scores.windows(2).all(|pair| pair[0] >= pair[1]));
     }
 }

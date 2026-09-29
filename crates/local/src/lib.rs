@@ -10,6 +10,7 @@ mod device_key;
 mod limits;
 mod meta;
 mod prefs;
+mod usage;
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,7 @@ pub use device_key::{
 pub use limits::{CLIP_CLEAR_S, DEVICE_PIN_LEN, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 pub use prefs::{parse_origin, Prefs, SyncMode};
+pub use usage::{Usage, UsageEntry};
 
 /// Locations of one vault on this device.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -124,6 +126,7 @@ pub fn create_vault(
         name: String::new(),
         seen: None,
         prefs: None,
+        usage: Usage::default(),
     };
     save_local_meta(&paths.local_meta, &meta, &session.local_meta_key()?)?;
     Ok((paths, session, file, meta))
@@ -147,6 +150,16 @@ pub fn mark_seen(
         generation: session.generation(),
         commit_tag: *session.commit_tag(),
     });
+    save_meta(paths, meta, session)
+}
+
+/// Write `meta` under the key `session` derives for it, leaving the vault
+/// file untouched.
+///
+/// # Errors
+///
+/// Key-derivation and atomic-write errors as in [`save_local_meta`].
+pub fn save_meta(paths: &Paths, meta: &LocalMeta, session: &Session) -> anyhow::Result<()> {
     save_local_meta(&paths.local_meta, meta, &session.local_meta_key()?)
 }
 

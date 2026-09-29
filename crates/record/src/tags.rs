@@ -70,6 +70,10 @@ pub const TAG_PREF_SERVER_ORIGIN: u16 = 0x0216;
 /// Pinned sync server key fingerprint, 32 bytes (`Bytes`).
 pub const TAG_PREF_SERVER_PIN: u16 = 0x0217;
 
+/// Record copy usage on this device: packed 16-byte entries
+/// `id u32 LE ‖ count u32 LE ‖ last_ms u64 LE`, sorted by id (`Bytes`).
+pub const TAG_USAGE: u16 = 0x0220;
+
 /// Name of the custom field holding comma-separated tags.
 pub const CUSTOM_TAGS: &str = "tags";
 
