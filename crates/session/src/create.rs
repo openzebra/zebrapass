@@ -86,6 +86,32 @@ impl Session {
     pub fn local_meta_key(&self) -> anyhow::Result<Secret<[u8; 32]>> {
         local_meta_key(self.vk.expose(), &self.vault_id)
     }
+
+    /// Stamp new frames with this device's certified id instead of the
+    /// random one a seed or password unlock draws, so the frames can be
+    /// exported and verified against the device certificate.
+    ///
+    /// # Errors
+    ///
+    /// `zero origin` for the all-zero id, which is reserved for
+    /// unregistered unlocks.
+    pub fn set_origin_device(&mut self, id: [u8; 16]) -> Result<(), SessionError> {
+        if id == [0u8; 16] {
+            return Err(SessionError::ZeroOrigin);
+        }
+        self.origin_device = id;
+        Ok(())
+    }
+
+    /// Key of this device's sealed sync identity file; derived from the
+    /// vault key with its own info, so it differs from every other key.
+    ///
+    /// # Errors
+    ///
+    /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+    pub fn sync_identity_key(&self) -> anyhow::Result<Secret<[u8; 32]>> {
+        kdf::sync_identity_key(self.vk.expose(), &self.vault_id)
+    }
 }
 
 /// Create a vault and the session that holds its keys.

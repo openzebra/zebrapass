@@ -7,6 +7,7 @@ pub mod event;
 pub mod flows;
 pub mod idle;
 pub mod keymap;
+pub mod p2p;
 pub mod prefs;
 pub mod screen;
 pub mod worker;
@@ -213,7 +214,7 @@ impl App {
             Screen::Restore(state) => state.on_paste(text),
             Screen::Import(state) => state.on_paste(text),
             Screen::Unlock(state) => state.on_paste(text),
-            Screen::Unlocked(state) => state.on_paste(text),
+            Screen::Unlocked(state) => state.on_paste(text, &mut self.ctx),
             Screen::Welcome(_) | Screen::Alert(_) | Screen::Locked(_) => {}
         }
     }

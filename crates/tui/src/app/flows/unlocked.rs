@@ -1,9 +1,11 @@
 //! The open vault: owns the session (through [`Vault`]), the summary cache,
 //! and every view. Dropping this state is what "lock" means.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use crossterm::event::{KeyCode, KeyEvent};
-use local::{device_key_info, DeviceKeyInfo, Prefs, Usage};
-use session::WrapDirectory;
+use local::{SyncIdentity, Usage};
 
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::dialog::Dialog;
@@ -11,10 +13,13 @@ use crate::app::flows::editor::EditorState;
 use crate::app::flows::factors::{Anim, FactorsState};
 use crate::app::flows::generator::{GenEvent, GeneratorState};
 use crate::app::flows::history::HistoryState;
+use crate::app::flows::home::Filter;
 use crate::app::flows::home::{visible, Detail, Home};
 use crate::app::flows::import::ImportState;
+pub use crate::app::flows::info::VaultInfo;
 use crate::app::flows::settings::SettingsModal;
 use crate::app::keymap::Scope;
+use crate::app::p2p::P2p;
 use crate::app::screen::Nav;
 use crate::app::worker::Job;
 use crate::secure::health::HealthReport;
@@ -23,51 +28,8 @@ use crate::vault::create::unix_ms;
 use crate::vault::discover::VaultRef;
 use crate::vault::ops::{Op, Outcome};
 use crate::vault::records::{build_cache, Summary};
+use crate::vault::shared::SharedItem;
 use crate::vault::Vault;
-
-/// Public facts about the open vault, kept while a job holds the vault.
-#[derive(Clone, Debug)]
-pub struct VaultInfo {
-    /// Display name.
-    pub label: String,
-    /// Vault id.
-    pub vault_id: [u8; 16],
-    /// Account client id.
-    pub client_id: [u8; 64],
-    /// Device id this session stamps into frames.
-    pub origin: [u8; 16],
-    /// Directory generation.
-    pub generation: u64,
-    /// Wrap directory.
-    pub directory: WrapDirectory,
-    /// Public header of this device's key file, when it has one.
-    pub device: Option<DeviceKeyInfo>,
-    /// Saved preferences; `None` until this device saves some.
-    pub prefs: Option<Prefs>,
-}
-
-impl VaultInfo {
-    /// The device wrap this machine holds a key file for.
-    #[must_use]
-    pub fn owned_device(&self) -> Option<[u8; 16]> {
-        self.device.map(|device| device.id)
-    }
-}
-
-impl From<&Vault> for VaultInfo {
-    fn from(vault: &Vault) -> Self {
-        Self {
-            label: vault.label(),
-            vault_id: *vault.session.vault_id(),
-            client_id: vault.meta.client_id,
-            origin: vault.session.origin_device(),
-            generation: vault.session.generation(),
-            directory: vault.directory.clone(),
-            device: device_key_info(&vault.paths.device_key).ok(),
-            prefs: vault.meta.prefs.clone(),
-        }
-    }
-}
 
 /// Active view.
 #[derive(Debug)]
@@ -80,8 +42,8 @@ pub enum View {
     Factors(FactorsState),
     /// Devices.
     Devices(usize),
-    /// Sync.
-    Sync,
+    /// Share and sync.
+    Sync(Box<crate::app::flows::share::ShareState>),
     /// Health.
     Health(usize),
     /// History.
@@ -103,6 +65,14 @@ pub struct Unlocked {
     pub current: usize,
     /// Record summaries (wiped on drop).
     pub cache: Box<[Summary]>,
+    /// Shared vaults this account belongs to.
+    pub shared: Vec<SharedItem>,
+    /// The peer-to-peer node, while there is a shared vault to serve.
+    pub p2p: Option<Box<P2p>>,
+    /// This device's sync identity, when the vault has one.
+    pub identity: Option<Arc<SyncIdentity>>,
+    /// Where the vaults live on this device.
+    pub base: PathBuf,
     /// Copy usage on this device, for list order.
     pub usage: Usage,
     /// Active view.
@@ -126,6 +96,12 @@ impl Unlocked {
     #[must_use]
     pub fn new(vault: Box<Vault>, vaults: Vec<VaultRef>, current: usize) -> Self {
         let cache = build_cache(&vault.session).unwrap_or_default();
+        let crate::app::p2p::Setup {
+            identity,
+            p2p,
+            shared,
+        } = crate::app::p2p::setup(&vault);
+        let base = vault.paths.base.clone();
         let info = VaultInfo::from(&*vault);
         let usage = vault.meta.usage.clone();
         let mut state = Self {
@@ -134,6 +110,10 @@ impl Unlocked {
             vaults,
             current,
             cache,
+            shared,
+            p2p,
+            identity,
+            base,
             usage,
             view: View::Home,
             home: Home::default(),
@@ -166,7 +146,10 @@ impl Unlocked {
             View::Editor(_) => Scope::Editor,
             View::Factors(_) => Scope::Factors,
             View::Devices(_) => Scope::Devices,
-            View::Sync => Scope::Sync,
+            View::Sync(share) if matches!(share.step, crate::app::flows::share::Step::Overview) => {
+                Scope::Sync
+            }
+            View::Sync(_) => Scope::Share,
             View::Health(_) => Scope::Health,
             View::History(_) => Scope::History,
             View::Import(import) => import.scope(),
@@ -177,7 +160,7 @@ impl Unlocked {
     #[must_use]
     pub fn visible(&self) -> Vec<usize> {
         visible(
-            &self.cache,
+            self.active_cache(),
             &self.home.filter,
             self.home.query.value(),
             self.health.as_deref(),
@@ -191,7 +174,7 @@ impl Unlocked {
     pub fn selected(&self) -> Option<&Summary> {
         self.visible()
             .get(self.home.selected)
-            .and_then(|index| self.cache.get(*index))
+            .and_then(|index| self.active_cache().get(*index))
     }
 
     /// Open the selected record into the detail pane (decrypts on demand).
@@ -212,10 +195,14 @@ impl Unlocked {
         {
             return;
         }
-        self.home.detail = self
-            .vault
-            .as_ref()
-            .and_then(|vault| session::open_record(&vault.session, id).ok())
+        let session = match &self.home.filter {
+            Filter::Shared(vault_id, _) => self
+                .shared_item(vault_id)
+                .and_then(crate::vault::shared::SharedItem::session),
+            _ => self.vault.as_ref().map(|vault| &vault.session),
+        };
+        self.home.detail = session
+            .and_then(|session| session::open_record(session, id).ok())
             .map(|doc| Box::new(Detail::new(id, revision, timestamp, doc)));
     }
 
@@ -260,7 +247,8 @@ impl Unlocked {
             View::Factors(_) | View::Devices(_) => {
                 crate::app::flows::factors::on_key(self, event, ctx)
             }
-            View::Sync | View::Health(_) => crate::app::flows::panels::on_key(self, event, ctx),
+            View::Sync(_) => self.share_key(event, ctx),
+            View::Health(_) => crate::app::flows::panels::on_key(self, event, ctx),
             View::History(_) => crate::app::flows::history::on_key(self, event, ctx),
             View::Import(_) => crate::app::flows::import_vault::on_key(self, event, ctx),
         }
@@ -283,7 +271,7 @@ impl Unlocked {
     }
 
     /// Paste into whatever has focus.
-    pub fn on_paste(&mut self, text: &str) {
+    pub fn on_paste(&mut self, text: &str, ctx: &mut Ctx) {
         if let Some(dialog) = self.dialog.as_mut() {
             dialog.on_paste(text);
         } else if let Some(settings) = self.settings.as_deref_mut() {
@@ -292,6 +280,8 @@ impl Unlocked {
             editor.on_paste(text);
         } else if let View::Import(import) = &mut self.view {
             import.on_paste(text);
+        } else if matches!(self.view, View::Sync(_)) {
+            self.share_paste(text, ctx);
         } else if self.home.searching {
             self.home.query.insert_str(text);
         }
@@ -299,6 +289,7 @@ impl Unlocked {
 
     /// Timers: reveals and hold-to-confirm.
     pub fn on_tick(&mut self, ctx: &mut Ctx) -> Nav {
+        self.poll_p2p(ctx);
         let mut hid = false;
         if let Some(detail) = self.home.detail.as_mut() {
             hid |= detail.reveal.tick(ctx.now, ctx.reveal_after);
@@ -333,10 +324,15 @@ impl Unlocked {
         };
         match outcome {
             Outcome::Saved(id) => {
-                self.view = View::Home;
+                // A write made from the share screen is the reference to a
+                // shared vault: stay there, and select nothing.
+                let on_share = matches!(self.view, View::Sync(_));
                 self.refresh();
-                self.select(id);
-                ctx.toast(Tone::Success, "Saved.");
+                if !on_share {
+                    self.view = View::Home;
+                    self.select(id);
+                    ctx.toast(Tone::Success, "Saved.");
+                }
             }
             Outcome::Deleted(_) => {
                 self.refresh();
@@ -433,6 +429,9 @@ impl Unlocked {
         let Some(id) = self.home.detail.as_ref().map(|detail| detail.id) else {
             return;
         };
+        if self.in_shared() {
+            return;
+        }
         self.usage.note(id, unix_ms());
         self.select(id);
         if let Some(vault) = self.vault.as_deref_mut() {

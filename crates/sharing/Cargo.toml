@@ -1,0 +1,26 @@
+[package]
+name = "sharing"
+version = "0.1.0"
+description = "Contact cards and invitations for shared vaults."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ec = { path = "../ec" }
+frame = { path = "../frame" }
+kdf = { path = "../kdf" }
+memberlog = { path = "../memberlog" }
+pq = { path = "../pq" }
+secret = { path = "../secret" }
+session = { path = "../session" }
+sha2.workspace = true
+syncwire = { path = "../syncwire" }
+
+[dev-dependencies]
+local = { path = "../local" }
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "memberlog"
+version = "0.1.0"
+description = "Signed, hash-chained membership log of a shared vault."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+pq = { path = "../pq" }
+secret = { path = "../secret" }
+session = { path = "../session" }
+sha2.workspace = true
+syncwire = { path = "../syncwire" }
+
+[lints]
+workspace = true

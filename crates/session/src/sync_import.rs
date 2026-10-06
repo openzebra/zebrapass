@@ -30,9 +30,10 @@ pub struct TrustedKeys<'a> {
     pub server_origin: &'a [u8],
     /// Verifying key of the account root.
     pub root_vk: [u8; SYNC_VK_LEN],
-    /// `(origin_device, certificate)` for every enrolled device. The
+    /// Certificate of every enrolled device. A record is matched to the
+    /// certificate whose signed `device_id` equals the frame origin, and the
     /// certificate is re-verified against `root_vk` on every record.
-    pub devices: &'a [([u8; 16], DeviceCert)],
+    pub devices: &'a [DeviceCert],
     /// Wall clock in unix milliseconds, for certificate expiry.
     pub now_ms: u64,
 }
@@ -106,10 +107,10 @@ fn cert_for<'a>(
     trust: &'a TrustedKeys<'_>,
     origin_device: &[u8; 16],
 ) -> Result<&'a DeviceCert, SessionError> {
-    let (_, cert) = trust
+    let cert = trust
         .devices
         .iter()
-        .find(|(id, _)| id == origin_device)
+        .find(|cert| &cert.device_id == origin_device)
         .ok_or(SessionError::DeviceNotTrusted)?;
     if cert.client_id != trust.client_id {
         return Err(SessionError::CertRejected);

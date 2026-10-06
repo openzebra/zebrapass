@@ -87,6 +87,8 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
     // Kuznyechik cascade, and there is no cipher choice to get wrong.
     let (paths, mut session, mut file, mut meta) =
         local::create_vault(&base, phrase.seed(), profile, BodyAlg::Frames)?;
+    local::SyncIdentity::enroll(phrase.seed(), &meta.client_id, meta.device_id, u64::MAX)?
+        .save(&paths.sync_identity(), &session.sync_identity_key()?)?;
     drop(phrase);
     meta.name = name;
     enroll(&mut session, &mut file, &paths, profile, factor)?;
@@ -125,8 +127,11 @@ pub fn restore(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
     let mut session = unlock(&file, &UnlockCreds::master(phrase.seed()), None)
         .map_err(|error| UnlockError::from(&error))?;
     let client_id = kdf::client_id(phrase.seed()).map_err(|_| UnlockError::Io)?;
-    drop(phrase);
     let paths = paths_for(&base, session.vault_id());
+    local::SyncIdentity::enroll(phrase.seed(), &client_id, session.origin_device(), u64::MAX)
+        .and_then(|identity| identity.save(&paths.sync_identity(), &session.sync_identity_key()?))
+        .map_err(|_| UnlockError::Io)?;
+    drop(phrase);
     let meta = LocalMeta {
         device_id: session.origin_device(),
         client_id,

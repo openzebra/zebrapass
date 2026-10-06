@@ -80,7 +80,10 @@ impl From<&anyhow::Error> for UnlockError {
             | SessionError::DeviceNotTrusted
             | SessionError::CertRejected
             | SessionError::CertExpired
-            | SessionError::UnsupportedMsgVersion => Self::Denied,
+            | SessionError::UnsupportedMsgVersion
+            | SessionError::NotAWriter
+            | SessionError::NotYours
+            | SessionError::AttestationMismatch => Self::Denied,
         }
     }
 }
@@ -112,5 +115,8 @@ pub fn describe(error: &anyhow::Error) -> String {
         SessionError::CertExpired => "Rejected: device certificate expired.",
         SessionError::UnsupportedMsgVersion => "Rejected: unsupported sync message version.",
         SessionError::Entropy => "The system random source failed.",
+        SessionError::NotAWriter => "You can read this vault, not change it.",
+        SessionError::NotYours => "Rejected: written by another device.",
+        SessionError::AttestationMismatch => "Rejected: signature does not match the record.",
     })
 }

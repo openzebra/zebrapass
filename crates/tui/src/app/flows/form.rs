@@ -370,7 +370,7 @@ impl Form {
 /// Carry out a confirmed yes/no dialog.
 pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
     match kind {
-        ConfirmKind::Delete(id) => state.run(Op::Delete(id), Task::Save, ctx),
+        ConfirmKind::Delete(id) => state.delete_active(id, ctx),
         ConfirmKind::RemoveWrap(factor) => state.run(Op::RemoveWrap(factor), Task::Factor, ctx),
         ConfirmKind::RemovePassword => state.run(Op::RemovePassword, Task::Factor, ctx),
         ConfirmKind::ClearHistory => state.run(Op::ClearHistory, Task::Save, ctx),

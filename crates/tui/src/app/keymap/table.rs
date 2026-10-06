@@ -208,8 +208,24 @@ pub const KEYMAP: &[Binding] = bindings! {
     Devices: ch('?') => Help;
     Devices: key(KeyCode::Esc) => Back, "back";
 
+    Sync: key(KeyCode::Enter) => Confirm, "copy my key";
+    Sync: ch('n') => ShareNew, "new";
+    Sync: ch('a') => ShareAdd, "add";
+    Sync: ch('x') => ShareRemove, "remove";
+    Sync: ch('j') => ShareJoin, "join";
+    Sync: ch('r') => ShareRetry, "retry";
+    Sync: ch('l') => ShareListen, "listen";
+    Sync: key(KeyCode::Up) => Up;
+    Sync: key(KeyCode::Down) => Down;
     Sync: ch('?') => Help;
     Sync: key(KeyCode::Esc) => Back, "back";
+
+    Share: key(KeyCode::Enter) => Confirm, "continue";
+    Share: key(KeyCode::Up) => Up, "pick";
+    Share: key(KeyCode::Down) => Down;
+    Share: key(KeyCode::Left) => Left, "role";
+    Share: key(KeyCode::Right) => Right;
+    Share: key(KeyCode::Esc) => Back, "back";
 
     Health: key(KeyCode::Up) => Up;
     Health: key(KeyCode::Down) => Down;

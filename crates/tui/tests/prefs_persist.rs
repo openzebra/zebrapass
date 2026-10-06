@@ -36,6 +36,7 @@ fn saved() -> Prefs {
         anim: false,
         ascii: true,
         focus_lock: true,
+        p2p_listen: local::Listen::Local,
     }
 }
 

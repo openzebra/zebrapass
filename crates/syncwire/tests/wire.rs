@@ -1,0 +1,319 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests may unwrap and index"
+)]
+
+use session::{
+    issue_device_cert, sign_record, DeviceSignKey, SyncRecord, MSG_VERSION, SYNC_SIG_LEN,
+};
+use sha2::{Digest, Sha256};
+use syncwire::limits::MAX_FRAME;
+use syncwire::{decode_cert, decode_record, encode_cert, encode_record};
+
+fn signed_record() -> (SyncRecord, [u8; session::SYNC_VK_LEN]) {
+    let device = DeviceSignKey::from_seed(&[7u8; 32]);
+    let frame = vec![9u8; 200];
+    let base = SyncRecord {
+        client_id: [5u8; 64],
+        prev_hash: [6u8; 32],
+        content_hash: Sha256::digest(&frame).into(),
+        vault_id: [1u8; 16],
+        device_id: [2u8; 16],
+        record_id: 3,
+        revision: 11,
+        msg_version: MSG_VERSION,
+        key_generation: 4,
+        server_origin: Box::from(&b"https://sync.example"[..]),
+        frame,
+        signature: Vec::new(),
+    };
+    let signature = sign_record(&device, &base).unwrap();
+    (
+        SyncRecord { signature, ..base },
+        device.verifying_key().unwrap(),
+    )
+}
+
+#[test]
+fn record_roundtrips_and_still_verifies() {
+    let (record, vk) = signed_record();
+    let bytes = encode_record(&record).unwrap();
+    let decoded = decode_record(&bytes).unwrap();
+    assert_eq!(decoded, record);
+    decoded.verify(&vk, &[1u8; 16]).unwrap();
+}
+
+#[test]
+fn record_golden_layout() {
+    let record = SyncRecord {
+        client_id: [1u8; 64],
+        prev_hash: [2u8; 32],
+        content_hash: [3u8; 32],
+        vault_id: [4u8; 16],
+        device_id: [5u8; 16],
+        record_id: 0x0102_0304,
+        revision: 0x0A0B_0C0D_0E0F_1011,
+        msg_version: 2,
+        key_generation: 7,
+        server_origin: Box::from(&b"o"[..]),
+        frame: vec![0xEE; 3],
+        signature: vec![0xAA; SYNC_SIG_LEN],
+    };
+    let bytes = encode_record(&record).unwrap();
+    assert_eq!(&bytes[..6], b"ZPSR\x00\x01");
+    let fixed = 6 + 64 + 32 + 32 + 16 + 16;
+    assert_eq!(&bytes[fixed..fixed + 4], &[1, 2, 3, 4]);
+    assert_eq!(
+        &bytes[fixed + 4..fixed + 12],
+        &[0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11]
+    );
+    assert_eq!(&bytes[fixed + 12..fixed + 14], &[0, 2]);
+    assert_eq!(&bytes[fixed + 14..fixed + 18], &[0, 0, 0, 7]);
+    assert_eq!(&bytes[fixed + 18..fixed + 21], &[0, 1, b'o']);
+    assert_eq!(
+        &bytes[fixed + 21..fixed + 28],
+        &[0, 0, 0, 3, 0xEE, 0xEE, 0xEE]
+    );
+    assert_eq!(bytes.len(), fixed + 28 + SYNC_SIG_LEN);
+}
+
+#[test]
+fn every_truncation_is_rejected() {
+    let (record, _) = signed_record();
+    let bytes = encode_record(&record).unwrap();
+    for len in 0..bytes.len() {
+        assert!(decode_record(&bytes[..len]).is_err(), "prefix {len}");
+    }
+}
+
+#[test]
+fn trailing_bytes_magic_and_version_are_rejected() {
+    let (record, _) = signed_record();
+    let bytes = encode_record(&record).unwrap();
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(decode_record(&trailing).is_err());
+    let mut magic = bytes.clone();
+    magic[0] ^= 1;
+    assert!(decode_record(&magic).is_err());
+    let mut version = bytes;
+    version[5] = 2;
+    assert!(decode_record(&version).is_err());
+}
+
+#[test]
+fn oversized_declared_lengths_fail_before_allocation() {
+    let (record, _) = signed_record();
+    let bytes = encode_record(&record).unwrap();
+    let frame_len_at = 6 + 64 + 32 + 32 + 16 + 16 + 4 + 8 + 2 + 4 + 2 + record.server_origin.len();
+    let mut huge = bytes.clone();
+    huge[frame_len_at..frame_len_at + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+    assert!(decode_record(&huge).is_err());
+    let mut just_over = bytes.clone();
+    let over = u32::try_from(MAX_FRAME + 1).unwrap();
+    just_over[frame_len_at..frame_len_at + 4].copy_from_slice(&over.to_be_bytes());
+    assert!(decode_record(&just_over).is_err());
+    let origin_len_at = frame_len_at - 2 - record.server_origin.len();
+    let mut origin = bytes;
+    origin[origin_len_at..origin_len_at + 2].copy_from_slice(&u16::MAX.to_be_bytes());
+    assert!(decode_record(&origin).is_err());
+}
+
+#[test]
+fn encoder_refuses_oversized_or_unsigned_records() {
+    let (record, _) = signed_record();
+    let big = SyncRecord {
+        frame: vec![0; MAX_FRAME + 1],
+        ..record.clone()
+    };
+    assert!(encode_record(&big).is_err());
+    let unsigned = SyncRecord {
+        signature: Vec::new(),
+        ..record
+    };
+    assert!(encode_record(&unsigned).is_err());
+}
+
+#[test]
+fn flipped_wire_byte_never_yields_a_verifying_record() {
+    let (record, vk) = signed_record();
+    let bytes = encode_record(&record).unwrap();
+    let step = bytes.len() / 97 + 1;
+    for at in (0..bytes.len()).step_by(step) {
+        let mut tampered = bytes.clone();
+        tampered[at] ^= 0x01;
+        if let Ok(decoded) = decode_record(&tampered) {
+            assert!(decoded.verify(&vk, &[1u8; 16]).is_err(), "byte {at}");
+        }
+    }
+}
+
+#[test]
+fn cert_roundtrips_and_still_verifies() {
+    let root = DeviceSignKey::from_seed(&[7u8; 32]);
+    let device = DeviceSignKey::from_seed(&[8u8; 32]);
+    let cert = issue_device_cert(
+        root.seed(),
+        &[3u8; 64],
+        &[6u8; 16],
+        &device.verifying_key().unwrap(),
+        1_000,
+        9,
+    )
+    .unwrap();
+    let bytes = encode_cert(&cert).unwrap();
+    assert_eq!(&bytes[..6], b"ZPDC\x00\x02");
+    assert_eq!(&bytes[6 + 64..6 + 64 + 16], &[6u8; 16]);
+    assert_eq!(bytes.len(), syncwire::CERT_WIRE_LEN);
+    let mut old_version = bytes.clone();
+    old_version[5] = 1;
+    assert!(decode_cert(&old_version).is_err());
+    let decoded = decode_cert(&bytes).unwrap();
+    assert_eq!(decoded, cert);
+    decoded.verify(&root.verifying_key().unwrap(), 999).unwrap();
+    for len in (0..bytes.len()).step_by(97) {
+        assert!(decode_cert(&bytes[..len]).is_err());
+    }
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert!(decode_cert(&trailing).is_err());
+}
+
+#[test]
+fn revocation_round_trips_and_is_strict() {
+    let root = DeviceSignKey::from_seed(&[7u8; 32]);
+    let signer_key = DeviceSignKey::from_seed(&[8u8; 32]);
+    let target_key = DeviceSignKey::from_seed(&[9u8; 32]);
+    let cert = |key: &DeviceSignKey, id: u8| {
+        issue_device_cert(
+            root.seed(),
+            &[3u8; 64],
+            &[id; 16],
+            &key.verifying_key().unwrap(),
+            u64::MAX,
+            u64::from(id),
+        )
+        .unwrap()
+    };
+    let (signer, target) = (cert(&signer_key, 8), cert(&target_key, 9));
+    let revocation = session::issue_revocation(&signer_key, &signer, &target, 1_000).unwrap();
+    let bytes = syncwire::encode_revocation(&revocation).unwrap();
+    assert_eq!(bytes.len(), syncwire::REVOCATION_WIRE_LEN);
+    assert_eq!(&bytes[..6], b"ZPRV\x00\x01");
+    let decoded = syncwire::decode_revocation(&bytes).unwrap();
+    assert_eq!(decoded, revocation);
+    decoded
+        .verify(&root.verifying_key().unwrap(), 1_000)
+        .unwrap();
+    for len in (0..bytes.len()).step_by(211) {
+        assert!(syncwire::decode_revocation(&bytes[..len]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(syncwire::decode_revocation(&trailing).is_err());
+    let mut flipped = bytes;
+    flipped[80] ^= 1;
+    if let Ok(parsed) = syncwire::decode_revocation(&flipped) {
+        assert!(parsed
+            .verify(&root.verifying_key().unwrap(), 1_000)
+            .is_err());
+    }
+}
+
+fn sample_attestation() -> session::Attestation {
+    let root = DeviceSignKey::from_seed(&[7u8; 32]);
+    let device = DeviceSignKey::from_seed(&[8u8; 32]);
+    let signer = issue_device_cert(
+        root.seed(),
+        &[3u8; 64],
+        &[6u8; 16],
+        &device.verifying_key().unwrap(),
+        u64::MAX,
+        4,
+    )
+    .unwrap();
+    session::Attestation {
+        vault_id: [1; 16],
+        record_id: 9,
+        revision: 4,
+        origin_device: [6; 16],
+        plain_digest: [5; 32],
+        signer,
+        signature: vec![0xAB; SYNC_SIG_LEN],
+    }
+}
+
+#[test]
+fn an_attestation_and_a_bundle_round_trip_and_are_strict() {
+    let attestation = sample_attestation();
+    let bytes = syncwire::encode_attestation(&attestation).unwrap();
+    assert_eq!(bytes.len(), syncwire::ATTESTATION_WIRE_LEN);
+    assert_eq!(&bytes[..6], b"ZPRA\x00\x01");
+    assert_eq!(syncwire::decode_attestation(&bytes).unwrap(), attestation);
+    for len in (0..bytes.len()).step_by(499) {
+        assert!(syncwire::decode_attestation(&bytes[..len]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(syncwire::decode_attestation(&trailing).is_err());
+    let mut other_magic = bytes;
+    other_magic[0] ^= 1;
+    assert!(syncwire::decode_attestation(&other_magic).is_err());
+
+    let frame = vec![0x5A; 300];
+    let bundle = syncwire::encode_bundle(&attestation, &frame).unwrap();
+    let (back, rest) = syncwire::decode_bundle(&bundle).unwrap();
+    assert_eq!(back, attestation);
+    assert_eq!(rest, frame.as_slice());
+    assert!(syncwire::decode_bundle(&bundle[..syncwire::ATTESTATION_WIRE_LEN - 1]).is_err());
+    assert!(syncwire::encode_bundle(&attestation, &vec![0; MAX_FRAME + 1]).is_err());
+    let mut oversized = syncwire::encode_attestation(&attestation).unwrap();
+    oversized.extend(std::iter::repeat_n(0, MAX_FRAME + 1));
+    assert!(syncwire::decode_bundle(&oversized).is_err());
+}
+
+#[test]
+fn a_frontier_round_trips_and_refuses_disorder_and_oversize() {
+    let entry = |id: u32| session::FrontierEntry {
+        record_id: id,
+        revision: u64::from(id) + 1,
+        origin_device: [u8::try_from(id).unwrap(); 16],
+    };
+    let entries: Vec<_> = [1u32, 4, 9].into_iter().map(entry).collect();
+    let bytes = syncwire::encode_frontier(&entries).unwrap();
+    assert_eq!(bytes.len(), 4 + 3 * 28);
+    assert_eq!(syncwire::decode_frontier(&bytes).unwrap(), entries);
+    assert!(
+        syncwire::decode_frontier(&syncwire::encode_frontier(&[]).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+
+    assert!(syncwire::encode_frontier(&[entry(4), entry(1)]).is_err());
+    assert!(syncwire::encode_frontier(&[entry(4), entry(4)]).is_err());
+    let mut swapped = bytes.clone();
+    swapped[4..8].copy_from_slice(&9u32.to_be_bytes());
+    assert!(
+        syncwire::decode_frontier(&swapped).is_err(),
+        "ids must increase"
+    );
+    assert!(syncwire::decode_frontier(&bytes[..bytes.len() - 1]).is_err());
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert!(syncwire::decode_frontier(&trailing).is_err());
+
+    // A count that claims far more than the bytes hold is refused before any
+    // allocation.
+    let mut liar = vec![0u8; 8];
+    liar[..4].copy_from_slice(&u32::MAX.to_be_bytes());
+    assert!(syncwire::decode_frontier(&liar).is_err());
+    let mut over = Vec::new();
+    over.extend_from_slice(
+        &u32::try_from(syncwire::MAX_FRONTIER + 1)
+            .unwrap()
+            .to_be_bytes(),
+    );
+    assert!(syncwire::decode_frontier(&over).is_err());
+}

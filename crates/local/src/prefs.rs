@@ -8,13 +8,13 @@
 
 use record::{
     Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER,
-    TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE,
-    TAG_PREF_THEME,
+    TAG_PREF_P2P_LISTEN, TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN,
+    TAG_PREF_SYNC_MODE, TAG_PREF_THEME,
 };
 
 use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
 
-const TAGS: [u16; 8] = [
+const TAGS: [u16; 9] = [
     TAG_PREF_LOCK_AFTER,
     TAG_PREF_CLIP_CLEAR,
     TAG_PREF_REVEAL_HIDE,
@@ -23,6 +23,7 @@ const TAGS: [u16; 8] = [
     TAG_PREF_SYNC_MODE,
     TAG_PREF_SERVER_ORIGIN,
     TAG_PREF_SERVER_PIN,
+    TAG_PREF_P2P_LISTEN,
 ];
 
 const FLAG_ANIM: u8 = 1;
@@ -68,6 +69,54 @@ impl TryFrom<u8> for SyncMode {
     }
 }
 
+/// Where this device's sync node accepts connections.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Listen {
+    /// Nowhere: the device only fetches from others.
+    Off,
+    /// On this device only (`127.0.0.1`).
+    Local,
+    /// On the local network (`0.0.0.0`).
+    #[default]
+    Lan,
+}
+
+impl Listen {
+    /// Every mode, in the order a toggle cycles through them.
+    pub const ALL: [Self; 3] = [Self::Lan, Self::Local, Self::Off];
+
+    /// The next mode.
+    #[must_use]
+    pub fn next(self) -> Self {
+        let at = Self::ALL.iter().position(|mode| *mode == self).unwrap_or(0);
+        Self::ALL
+            .get((at + 1) % Self::ALL.len())
+            .copied()
+            .unwrap_or(Self::Off)
+    }
+}
+
+impl From<Listen> for u8 {
+    fn from(mode: Listen) -> Self {
+        match mode {
+            Listen::Off => 0,
+            Listen::Local => 1,
+            Listen::Lan => 2,
+        }
+    }
+}
+
+impl TryFrom<u8> for Listen {
+    type Error = anyhow::Error;
+
+    fn try_from(byte: u8) -> anyhow::Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|mode| u8::from(*mode) == byte)
+            .ok_or_else(out_of_range)
+    }
+}
+
 /// Preferences of this device for one vault.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prefs {
@@ -91,6 +140,8 @@ pub struct Prefs {
     pub ascii: bool,
     /// Losing terminal focus locks the vault.
     pub focus_lock: bool,
+    /// Where the sync node accepts connections.
+    pub p2p_listen: Listen,
 }
 
 impl Default for Prefs {
@@ -106,6 +157,7 @@ impl Default for Prefs {
             anim: true,
             ascii: false,
             focus_lock: false,
+            p2p_listen: Listen::Lan,
         }
     }
 }
@@ -130,6 +182,11 @@ impl Prefs {
             TAG_PREF_SYNC_MODE,
             ValueType::Bytes,
             &[u8::from(self.sync_mode)],
+        );
+        doc.set_data(
+            TAG_PREF_P2P_LISTEN,
+            ValueType::Bytes,
+            &[u8::from(self.p2p_listen)],
         );
         if let Some(origin) = self.server_origin.as_deref() {
             doc.set_text(TAG_PREF_SERVER_ORIGIN, origin);
@@ -188,6 +245,8 @@ impl Prefs {
             anim: flags & FLAG_ANIM != 0,
             ascii: flags & FLAG_ASCII != 0,
             focus_lock: flags & FLAG_FOCUS_LOCK != 0,
+            p2p_listen: byte(doc, TAG_PREF_P2P_LISTEN)?
+                .map_or(Ok(defaults.p2p_listen), Listen::try_from)?,
         })
     }
 
@@ -272,7 +331,7 @@ mod tests {
 
     use record::{Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER};
 
-    use super::{parse_origin, Prefs, SyncMode};
+    use super::{parse_origin, Listen, Prefs, SyncMode};
 
     fn custom() -> Prefs {
         Prefs {
@@ -286,6 +345,7 @@ mod tests {
             anim: false,
             ascii: true,
             focus_lock: true,
+            p2p_listen: Listen::Off,
         }
     }
 

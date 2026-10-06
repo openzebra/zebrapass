@@ -29,6 +29,21 @@ pub const INFO_CASCADE_MAC: &[u8] = b"brby/v2/cascade-mac";
 /// HKDF info for the per-device local-metadata file key.
 pub const INFO_LOCAL_META: &[u8] = b"brby/v2/local-meta";
 
+/// HKDF info for the key of a shared vault's attestation store.
+pub const INFO_SHARED_ATTEST: &[u8] = b"brby/v2/shared-attest";
+
+/// HKDF info for the gate key of a shared vault's peer-to-peer hello.
+pub const INFO_SHARED_GATE: &[u8] = b"brby/v2/shared-gate";
+
+/// HKDF info for the key of a shared vault's member log file.
+pub const INFO_SHARED_MEMBERS: &[u8] = b"brby/v2/shared-members";
+
+/// HKDF info for the key of a shared vault's local state file.
+pub const INFO_SHARED_STATE: &[u8] = b"brby/v2/shared-state";
+
+/// HKDF info for the key of this device's sealed sync identity file.
+pub const INFO_SYNC_IDENTITY: &[u8] = b"brby/v2/sync-identity";
+
 /// HKDF info for the identity scalar derived from the master seed.
 pub const INFO_IDENTITY: &[u8] = b"zebrapass/identity/v1";
 
@@ -127,6 +142,71 @@ pub fn local_meta_key(
     hkdf_sha512(vk, vault_id, INFO_LOCAL_META)
 }
 
+/// Sync-identity file key: HKDF-SHA512 with the vault key as `ikm`, the
+/// vault id as salt, and a dedicated info. It never leaves the device.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn sync_identity_key(
+    vk: &[u8; 32],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(vk, vault_id, INFO_SYNC_IDENTITY)
+}
+
+/// Key of a shared vault's attestation store, from the shared seed.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_attest_key(
+    seed: &[u8; 64],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(seed, vault_id, INFO_SHARED_ATTEST)
+}
+
+/// The key that gates a hello for a shared vault: only holders of the shared
+/// seed, which every member has, can compute it.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_gate_key(
+    seed: &[u8; 64],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(seed, vault_id, INFO_SHARED_GATE)
+}
+
+/// Key of a shared vault's member log file, from the shared seed. It needs no
+/// vault key, so a device that joined but has not yet received the vault
+/// file can already store the log.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_members_key(
+    seed: &[u8; 64],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(seed, vault_id, INFO_SHARED_MEMBERS)
+}
+
+/// Key of a shared vault's local state file (last-seen revisions and
+/// revocations), from the shared seed.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_state_key(
+    seed: &[u8; 64],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(seed, vault_id, INFO_SHARED_STATE)
+}
+
 /// Identity seed: HKDF-SHA512 with the 64-byte master seed as `ikm`, no
 /// salt, and a dedicated info. The same seed yields the same scalar on
 /// every device.
@@ -208,7 +288,8 @@ mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
     use super::{
-        cascade_keys, client_id, client_id_for, frame_key, identity_seed, local_meta_key, sync_seed,
+        cascade_keys, client_id, client_id_for, frame_key, identity_seed, local_meta_key,
+        sync_identity_key, sync_seed,
     };
 
     #[test]
@@ -246,6 +327,55 @@ mod tests {
         assert_eq!(meta.expose(), again.expose());
         let frame = frame_key(&vk, &vault_id, 0).unwrap();
         assert_ne!(meta.expose(), frame.expose());
+    }
+
+    #[test]
+    fn sync_identity_key_is_deterministic_and_domain_separated() {
+        let vk = [7u8; 32];
+        let vault_id = [9u8; 16];
+        let key = sync_identity_key(&vk, &vault_id).unwrap();
+        assert_eq!(
+            key.expose(),
+            sync_identity_key(&vk, &vault_id).unwrap().expose()
+        );
+        assert_ne!(
+            key.expose(),
+            local_meta_key(&vk, &vault_id).unwrap().expose()
+        );
+        assert_ne!(key.expose(), frame_key(&vk, &vault_id, 0).unwrap().expose());
+        assert_ne!(
+            key.expose(),
+            sync_identity_key(&[8u8; 32], &vault_id).unwrap().expose()
+        );
+    }
+
+    #[test]
+    fn shared_keys_are_distinct_from_each_other_and_from_vault_derived_keys() {
+        let (seed, vault) = ([3u8; 64], [4u8; 16]);
+        let members = super::shared_members_key(&seed, &vault).unwrap();
+        let state = super::shared_state_key(&seed, &vault).unwrap();
+        let gate = super::shared_gate_key(&seed, &vault).unwrap();
+        let attest = super::shared_attest_key(&seed, &vault).unwrap();
+        assert_ne!(attest.expose(), gate.expose());
+        assert_ne!(attest.expose(), state.expose());
+        assert_ne!(attest.expose(), members.expose());
+        assert_ne!(members.expose(), state.expose());
+        assert_ne!(gate.expose(), state.expose());
+        assert_ne!(gate.expose(), members.expose());
+        assert_ne!(
+            members.expose(),
+            super::shared_members_key(&[9u8; 64], &vault)
+                .unwrap()
+                .expose()
+        );
+        assert_ne!(
+            members.expose(),
+            super::shared_members_key(&seed, &[9u8; 16])
+                .unwrap()
+                .expose()
+        );
+        let vault_derived = local_meta_key(&seed[..32].try_into().unwrap(), &vault).unwrap();
+        assert_ne!(members.expose(), vault_derived.expose());
     }
 
     #[test]

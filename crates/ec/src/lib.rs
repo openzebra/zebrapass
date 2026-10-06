@@ -7,7 +7,7 @@
 
 use p256::ecdh::diffie_hellman;
 use p256::elliptic_curve::sec1::ToSec1Point;
-use p256::{PublicKey, SecretKey};
+pub use p256::{PublicKey, SecretKey};
 use secret::Secret;
 use zeroize::Zeroize;
 

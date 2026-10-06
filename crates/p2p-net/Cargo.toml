@@ -1,0 +1,32 @@
+[package]
+name = "p2p-net"
+version = "0.1.0"
+description = "HTTP/2 transport over the post-quantum channel: serve and fetch shared vaults."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+h2.workspace = true
+http.workspace = true
+kdf = { path = "../kdf" }
+local = { path = "../local" }
+memberlog = { path = "../memberlog" }
+p2p-core = { path = "../p2p-core" }
+secret = { path = "../secret" }
+session = { path = "../session" }
+sha2.workspace = true
+syncwire = { path = "../syncwire" }
+tokio.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+getrandom.workspace = true
+record = { path = "../record" }
+sharing = { path = "../sharing" }
+
+[lints]
+workspace = true

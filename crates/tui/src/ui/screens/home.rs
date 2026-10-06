@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::home::{filter_entries, Filter, Pane};
+use crate::app::flows::home::{Filter, Pane};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
 use crate::ui::layout::{body_and_hints, Breakpoint};
@@ -36,7 +36,12 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
     };
     let countdown = format!(" {} {} ", theme.glyphs.rotate, clock(left));
     let fill = if theme.ascii { "-" } else { "─" };
-    let used = head.chars().count() + rest.chars().count() + countdown.chars().count() + 6;
+    let (sync_text, sync_style) = link_indicator(state, ctx);
+    let used = head.chars().count()
+        + rest.chars().count()
+        + countdown.chars().count()
+        + sync_text.chars().count()
+        + 6;
     let line = Line::from(vec![
         Span::styled(head, theme.strong()),
         Span::styled(fill, theme.muted()),
@@ -45,10 +50,30 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
             fill.repeat(usize::from(area.width).saturating_sub(used)),
             theme.muted(),
         ),
+        Span::styled(sync_text, sync_style),
         Span::styled(countdown, countdown_style),
         Span::styled(fill, theme.muted()),
     ]);
     frame.render_widget(Paragraph::new(line).style(theme.base()), area);
+}
+
+/// The peer-to-peer indicator of the header: syncing, peers connected, or
+/// waiting. Empty while no node runs.
+fn link_indicator(state: &Unlocked, ctx: &Ctx) -> (String, Style) {
+    let theme = &ctx.theme;
+    let Some(p2p) = state.p2p.as_ref() else {
+        return (String::new(), theme.muted());
+    };
+    let status = p2p.service.status();
+    let glyph = theme.glyphs.sync;
+    if status.fetching > 0 {
+        (format!(" {glyph} syncing "), theme.warn())
+    } else if status.peers > 0 {
+        let noun = if status.peers == 1 { "peer" } else { "peers" };
+        (format!(" {glyph} {} {noun} ", status.peers), theme.accent())
+    } else {
+        (format!(" {glyph} no peers "), theme.muted())
+    }
 }
 
 fn pane_block<'a>(title: Line<'a>, focused: bool, ctx: &Ctx) -> Block<'a> {
@@ -112,10 +137,7 @@ fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) 
     frame.render_widget(block, area);
     let mut lines = Vec::new();
     let mut section = "";
-    for (index, (filter, count)) in filter_entries(&state.cache, state.health.as_deref())
-        .iter()
-        .enumerate()
-    {
+    for (index, (filter, count)) in state.filters().iter().enumerate() {
         let (glyph, heading) = match filter {
             Filter::Favorites => (glyphs.star, ""),
             Filter::All => (glyphs.login, ""),
@@ -124,6 +146,7 @@ fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) 
             Filter::Totp => (glyphs.clock, ""),
             Filter::Weak | Filter::Reused | Filter::Old => (glyphs.attention, "Health"),
             Filter::Tag(_) => ("#", "Tags"),
+            Filter::Shared(..) => (glyphs.sync, "Shared"),
         };
         if heading != section {
             section = heading;
@@ -142,6 +165,13 @@ fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) 
         };
         let label = filter.label();
         let label = label.trim_start_matches('#');
+        let waiting = matches!(filter, Filter::Shared(id, _)
+            if state.shared_item(id).is_some_and(|item| !item.ready()));
+        let count_text = if waiting {
+            String::from("sync")
+        } else {
+            format!("{count:>4}")
+        };
         let width = usize::from(inner.width).saturating_sub(9);
         lines.push(Line::from(vec![
             Span::styled(format!(" {glyph} "), style),
@@ -149,7 +179,7 @@ fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) 
                 format!("{:<width$}", list::fit(label, width)),
                 row_style(chosen, theme).patch(style),
             ),
-            Span::styled(format!("{count:>4}"), theme.muted()),
+            Span::styled(count_text, theme.muted()),
         ]));
     }
     frame.render_widget(Paragraph::new(lines), inner);
@@ -175,7 +205,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
     let visible = state.visible();
     let counts = format!(
         "{} {} {}",
-        state.cache.len(),
+        state.active_cache().len(),
         if theme.ascii { "->" } else { "→" },
         visible.len()
     );
@@ -203,7 +233,9 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
         rule_row,
     );
     if visible.is_empty() {
-        let hint = if state.cache.is_empty() {
+        let hint = if state.in_shared() && state.active_cache().is_empty() {
+            "Nothing here yet."
+        } else if state.cache.is_empty() {
             "No records yet. Press n to add one."
         } else {
             "Nothing matches. Esc clears the search."
@@ -216,7 +248,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
         list::draw(
             frame,
             rows,
-            &state.cache,
+            state.active_cache(),
             &visible,
             state.home.selected,
             focused || state.home.searching,

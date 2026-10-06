@@ -1,0 +1,95 @@
+//! What a node needs to speak for one vault, and what it serves.
+
+use local::Verdict;
+use p2p_core::{Account, Local};
+use secret::Secret;
+use session::{DeviceCert, DeviceSignKey, Revocation};
+use zeroize::Zeroizing;
+
+/// Everything the handshake needs for one vault, owned so it can cross
+/// tasks.
+#[derive(Debug)]
+pub struct VaultView {
+    /// The vault's number.
+    pub vault_id: [u8; 16],
+    /// This device's certificate.
+    pub cert: DeviceCert,
+    /// This device's signing key.
+    pub sign: DeviceSignKey,
+    /// The accounts whose devices may connect.
+    pub accounts: Vec<Account>,
+    /// Accepted revocations.
+    pub revoked: Vec<Revocation>,
+    /// Gate keys, the newest first.
+    pub gate_keys: Vec<Secret<[u8; 32]>>,
+}
+
+impl VaultView {
+    /// The borrowed form the handshake takes.
+    #[must_use]
+    pub fn local(&self) -> Local<'_> {
+        Local {
+            vault_id: self.vault_id,
+            cert: &self.cert,
+            sign: &self.sign,
+            accounts: &self.accounts,
+            revoked: &self.revoked,
+            gate_keys: &self.gate_keys,
+        }
+    }
+}
+
+/// The vaults a node serves and their contents. Called for every incoming
+/// connection, so a change to a vault shows at once.
+pub trait Provider: Send + Sync + 'static {
+    /// The vaults this node serves.
+    fn views(&self) -> Vec<VaultView>;
+
+    /// The vault's member log: each entry's wire bytes, concatenated.
+    fn log(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>>;
+
+    /// The vault file.
+    fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>>;
+
+    /// The frontier of the vault: the winning revision of every record.
+    fn frontier(&self, _vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The winning revision of one record with its attestation.
+    fn revision(&self, _vault_id: &[u8; 16], _record_id: u32) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Keep a revision a peer pushed, if its attestation holds and its writer
+    /// is a writer of the vault.
+    fn accept_revision(
+        &self,
+        _vault_id: &[u8; 16],
+        _account: &[u8; 64],
+        _bundle: &[u8],
+    ) -> Verdict {
+        Verdict::Refused
+    }
+
+    /// Merge the member log entries a peer holds into the stored log, every
+    /// new entry verified. Returns whether the log is now consistent with the
+    /// peer's.
+    fn merge_log(&self, _vault_id: &[u8; 16], _log: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether a peer's offer (its rekey answer, if any) means this device
+    /// should take over the peer's vault file: a later epoch, or an open vault
+    /// that is stale.
+    fn needs_snapshot(&self, _vault_id: &[u8; 16], _rekey: Option<&[u8]>) -> bool {
+        false
+    }
+
+    /// The vault's current seed and its epoch (64 bytes then 4 big-endian),
+    /// for an account that is a member now. The connection has already
+    /// authenticated that account's device.
+    fn rekey(&self, _vault_id: &[u8; 16], _account: &[u8; 64]) -> Option<Zeroizing<Vec<u8>>> {
+        None
+    }
+}

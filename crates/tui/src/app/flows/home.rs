@@ -38,6 +38,8 @@ pub enum Filter {
     Old,
     /// A tag.
     Tag(Box<str>),
+    /// A shared vault: its id and name.
+    Shared([u8; 16], Box<str>),
 }
 
 impl Filter {
@@ -54,6 +56,7 @@ impl Filter {
             Self::Reused => String::from("Reused"),
             Self::Old => String::from("Old (>1y)"),
             Self::Tag(tag) => format!("#{tag}"),
+            Self::Shared(_, name) => name.to_string(),
         }
     }
 
@@ -62,7 +65,7 @@ impl Filter {
     pub fn keeps(&self, summary: &Summary, health: Option<&HealthReport>) -> bool {
         let flagged = |ids: &[u32]| ids.contains(&summary.id);
         match self {
-            Self::All => true,
+            Self::All | Self::Shared(..) => true,
             Self::Favorites => summary.favorite,
             Self::Logins => summary.kind == RecordKind::Login,
             Self::Notes => summary.kind == RecordKind::Note,

@@ -14,6 +14,11 @@ members = [
     "crates/seed",
     "crates/local",
     "crates/import",
+    "crates/syncwire",
+    "crates/p2p-core",
+    "crates/memberlog",
+    "crates/sharing",
+    "crates/p2p-net",
     "crates/tui",
 ]
 resolver = "2"
@@ -46,6 +51,12 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
+# HTTP/2 transport of device sync (crates/p2p-net only). The channel inside is our own
+# post-quantum one; these crates only move bytes and frame requests.
+tokio = { version = "=1.53.1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "sync"] }
+h2 = "=0.4.19"
+http = "=1.5.0"
+bytes = "=1.12.1"
 # Terminal UI only (crates/tui). ratatui 0.29 is the last line on the 1.85 MSRV;
 # Cargo.lock pins its `instability` proc-macro to 0.3.7 for the same reason.
 ratatui = "=0.29.0"
@@ -81,3 +92,4 @@ opt-level = 3
 
 [profile.dev.package.blake2]
 opt-level = 3
+

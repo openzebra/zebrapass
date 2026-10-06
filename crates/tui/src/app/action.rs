@@ -182,6 +182,18 @@ actions! {
     ToggleInclude,
     /// Include or exclude every item.
     ToggleAll,
+    /// Make a shared vault.
+    ShareNew,
+    /// Add a person to the selected shared vault.
+    ShareAdd,
+    /// Join a shared vault from an invitation.
+    ShareJoin,
+    /// Fetch a waiting shared vault again, now.
+    ShareRetry,
+    /// Cycle where this device's node listens.
+    ShareListen,
+    /// Remove a person from the selected shared vault.
+    ShareRemove,
 }
 
 /// Where a palette entry is listed.

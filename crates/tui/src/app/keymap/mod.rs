@@ -55,8 +55,10 @@ pub enum Scope {
     Factors,
     /// Devices.
     Devices,
-    /// Sync.
+    /// Share and sync.
     Sync,
+    /// A step inside the share screen.
+    Share,
     /// Health.
     Health,
     /// History.
@@ -100,7 +102,8 @@ impl Scope {
             Self::Generator => "Generator",
             Self::Factors => "Factors",
             Self::Devices => "Devices",
-            Self::Sync => "Sync",
+            Self::Sync => "Share and sync",
+            Self::Share => "Share step",
             Self::Health => "Health",
             Self::History => "History",
             Self::Settings => "Settings",
@@ -209,7 +212,7 @@ pub fn in_scope(scope: Scope) -> impl Iterator<Item = &'static Binding> {
 }
 
 /// Every scope, in help-screen order.
-pub const SCOPES: [Scope; 30] = [
+pub const SCOPES: [Scope; 31] = [
     Scope::Global,
     Scope::Home,
     Scope::Search,
@@ -218,6 +221,7 @@ pub const SCOPES: [Scope; 30] = [
     Scope::Factors,
     Scope::Devices,
     Scope::Sync,
+    Scope::Share,
     Scope::Health,
     Scope::History,
     Scope::Settings,
