@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use local::{
     adopt_shared_file, create_shared_vault, join_shared_vault, open_shared_vault, Edit, SharedRef,
@@ -120,6 +120,7 @@ fn trio() -> [Node; 3] {
     }
     alice.save_log(&alice_ref.seed).unwrap();
     alice.persist(&alice_ref.seed).unwrap();
+    let attested = alice.attestations(&alice_ref, &ids[0]).unwrap();
     let mut nodes = Vec::new();
     for (index, id) in ids.into_iter().enumerate() {
         let reference = Arc::new(alice_ref.duplicate());
@@ -129,6 +130,7 @@ fn trio() -> [Node; 3] {
                 &dirs[index],
                 &reference,
                 VaultFile::new(alice.file.as_bytes().to_vec()),
+                &attested,
                 &id,
             )
             .unwrap();
@@ -137,6 +139,7 @@ fn trio() -> [Node; 3] {
         provider.serve(Arc::clone(&reference));
         let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
         let addr = service.local_addr().unwrap().to_string();
+        provider.allow_loopback_peers();
         provider.set_hints(vec![addr.clone()]);
         nodes.push(Node {
             base: dirs[index].clone(),
@@ -246,6 +249,258 @@ fn addresses_signed_by_an_outsider_are_not_kept() {
     let list = syncwire::encode_peers(&[record]).unwrap();
     let log = local::read_member_log(&alice.base, &alice.reference).unwrap();
     let book = PeerBook::default();
-    assert_eq!(book.accept(&log, &[0; 16], &list), 0);
+    assert_eq!(book.accept(&log, &[0; 16], &[], &list), 0);
     assert!(book.hints(&log).is_empty());
+}
+
+#[test]
+fn a_member_cannot_aim_this_device_at_addresses_that_are_not_peers() {
+    let [alice, bob, _] = trio();
+    let log = local::read_member_log(&alice.base, &alice.reference).unwrap();
+    let book = PeerBook::default();
+    book.set_own(vec!["192.168.1.5:7447".to_owned()]);
+    let offer_to = |book: &PeerBook, hint: &str| {
+        let record = session::PeerRecord::sign(
+            &bob.id.sign_key(),
+            &bob.id.devices()[0],
+            alice.reference.vault_id,
+            vec![hint.to_owned()],
+            p2p_net::now_ms(),
+        )
+        .unwrap();
+        let list = syncwire::encode_peers(&[record]).unwrap();
+        book.accept(&log, &[0; 16], &[], &list)
+    };
+    let offer = |hint: &str| offer_to(&book, hint);
+    for refused in [
+        "127.0.0.1:7447",
+        "[::1]:7447",
+        "169.254.169.254:80",
+        "0.0.0.0:7447",
+        "224.0.0.1:7447",
+        "[ff02::1]:7447",
+        "[fe80::1]:7447",
+        "255.255.255.255:7447",
+        "198.51.100.7:7447",
+        "192.168.1.9:0",
+        "10.0.0.8:7447",
+        "172.16.0.9:7447",
+        "[::ffff:127.0.0.1]:7447",
+        "[::ffff:10.1.2.3]:7447",
+        "[fd00::1]:7447",
+    ] {
+        assert_eq!(offer(refused), 0, "{refused} must not be dialed");
+        assert!(book.hints(&log).is_empty(), "{refused}");
+    }
+    assert_eq!(offer("192.168.200.3:7447"), 1, "same private network");
+    assert_eq!(
+        offer_to(&PeerBook::default(), "93.184.216.34:7447"),
+        1,
+        "a public address is fine"
+    );
+}
+
+#[test]
+fn loopback_and_foreign_private_networks_depend_on_the_policy() {
+    use p2p_net::Policy;
+    let none: [std::net::SocketAddr; 0] = [];
+    let lan: std::net::SocketAddr = "192.168.1.5:7447".parse().unwrap();
+    let at = |text: &str| text.parse::<std::net::SocketAddr>().unwrap();
+    assert!(!Policy::default().allows(&at("127.0.0.1:1"), &none));
+    assert!(Policy { loopback: true }.allows(&at("127.0.0.1:1"), &none));
+    assert!(Policy::default().allows(&at("93.184.216.34:443"), &none));
+    assert!(Policy::default().allows(&at("[2606:2800:220:1::1]:443"), &none));
+    assert!(!Policy::default().allows(&at("192.168.7.7:1"), &none));
+    assert!(Policy::default().allows(&at("192.168.7.7:1"), &[lan]));
+    assert!(!Policy::default().allows(&at("10.1.1.1:1"), &[lan]));
+    assert!(
+        !Policy::default().allows(&at("100.64.0.1:1"), &none),
+        "carrier-grade NAT is shared space"
+    );
+    assert!(Policy::default().allows(&at("[fd12:3456:789a::2]:1"), &[at("[fd12:3456:789a::9]:1")]));
+}
+
+fn restarted(node: &Node) -> Arc<SharedProvider> {
+    let provider = Arc::new(SharedProvider::new(node.base.clone(), Arc::clone(&node.id)));
+    provider.allow_loopback_peers();
+    provider.serve(Arc::new(node.reference.duplicate()));
+    provider
+}
+
+#[test]
+fn peer_addresses_survive_a_restart() {
+    use p2p_net::Provider;
+    let [alice, bob, _] = trio();
+    assert_eq!(bob.check_in(&[&alice]), (0, 0, 0));
+    let vault = alice.reference.vault_id;
+    assert_eq!(
+        alice.provider.peer_hints(&vault),
+        std::slice::from_ref(&bob.addr)
+    );
+
+    let after = restarted(&alice);
+    assert_eq!(
+        after.peer_hints(&vault),
+        std::slice::from_ref(&bob.addr),
+        "found again without being told where"
+    );
+}
+
+#[test]
+fn a_damaged_or_foreign_peer_file_is_ignored_and_the_search_starts_over() {
+    use p2p_net::Provider;
+    let [alice, bob, _] = trio();
+    assert_eq!(bob.check_in(&[&alice]), (0, 0, 0));
+    let vault = alice.reference.vault_id;
+    let file = local::shared_paths_for(&alice.base, &vault).peers_store();
+    let good = fs::read(&file).unwrap();
+
+    let mut flipped = good.clone();
+    let middle = flipped.len() / 2;
+    flipped[middle] ^= 1;
+    fs::write(&file, &flipped).unwrap();
+    assert!(restarted(&alice).peer_hints(&vault).is_empty());
+
+    fs::write(&file, &good[..good.len() / 2]).unwrap();
+    assert!(restarted(&alice).peer_hints(&vault).is_empty());
+
+    fs::remove_file(&file).unwrap();
+    assert!(restarted(&alice).peer_hints(&vault).is_empty());
+
+    fs::write(&file, &good).unwrap();
+    assert_eq!(
+        restarted(&alice).peer_hints(&vault),
+        std::slice::from_ref(&bob.addr)
+    );
+}
+
+#[test]
+fn stored_addresses_are_checked_again_when_they_come_back() {
+    use p2p_net::Provider;
+    let [alice, bob, _] = trio();
+    assert_eq!(bob.check_in(&[&alice]), (0, 0, 0));
+    let vault = alice.reference.vault_id;
+    // The same file read by a device that does not allow loopback holds no
+    // usable address, whatever was written down.
+    let strict = Arc::new(SharedProvider::new(
+        alice.base.clone(),
+        Arc::clone(&alice.id),
+    ));
+    strict.serve(Arc::new(alice.reference.duplicate()));
+    assert!(strict.peer_hints(&vault).is_empty());
+}
+
+#[test]
+fn a_leave_counts_as_delivered_when_a_member_fetches_the_log() {
+    let [alice, bob, _] = trio();
+    let vault = alice.reference.vault_id;
+    assert_eq!(alice.check_in(&[&bob]), (0, 0, 0));
+    assert!(
+        bob.provider.take_delivered().is_empty(),
+        "a member that has not left delivers nothing"
+    );
+
+    bob.provider
+        .with_vault(&vault, |vault, reference, identity| {
+            vault.leave(reference, identity)
+        })
+        .unwrap();
+    assert!(
+        bob.provider.take_delivered().is_empty(),
+        "not before it is fetched"
+    );
+
+    assert_eq!(alice.check_in(&[&bob]), (0, 0, 0));
+    assert_eq!(bob.provider.take_delivered(), [vault]);
+    assert!(bob.provider.take_delivered().is_empty(), "once");
+    let log = local::read_member_log(&alice.base, &alice.reference).unwrap();
+    assert_eq!(log.role_of(&bob.id.devices()[0].client_id), None);
+
+    bob.provider.unserve(&vault);
+    assert!(p2p_net::Provider::log(&*bob.provider, &vault).is_none());
+}
+
+fn random_below(bound: usize) -> usize {
+    let mut bytes = [0u8; 8];
+    getrandom::fill(&mut bytes).unwrap();
+    usize::try_from(u64::from_be_bytes(bytes) % u64::try_from(bound).unwrap()).unwrap()
+}
+
+fn frontier_of(node: &Node) -> Vec<u8> {
+    open_shared_vault(&node.base, &node.reference, &node.id)
+        .unwrap()
+        .frontier_wire()
+        .unwrap()
+}
+
+/// Three nodes edit at random and trade changes for a while, then settle on
+/// the same records. Run with
+/// `cargo test --release -p p2p-net --test ongoing -- --ignored` (a debug build
+/// does a handful of check-ins a minute);
+/// `ZP_SOAK_SECS` sets how long the editing lasts (default 30).
+#[test]
+#[ignore = "soak test: run on request"]
+fn three_nodes_editing_at_random_settle_on_the_same_vault() {
+    let seconds: u64 = std::env::var("ZP_SOAK_SECS")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(30);
+    let nodes = trio();
+    let [alice, bob, carol] = &nodes;
+    let everyone = [alice, bob, carol];
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let (mut made, mut changed, mut removed, mut rounds) = (0usize, 0usize, 0usize, 0usize);
+    let mut ids: Vec<u32> = Vec::new();
+    while Instant::now() < deadline {
+        let writer = [alice, bob][random_below(2)];
+        match random_below(10) {
+            0..=4 => {
+                if let Ok(id) = writer.edit(Edit::Create(titled(&format!("record {made}")))) {
+                    ids.push(id);
+                    made += 1;
+                }
+            }
+            5..=7 if !ids.is_empty() => {
+                let id = ids[random_below(ids.len())];
+                changed += usize::from(
+                    writer
+                        .edit(Edit::Update(id, titled(&format!("edit {changed}"))))
+                        .is_ok(),
+                );
+            }
+            8 if !ids.is_empty() => {
+                let id = ids.swap_remove(random_below(ids.len()));
+                removed += usize::from(writer.edit(Edit::Delete(id)).is_ok());
+            }
+            _ => {}
+        }
+        let from = everyone[random_below(3)];
+        let to: Vec<&Node> = everyone
+            .iter()
+            .copied()
+            .filter(|node| node.addr != from.addr)
+            .collect();
+        from.check_in(&to);
+        rounds += 1;
+    }
+
+    for _ in 0..8 {
+        for node in everyone {
+            let others: Vec<&Node> = everyone
+                .iter()
+                .copied()
+                .filter(|other| other.addr != node.addr)
+                .collect();
+            node.check_in(&others);
+        }
+        if frontier_of(alice) == frontier_of(bob) && frontier_of(bob) == frontier_of(carol) {
+            break;
+        }
+    }
+    assert_eq!(frontier_of(alice), frontier_of(bob));
+    assert_eq!(frontier_of(bob), frontier_of(carol));
+    assert_eq!(alice.titles(), bob.titles());
+    assert_eq!(bob.titles(), carol.titles());
+    println!("soak: {made} created, {changed} edited, {removed} deleted, {rounds} check-ins");
+    assert!(made > 0 && rounds > 0);
 }

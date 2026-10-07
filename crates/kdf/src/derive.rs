@@ -32,6 +32,9 @@ pub const INFO_LOCAL_META: &[u8] = b"brby/v2/local-meta";
 /// HKDF info for the key of a shared vault's attestation store.
 pub const INFO_SHARED_ATTEST: &[u8] = b"brby/v2/shared-attest";
 
+/// HKDF info for the key of a shared vault's stored peer addresses.
+pub const INFO_SHARED_PEERS: &[u8] = b"brby/v2/shared-peers";
+
 /// HKDF info for the gate key of a shared vault's peer-to-peer hello.
 pub const INFO_SHARED_GATE: &[u8] = b"brby/v2/shared-gate";
 
@@ -165,6 +168,18 @@ pub fn shared_attest_key(
     vault_id: &[u8; 16],
 ) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
     hkdf_sha512(seed, vault_id, INFO_SHARED_ATTEST)
+}
+
+/// Key of a shared vault's stored peer addresses, from the shared seed.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_peers_key(
+    seed: &[u8; 64],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
+    hkdf_sha512(seed, vault_id, INFO_SHARED_PEERS)
 }
 
 /// The key that gates a hello for a shared vault: only holders of the shared
@@ -356,6 +371,10 @@ mod tests {
         let state = super::shared_state_key(&seed, &vault).unwrap();
         let gate = super::shared_gate_key(&seed, &vault).unwrap();
         let attest = super::shared_attest_key(&seed, &vault).unwrap();
+        let peers = super::shared_peers_key(&seed, &vault).unwrap();
+        for other in [&attest, &gate, &state, &members] {
+            assert_ne!(peers.expose(), other.expose());
+        }
         assert_ne!(attest.expose(), gate.expose());
         assert_ne!(attest.expose(), state.expose());
         assert_ne!(attest.expose(), members.expose());

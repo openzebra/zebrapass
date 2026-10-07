@@ -13,7 +13,7 @@ use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::Nav;
 use crate::vault::records::standard_label;
-use crate::vault::Vault;
+use session::Session;
 
 /// One revision row.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,11 +49,11 @@ impl HistoryState {
     /// # Errors
     ///
     /// Frame-index errors from the core.
-    pub fn load(vault: &Vault, id: u32, title: String) -> anyhow::Result<Self> {
-        let infos = session::history(&vault.session, id)?;
+    pub fn load(session: &Session, id: u32, title: String) -> anyhow::Result<Self> {
+        let infos = session::history(session, id)?;
         let docs: Vec<Option<Document>> = infos
             .iter()
-            .map(|info| session::open_revision(&vault.session, id, info.revision).ok())
+            .map(|info| session::open_revision(session, id, info.revision).ok())
             .collect();
         let mut rows: Vec<HistRow> = infos
             .iter()
@@ -148,6 +148,7 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         return Nav::Stay;
     };
     let row = history.rows.get(history.selected).cloned();
+    let id = history.id;
     match action {
         Action::Up => history.selected = history.selected.saturating_sub(1),
         Action::Down => {
@@ -157,20 +158,17 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
             if history.view.take().is_some() {
                 ctx.redraw();
             } else if let Some(row) = row {
-                history.view = state
-                    .vault
-                    .as_ref()
-                    .and_then(|vault| {
-                        session::open_revision(&vault.session, history.id, row.revision).ok()
-                    })
-                    .map(|doc| {
-                        Box::new(Detail::new(history.id, row.revision, row.timestamp_ms, doc))
-                    });
+                let doc = state
+                    .active_session()
+                    .and_then(|session| session::open_revision(session, id, row.revision).ok());
+                if let View::History(history) = &mut state.view {
+                    history.view = doc
+                        .map(|doc| Box::new(Detail::new(id, row.revision, row.timestamp_ms, doc)));
+                }
             }
         }
         Action::RestoreRevision => {
             if let Some(row) = row {
-                let id = history.id;
                 state.dialog = Some(Box::new(Dialog::Confirm(Confirm {
                     kind: ConfirmKind::RestoreRevision(id, row.revision),
                     title: format!("Restore revision {}?", row.revision),

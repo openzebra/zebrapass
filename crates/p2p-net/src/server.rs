@@ -6,6 +6,7 @@
 //! anything else is refused.
 
 use std::future::poll_fn;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -16,8 +17,10 @@ use p2p_core::suite::MAX_HANDSHAKE_MSG;
 use p2p_core::{Accept, CookieSecret, Load, Responder};
 use session::DeviceCert;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 use crate::io::{bridge, now_ms, read_msg, write_msg};
+use crate::limits::Limits;
 use crate::view::Provider;
 use local::Verdict;
 
@@ -27,6 +30,9 @@ const MAX_STREAMS: u32 = 8;
 /// Flow-control windows: large enough that a vault file does not crawl.
 const STREAM_WINDOW: u32 = 1 << 20;
 const CONNECTION_WINDOW: u32 = 4 << 20;
+
+/// Largest header block a request may carry.
+const MAX_HEADERS: u32 = 16 * 1024;
 
 /// Largest piece sent at once.
 const SEND_CHUNK: usize = 64 * 1024;
@@ -79,13 +85,13 @@ pub async fn authenticate(
     Err(refused())
 }
 
-async fn send_body(respond: &mut SendResponse<Bytes>, body: Vec<u8>) -> Result<()> {
+async fn send_body(respond: &mut SendResponse<Bytes>, body: Vec<u8>) -> Result<StatusCode> {
     let response = Response::builder().status(StatusCode::OK).body(())?;
     let mut data = Bytes::from(body);
     if data.is_empty() {
         let mut stream = respond.send_response(response, false)?;
         stream.send_data(Bytes::new(), true)?;
-        return Ok(());
+        return Ok(StatusCode::OK);
     }
     let mut stream = respond.send_response(response, false)?;
     while !data.is_empty() {
@@ -97,13 +103,13 @@ async fn send_body(respond: &mut SendResponse<Bytes>, body: Vec<u8>) -> Result<(
         let piece = data.split_to(take);
         stream.send_data(piece, data.is_empty())?;
     }
-    Ok(())
+    Ok(StatusCode::OK)
 }
 
-fn status_only(respond: &mut SendResponse<Bytes>, status: StatusCode) -> Result<()> {
+fn status_only(respond: &mut SendResponse<Bytes>, status: StatusCode) -> Result<StatusCode> {
     let response = Response::builder().status(status).body(())?;
     respond.send_response(response, true)?;
-    Ok(())
+    Ok(status)
 }
 
 /// Largest revision a peer may push: an attestation and a sealed frame.
@@ -141,7 +147,7 @@ async fn answer<P: Provider>(
     account: [u8; 64],
     request: http::Request<h2::RecvStream>,
     mut respond: SendResponse<Bytes>,
-) -> Result<()> {
+) -> Result<StatusCode> {
     let (parts, incoming) = request.into_parts();
     let path = parts.uri.path().to_owned();
     if parts.method == Method::POST && path == "/v1/revision" {
@@ -165,7 +171,13 @@ async fn answer<P: Provider>(
         return status_only(&mut respond, StatusCode::METHOD_NOT_ALLOWED);
     }
     let body = tokio::task::spawn_blocking(move || match path.as_str() {
-        "/v1/log" => Some(provider.log(&vault_id)),
+        "/v1/log" => {
+            let log = provider.log(&vault_id);
+            if log.is_some() {
+                provider.log_served(&vault_id, &account);
+            }
+            Some(log)
+        }
         "/v1/snapshot" => Some(provider.snapshot(&vault_id)),
         "/v1/peers" => Some(provider.peers(&vault_id)),
         "/v1/frontier" => Some(provider.frontier(&vault_id)),
@@ -187,7 +199,8 @@ async fn answer<P: Provider>(
 }
 
 /// Serve HTTP/2 requests for `vault_id` over an established channel until the
-/// peer closes it. `account` is the peer's authenticated account.
+/// peer closes it, with the default [`Limits`]. `account` is the peer's
+/// authenticated account.
 ///
 /// # Errors
 ///
@@ -199,18 +212,74 @@ pub async fn serve_requests<P: Provider>(
     vault_id: [u8; 16],
     account: [u8; 64],
 ) -> Result<()> {
+    serve_requests_with(
+        tcp,
+        channel,
+        provider,
+        vault_id,
+        account,
+        &Limits::default(),
+    )
+    .await
+}
+
+/// Whether a response says the peer asked for something it should not have:
+/// a refusal or a malformed request, not an ordinary "newer revision held".
+fn is_failure(status: StatusCode) -> bool {
+    !status.is_success() && status.as_u16() != StatusCode::CONFLICT.as_u16()
+}
+
+/// [`serve_requests`] under `limits`: the connection is closed when it sits
+/// idle, when too many of its requests fail, or when it makes too many.
+///
+/// # Errors
+///
+/// An HTTP/2 error on the connection.
+pub async fn serve_requests_with<P: Provider>(
+    tcp: TcpStream,
+    channel: p2p_core::Channel,
+    provider: Arc<P>,
+    vault_id: [u8; 16],
+    account: [u8; 64],
+    limits: &Limits,
+) -> Result<()> {
     let io = bridge(tcp, channel);
     let mut connection = h2::server::Builder::new()
         .max_concurrent_streams(MAX_STREAMS)
+        .max_header_list_size(MAX_HEADERS)
         .initial_window_size(STREAM_WINDOW)
         .initial_connection_window_size(CONNECTION_WINDOW)
         .handshake::<_, Bytes>(io)
         .await?;
-    while let Some(accepted) = connection.accept().await {
+    let failed = Arc::new(AtomicU32::new(0));
+    let active = Arc::new(AtomicU32::new(0));
+    let mut requests = 0u32;
+    loop {
+        let next = match timeout(limits.idle, connection.accept()).await {
+            Ok(next) => next,
+            Err(_) if active.load(Ordering::Relaxed) > 0 => continue,
+            Err(_) => break,
+        };
+        let Some(accepted) = next else { break };
         let (request, respond) = accepted?;
+        requests = requests.saturating_add(1);
+        if requests > limits.max_requests || failed.load(Ordering::Relaxed) >= limits.max_failed {
+            break;
+        }
         let provider = Arc::clone(&provider);
+        let (failed, active) = (Arc::clone(&failed), Arc::clone(&active));
+        let request_limit = limits.request;
+        active.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(async move {
-            let _ = answer(provider, vault_id, account, request, respond).await;
+            let done = timeout(
+                request_limit,
+                answer(provider, vault_id, account, request, respond),
+            )
+            .await;
+            if !matches!(done, Ok(Ok(status)) if !is_failure(status)) {
+                failed.fetch_add(1, Ordering::Relaxed);
+            }
+            active.fetch_sub(1, Ordering::Relaxed);
         });
     }
     Ok(())

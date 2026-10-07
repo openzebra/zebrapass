@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use local::{
     adopt_rekeyed, adopt_shared_file, apply_rotation, create_shared_vault, is_behind,
-    join_shared_vault, open_shared_vault, plan_rotation, seed_matches_log, Replace, SharedRef,
-    SharedVault, SyncIdentity,
+    join_shared_vault, open_shared_vault, plan_rotation, seed_matches_log, Attested, Replace,
+    SharedRef, SharedVault, SyncIdentity,
 };
 use memberlog::{Action, Role};
 use record::{Document, TAG_TITLE};
@@ -55,6 +55,7 @@ fn dup(reference: &SharedRef) -> SharedRef {
             .iter()
             .map(|old| Secret::new(*old.expose()))
             .collect(),
+        introduction: reference.introduction.clone(),
     }
 }
 
@@ -88,12 +89,14 @@ fn group() -> Group {
     alice.save_log(&alice_ref.seed).unwrap();
     alice.persist(&alice_ref.seed).unwrap();
     let refs = [dup(&alice_ref), dup(&alice_ref), dup(&alice_ref)];
+    let attested = alice.attestations(&alice_ref, &ids[0]).unwrap();
     for index in 1..3 {
         join_shared_vault(&dirs[index], &refs[index], &alice.log).unwrap();
         adopt_shared_file(
             &dirs[index],
             &refs[index],
             VaultFile::new(alice.file.as_bytes().to_vec()),
+            &attested,
             &ids[index],
         )
         .unwrap();
@@ -192,6 +195,7 @@ fn a_remaining_member_adopts_the_rotated_vault_only_when_every_check_holds() {
     )
     .unwrap();
     g.alice.persist(&next.seed).unwrap();
+    let attested = g.alice.attestations(&next, &g.ids[0]).unwrap();
     let file = || VaultFile::new(g.alice.file.as_bytes().to_vec());
     let entries = entries_of(&g.alice);
     let carol_old = &g.refs[2];
@@ -213,7 +217,10 @@ fn a_remaining_member_adopts_the_rotated_vault_only_when_every_check_holds() {
             &g.dirs[2],
             carol_old,
             new.duplicate(),
-            file,
+            Attested {
+                file,
+                attestations: &attested,
+            },
             &g.ids[2],
             entries,
             floor,
@@ -241,7 +248,10 @@ fn a_remaining_member_adopts_the_rotated_vault_only_when_every_check_holds() {
             &g.dirs[1],
             &g.refs[1],
             bob_next,
-            file(),
+            Attested {
+                file: file(),
+                attestations: &attested,
+            },
             &g.ids[1],
             &entries,
             None
@@ -254,7 +264,10 @@ fn a_remaining_member_adopts_the_rotated_vault_only_when_every_check_holds() {
         &g.dirs[2],
         carol_old,
         carol_next.duplicate(),
-        file(),
+        Attested {
+            file: file(),
+            attestations: &attested,
+        },
         &g.ids[2],
         &entries,
         Some(carol_generation),
@@ -320,6 +333,7 @@ fn the_reference_remembers_its_epoch_and_a_bounded_history_of_seeds() {
         hints: Vec::new(),
         epoch: 0,
         retired: Vec::new(),
+        introduction: None,
     };
     for round in 1..=10u8 {
         reference = reference.rotated(Secret::new([100 + round; 64]), u32::from(round));
@@ -355,6 +369,7 @@ fn a_crash_between_storing_the_reference_and_writing_the_files_is_recoverable() 
     let next = plan_rotation(&g.refs[0], g.alice.log.epoch()).unwrap();
     apply_rotation(&mut g.alice, &next, &g.ids[0], Replace::Remove(bob_client)).unwrap();
     let entries = entries_of(&g.alice);
+    let attested = g.alice.attestations(&next, &g.ids[0]).unwrap();
     let new_file = || VaultFile::new(g.alice.file.as_bytes().to_vec());
     let carol_old = &g.refs[2];
     let carol_next = carol_old.rotated(Secret::new(*next.seed.expose()), 1);
@@ -364,7 +379,10 @@ fn a_crash_between_storing_the_reference_and_writing_the_files_is_recoverable() 
         &g.dirs[2],
         carol_old,
         carol_next.duplicate(),
-        new_file(),
+        Attested {
+            file: new_file(),
+            attestations: &attested,
+        },
         &g.ids[2],
         &entries,
         None,
@@ -390,7 +408,10 @@ fn a_crash_between_storing_the_reference_and_writing_the_files_is_recoverable() 
         &g.dirs[2],
         &carol_next,
         carol_next.duplicate(),
-        new_file(),
+        Attested {
+            file: new_file(),
+            attestations: &attested,
+        },
         &g.ids[2],
         &entries,
         Some(behind.session.generation()),

@@ -31,6 +31,8 @@ pub struct SharedItem {
     pub cache: Box<[Summary]>,
     /// People in the vault, this account included.
     pub people: usize,
+    /// Members who left since the key was last replaced: they still hold it.
+    pub leaves: usize,
     /// What this account may do here.
     pub my_role: Option<Role>,
     /// Why the last attempt to fetch the vault file failed.
@@ -56,13 +58,11 @@ impl SharedItem {
         identity: &SyncIdentity,
         status: Status,
     ) -> Self {
-        let (people, my_role) = read_member_log(base, &reference).map_or((0, None), |log| {
-            let mine = identity.devices().first().map(|cert| cert.client_id);
-            (
-                log.members().len(),
-                mine.and_then(|client| log.role_of(&client)),
-            )
-        });
+        let Membership {
+            people,
+            my_role,
+            leaves,
+        } = membership(base, &reference, identity);
         let cache = match &status {
             Status::Ready(vault) => build_cache(&vault.session).unwrap_or_default(),
             Status::Pending | Status::Unavailable => Box::default(),
@@ -73,6 +73,7 @@ impl SharedItem {
             status,
             cache,
             people,
+            leaves,
             my_role,
             waiting: None,
             stale,
@@ -139,16 +140,37 @@ impl SharedItem {
             self.status = fresh.status;
             self.cache = fresh.cache;
             self.people = fresh.people;
+            self.leaves = fresh.leaves;
             self.my_role = fresh.my_role;
             self.stale = fresh.stale;
             self.waiting = None;
         }
     }
 
+    /// Read who is in the vault and this account's role from the stored
+    /// member log, which a sync may have extended. Returns whether either
+    /// changed.
+    pub fn refresh_members(&mut self, base: &Path, identity: &SyncIdentity) -> bool {
+        let now = membership(base, &self.reference, identity);
+        let changed =
+            now.people != self.people || now.my_role != self.my_role || now.leaves != self.leaves;
+        if now.people > 0 {
+            self.people = now.people;
+            self.my_role = now.my_role;
+            self.leaves = now.leaves;
+        }
+        changed && now.people > 0
+    }
+
     /// Take a vault that just arrived and show its records.
-    pub fn adopt(&mut self, vault: SharedVault) {
+    pub fn adopt(&mut self, vault: SharedVault, identity: &SyncIdentity) {
         self.cache = build_cache(&vault.session).unwrap_or_default();
         self.people = vault.log.members().len();
+        self.leaves = vault.log.leaves_since_rotation();
+        self.my_role = identity
+            .devices()
+            .first()
+            .and_then(|cert| vault.log.role_of(&cert.client_id));
         self.waiting = None;
         self.stale = vault.stale;
         self.status = Status::Ready(Box::new(vault));
@@ -168,6 +190,30 @@ impl SharedItem {
     pub const fn ready(&self) -> bool {
         matches!(self.status, Status::Ready(_))
     }
+}
+
+struct Membership {
+    people: usize,
+    my_role: Option<Role>,
+    leaves: usize,
+}
+
+fn membership(base: &Path, reference: &SharedRef, identity: &SyncIdentity) -> Membership {
+    read_member_log(base, reference).map_or(
+        Membership {
+            people: 0,
+            my_role: None,
+            leaves: 0,
+        },
+        |log| {
+            let mine = identity.devices().first().map(|cert| cert.client_id);
+            Membership {
+                people: log.members().len(),
+                my_role: mine.and_then(|client| log.role_of(&client)),
+                leaves: log.leaves_since_rotation(),
+            }
+        },
+    )
 }
 
 /// Every shared vault the personal vault points at.

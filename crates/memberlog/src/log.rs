@@ -319,6 +319,24 @@ impl MemberLog {
         u32::try_from(self.rotations.len()).unwrap_or(u32::MAX)
     }
 
+    /// How many members have left on their own since the seed was last
+    /// replaced. A leave carries no new seed, so until an owner replaces it
+    /// the people who left still hold the one in use.
+    #[must_use]
+    pub fn leaves_since_rotation(&self) -> usize {
+        self.entries.iter().fold(0, |leaves, entry| {
+            let own_exit = matches!(
+                &entry.action,
+                Action::Remove { client_id, .. } if *client_id == entry.signer.client_id
+            );
+            if entry.action.commit() == [0u8; 32] {
+                leaves + usize::from(own_exit)
+            } else {
+                0
+            }
+        })
+    }
+
     /// The commitment to the seed of `epoch` (1 is the first replacement).
     #[must_use]
     pub fn commit_for(&self, epoch: u32) -> Option<&[u8; 32]> {
@@ -326,6 +344,40 @@ impl MemberLog {
             .ok()
             .and_then(|at| at.checked_sub(1))
             .and_then(|at| self.rotations.get(at))
+    }
+
+    /// Every account that held a writing role at some point, with its root
+    /// key, removed members included: the accounts whose signed records the
+    /// vault may legitimately hold.
+    #[must_use]
+    pub fn past_writers(&self) -> Vec<(&[u8; 64], &[u8; SYNC_VK_LEN])> {
+        let keys: Vec<(&[u8; 64], &[u8; SYNC_VK_LEN])> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match &entry.action {
+                Action::Add {
+                    client_id, root_vk, ..
+                } => Some((client_id, &**root_vk)),
+                Action::Remove { .. } | Action::SetRole { .. } | Action::Rotate { .. } => None,
+            })
+            .collect();
+        let mut writers: Vec<&[u8; 64]> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match &entry.action {
+                Action::Add {
+                    client_id, role, ..
+                }
+                | Action::SetRole { client_id, role } => role.can_write().then_some(client_id),
+                Action::Remove { .. } | Action::Rotate { .. } => None,
+            })
+            .collect();
+        writers.sort_unstable();
+        writers.dedup();
+        writers
+            .into_iter()
+            .filter_map(|id| keys.iter().find(|(known, _)| *known == id).copied())
+            .collect()
     }
 
     /// The hash of the latest entry.

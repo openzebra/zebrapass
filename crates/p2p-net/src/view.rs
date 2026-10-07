@@ -48,6 +48,9 @@ pub trait Provider: Send + Sync + 'static {
     /// The vault's member log: each entry's wire bytes, concatenated.
     fn log(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>>;
 
+    /// A member's device was just handed the vault's member log.
+    fn log_served(&self, _vault_id: &[u8; 16], _account: &[u8; 64]) {}
+
     /// The vault file.
     fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>>;
 

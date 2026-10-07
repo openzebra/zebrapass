@@ -11,7 +11,10 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use p2p_core::{Account, CookieSecret, Load};
-use p2p_net::{authenticate, fetch, first_message, serve_requests, Provider, VaultView};
+use p2p_net::{
+    authenticate, fetch, first_message, serve_requests_with, Conn, Limits, Provider, Service,
+    VaultView,
+};
 use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -113,7 +116,7 @@ const fn client_dev() -> Dev {
     }
 }
 
-async fn run_server(listener: TcpListener, provider: Arc<Served>, load: Load) {
+async fn run_server(listener: TcpListener, provider: Arc<Served>, load: Load, limits: Limits) {
     let cookies = Arc::new(CookieSecret::generate().unwrap());
     loop {
         let Ok((mut tcp, _)) = listener.accept().await else {
@@ -131,15 +134,20 @@ async fn run_server(listener: TcpListener, provider: Arc<Served>, load: Load) {
                 return;
             };
             let vault = views[index].vault_id;
-            let _ = serve_requests(tcp, channel, provider, vault, peer.client_id).await;
+            let _ =
+                serve_requests_with(tcp, channel, provider, vault, peer.client_id, &limits).await;
         });
     }
 }
 
 async fn start(provider: Arc<Served>, load: Load) -> String {
+    start_limited(provider, load, Limits::default()).await
+}
+
+async fn start_limited(provider: Arc<Served>, load: Load, limits: Limits) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    tokio::spawn(run_server(listener, provider, load));
+    tokio::spawn(run_server(listener, provider, load, limits));
     addr
 }
 
@@ -337,5 +345,108 @@ fn a_failed_fetch_says_why() {
                 .unwrap_err(),
             FetchError::Failed
         );
+    });
+}
+
+fn member_view() -> VaultView {
+    client_dev().view(&[(1, [1; 32])], 5, Vec::new())
+}
+
+#[test]
+fn a_connection_that_keeps_asking_for_what_it_may_not_have_is_closed() {
+    let provider = served(vec![1; 100]);
+    block_on(async {
+        let limits = Limits {
+            max_failed: 3,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        for _ in 0..3 {
+            assert!(conn.get("/v1/other", 1 << 20, false).await.is_err());
+        }
+        assert!(
+            conn.get("/v1/log", 1 << 20, false).await.is_err(),
+            "the connection is gone, not merely refused"
+        );
+        let mut again = Conn::connect(&member_view(), &addr).await.unwrap();
+        assert!(again
+            .get("/v1/log", 1 << 20, false)
+            .await
+            .unwrap()
+            .is_some());
+    });
+}
+
+#[test]
+fn a_connection_may_only_make_so_many_requests() {
+    let provider = served(vec![1; 100]);
+    block_on(async {
+        let limits = Limits {
+            max_requests: 3,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        for _ in 0..3 {
+            assert!(conn.get("/v1/log", 1 << 20, false).await.unwrap().is_some());
+        }
+        assert!(conn.get("/v1/log", 1 << 20, false).await.is_err());
+    });
+}
+
+#[test]
+fn an_idle_connection_is_closed_and_a_busy_one_is_not() {
+    let provider = served(vec![1; 100]);
+    block_on(async {
+        let limits = Limits {
+            idle: std::time::Duration::from_millis(300),
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut idle = Conn::connect(&member_view(), &addr).await.unwrap();
+        let mut busy = Conn::connect(&member_view(), &addr).await.unwrap();
+        for _ in 0..5 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            assert!(busy.get("/v1/log", 1 << 20, false).await.is_ok());
+        }
+        assert!(idle.get("/v1/log", 1 << 20, false).await.is_err());
+    });
+}
+
+#[test]
+fn one_address_cannot_hold_every_handshake_slot() {
+    let provider = served(vec![1; 100]);
+    let limits = Limits {
+        per_address_handshakes: 2,
+        ..Limits::default()
+    };
+    let node = Service::start_with(Some("127.0.0.1:0"), Arc::clone(&provider), limits).unwrap();
+    let addr = node.local_addr().unwrap();
+    block_on(async {
+        let first = TcpStream::connect(addr).await.unwrap();
+        let second = TcpStream::connect(addr).await.unwrap();
+        let mut third = TcpStream::connect(addr).await.unwrap();
+        let mut byte = [0u8; 1];
+        let closed =
+            tokio::time::timeout(std::time::Duration::from_secs(2), third.read(&mut byte)).await;
+        assert!(
+            matches!(closed, Ok(Ok(0) | Err(_))),
+            "the third silent connection is dropped at once"
+        );
+        drop((first, second));
+        // The two slots free up as soon as their sockets close.
+        let view = member_view();
+        let mut fetched = None;
+        for _ in 0..50 {
+            fetched = fetch(&view, &addr.to_string(), &["/v1/log"], 1 << 20)
+                .await
+                .ok();
+            if fetched.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(fetched.is_some());
     });
 }

@@ -18,7 +18,8 @@ use tokio::runtime::{Builder, Runtime};
 use zeroize::Zeroizing;
 
 use crate::client::{fetch_paths, FetchError};
-use crate::server::{authenticate, first_message, serve_requests};
+use crate::limits::{HandshakeSlot, Limits, Tickets};
+use crate::server::{authenticate, first_message, serve_requests_with};
 use crate::view::{Provider, VaultView};
 
 /// Handshakes in flight before new connections are dropped unanswered.
@@ -30,6 +31,9 @@ const FREE_HANDSHAKES: usize = 6;
 /// Hellos remembered to refuse a replay, and for how long.
 const REPLAY_CAPACITY: usize = 4096;
 const REPLAY_WINDOW: Duration = Duration::from_secs(120);
+
+/// How long a whole handshake may take, however it is paced.
+const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Largest vault file or log a fetch accepts.
 const MAX_FETCH: usize = 512 << 20;
@@ -88,6 +92,7 @@ pub struct Shared {
     peers: AtomicUsize,
     pub(crate) fetching: AtomicUsize,
     handshakes: AtomicUsize,
+    tickets: Arc<Tickets>,
     listening: Mutex<Option<SocketAddr>>,
     replay: Mutex<Replay>,
 }
@@ -147,6 +152,19 @@ impl Service {
     ///
     /// The runtime or the listener could not start.
     pub fn start<P: Provider>(listen: Option<&str>, provider: Arc<P>) -> Result<Self> {
+        Self::start_with(listen, provider, Limits::default())
+    }
+
+    /// [`Service::start`] with other bounds on what peers may hold.
+    ///
+    /// # Errors
+    ///
+    /// The runtime or the listener could not start.
+    pub fn start_with<P: Provider>(
+        listen: Option<&str>,
+        provider: Arc<P>,
+        limits: Limits,
+    ) -> Result<Self> {
         let runtime = Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("zebrapass-p2p")
@@ -157,6 +175,7 @@ impl Service {
             peers: AtomicUsize::new(0),
             fetching: AtomicUsize::new(0),
             handshakes: AtomicUsize::new(0),
+            tickets: Tickets::new(limits),
             listening: Mutex::new(None),
             replay: Mutex::new(Replay::default()),
         });
@@ -289,15 +308,19 @@ async fn accept_loop<P: Provider>(
     events: Sender<Event>,
 ) {
     loop {
-        let Ok((tcp, _)) = listener.accept().await else {
+        let Ok((tcp, from)) = listener.accept().await else {
             return;
         };
         if shared.handshakes.load(Ordering::Relaxed) >= MAX_HANDSHAKES {
             continue;
         }
+        let Some(slot) = shared.tickets.begin(from.ip().to_canonical()) else {
+            continue;
+        };
         shared.handshakes.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(connection(
             tcp,
+            slot,
             Arc::clone(&provider),
             Arc::clone(&cookies),
             Arc::clone(&shared),
@@ -308,15 +331,25 @@ async fn accept_loop<P: Provider>(
 
 async fn connection<P: Provider>(
     mut tcp: TcpStream,
+    slot: HandshakeSlot,
     provider: Arc<P>,
     cookies: Arc<CookieSecret>,
     shared: Arc<Shared>,
     events: Sender<Event>,
 ) {
     let load = load_for(shared.handshakes.load(Ordering::Relaxed));
-    let admitted = admit(&mut tcp, &provider, &cookies, load, &shared).await;
+    let admitted = tokio::time::timeout(
+        HANDSHAKE_DEADLINE,
+        admit(&mut tcp, &provider, &cookies, load, &shared),
+    )
+    .await
+    .ok()
+    .flatten();
     shared.handshakes.fetch_sub(1, Ordering::Relaxed);
     let Some((views, index, peer, channel)) = admitted else {
+        return;
+    };
+    let Some(_place) = slot.promote() else {
         return;
     };
     let Some(view) = views.get(index) else {
@@ -329,7 +362,15 @@ async fn connection<P: Provider>(
         device_id: peer.device_id,
         client_id: peer.client_id,
     });
-    let _ = serve_requests(tcp, channel, provider, vault_id, peer.client_id).await;
+    let _ = serve_requests_with(
+        tcp,
+        channel,
+        provider,
+        vault_id,
+        peer.client_id,
+        shared.tickets.limits(),
+    )
+    .await;
     shared.peers.fetch_sub(1, Ordering::Relaxed);
     let _ = events.send(Event::PeerGone { vault_id });
 }

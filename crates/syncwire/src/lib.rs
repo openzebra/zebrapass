@@ -14,6 +14,7 @@ mod peer;
 pub mod reader;
 mod record;
 mod revocation;
+mod snapshot;
 
 pub use attestation::{
     decode_attestation, decode_bundle, decode_frontier, encode_attestation, encode_bundle,
@@ -26,4 +27,8 @@ pub use record::{decode_record, encode_record, RECORD_MAGIC, RECORD_WIRE_VERSION
 pub use revocation::{
     decode_revocation, encode_revocation, REVOCATION_MAGIC, REVOCATION_WIRE_LEN,
     REVOCATION_WIRE_VERSION,
+};
+pub use snapshot::{
+    decode_snapshot, encode_snapshot, MAX_SNAPSHOT_ATTESTATIONS, SNAPSHOT_MAGIC,
+    SNAPSHOT_WIRE_VERSION,
 };

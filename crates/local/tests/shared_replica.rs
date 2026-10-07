@@ -75,6 +75,7 @@ fn trio() -> [Member; 3] {
     }
     alice.save_log(&alice_ref.seed).unwrap();
     alice.persist(&alice_ref.seed).unwrap();
+    let attested = alice.attestations(&alice_ref, &ids[0]).unwrap();
     let mut members = Vec::new();
     for (index, id) in ids.into_iter().enumerate() {
         let base = dirs[index].clone();
@@ -87,6 +88,7 @@ fn trio() -> [Member; 3] {
                 &dirs[index],
                 &reference,
                 VaultFile::new(alice.file.as_bytes().to_vec()),
+                &attested,
                 &id,
             )
             .unwrap()

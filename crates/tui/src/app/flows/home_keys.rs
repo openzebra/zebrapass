@@ -64,10 +64,6 @@ fn width(ctx: &Ctx) -> Breakpoint {
 
 /// Handle an action on the home view (also used by the palette).
 pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
-    if state.in_shared() && matches!(action, Action::OpenHistory) {
-        ctx.toast(Tone::Info, "Shared vaults keep no history here yet.");
-        return Nav::Stay;
-    }
     let changes_records = matches!(
         action,
         Action::NewRecord | Action::EditRecord | Action::DeleteRecord | Action::ToggleFavorite
@@ -374,8 +370,8 @@ fn history(state: &mut Unlocked, ctx: &mut Ctx) {
         ctx.toast(Tone::Info, "Select a record first.");
         return;
     };
-    if let Some(vault) = state.vault.as_ref() {
-        match HistoryState::load(vault, id, title) {
+    if let Some(session) = state.active_session() {
+        match HistoryState::load(session, id, title) {
             Ok(history) => state.view = View::History(Box::new(history)),
             Err(_) => ctx.toast(Tone::Danger, "History did not open."),
         }

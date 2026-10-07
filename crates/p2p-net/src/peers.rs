@@ -8,12 +8,14 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use memberlog::MemberLog;
-use session::{DeviceCert, DeviceSignKey, PeerRecord};
+use session::{DeviceCert, DeviceSignKey, PeerRecord, PEER_MAX_AGE_MS};
 use syncwire::{decode_peers, encode_peers, MAX_PEERS};
 
+use crate::dialable::Policy;
 use crate::io::now_ms;
 
 /// Records kept in all; the oldest are dropped first.
@@ -24,11 +26,18 @@ type Key = ([u8; 16], [u8; 16]);
 /// What this device knows about where its fellow members are.
 #[derive(Default)]
 pub struct PeerBook {
+    loopback: AtomicBool,
     own: Mutex<Vec<String>>,
     known: Mutex<HashMap<Key, PeerRecord>>,
 }
 
 impl PeerBook {
+    /// Accept loopback addresses from other members: for tests and
+    /// single-machine setups only.
+    pub fn allow_loopback(&self) {
+        self.loopback.store(true, Ordering::Relaxed);
+    }
+
     /// The addresses this device can be reached at, from now on.
     pub fn set_own(&self, hints: Vec<String>) {
         if let Ok(mut own) = self.own.lock() {
@@ -69,12 +78,32 @@ impl PeerBook {
         encode_peers(&records)
     }
 
-    /// Keep the valid, newer records in `bytes` that belong to `log`'s vault
-    /// and are not this device's. Returns how many were kept.
-    pub fn accept(&self, log: &MemberLog, own_device: &[u8; 16], bytes: &[u8]) -> usize {
+    /// Keep the valid, newer records in `bytes` that belong to `log`'s vault,
+    /// are not this device's and name only addresses worth dialing (see
+    /// [`Policy`]), trusting this device's own addresses and `anchors`.
+    /// Returns how many were kept.
+    pub fn accept(
+        &self,
+        log: &MemberLog,
+        own_device: &[u8; 16],
+        anchors: &[String],
+        bytes: &[u8],
+    ) -> usize {
         let Ok(records) = decode_peers(bytes) else {
             return 0;
         };
+        let policy = Policy {
+            loopback: self.loopback.load(Ordering::Relaxed),
+        };
+        let anchored: Vec<SocketAddr> = self
+            .own
+            .lock()
+            .map(|own| own.clone())
+            .unwrap_or_default()
+            .iter()
+            .chain(anchors)
+            .filter_map(|hint| hint.parse().ok())
+            .collect();
         let now = now_ms();
         let Ok(mut known) = self.known.lock() else {
             return 0;
@@ -87,10 +116,10 @@ impl PeerBook {
                 .iter()
                 .find(|member| member.client_id == signer.client_id)
                 .is_some_and(|member| record.verify(&member.root_vk, now).is_ok());
-            let reachable = record
-                .hints
-                .iter()
-                .all(|hint| hint.parse::<SocketAddr>().is_ok());
+            let reachable = record.hints.iter().all(|hint| {
+                hint.parse::<SocketAddr>()
+                    .is_ok_and(|address| policy.allows(&address, &anchored))
+            });
             let key = (record.vault_id, signer.device_id);
             let newer = known
                 .get(&key)
@@ -116,6 +145,23 @@ impl PeerBook {
             };
         }
         kept
+    }
+
+    /// The records kept for `vault_id` that are still young enough to
+    /// believe, newest first.
+    #[must_use]
+    pub fn records_of(&self, vault_id: &[u8; 16]) -> Vec<PeerRecord> {
+        let floor = now_ms().saturating_sub(PEER_MAX_AGE_MS);
+        let Ok(known) = self.known.lock() else {
+            return Vec::new();
+        };
+        let mut records: Vec<PeerRecord> = known
+            .values()
+            .filter(|record| &record.vault_id == vault_id && record.issued_ms >= floor)
+            .cloned()
+            .collect();
+        records.sort_by_key(|record| std::cmp::Reverse(record.issued_ms));
+        records
     }
 
     /// Addresses of the other members' devices, newest record first.

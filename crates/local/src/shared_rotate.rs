@@ -12,12 +12,13 @@ use std::path::Path;
 
 use memberlog::{rotation_commit, Action, Entry, MemberLog};
 use secret::Secret;
-use session::{rotate_vault_key, unlock, RotateCreds, UnlockCreds, VaultFile};
+use session::{rotate_vault_key, unlock, Attestation, RotateCreds, UnlockCreds, VaultFile};
 
 use crate::meta::LocalMeta;
 use crate::shared::{file_keys, load_log_any, load_state_any, SharedVault};
 use crate::shared_files::save_member_log;
 use crate::shared_ref::SharedRef;
+use crate::shared_sync::attested_store;
 use crate::sync_identity::SyncIdentity;
 use crate::usage::Usage;
 use crate::{mark_seen, now_ms, shared_paths_for, write_atomic};
@@ -102,6 +103,15 @@ pub fn apply_rotation(
     vault.persist(&next.seed)
 }
 
+/// A vault file with the attestations that came with it.
+#[derive(Debug)]
+pub struct Attested<'a> {
+    /// The vault file.
+    pub file: VaultFile,
+    /// The attestations of the records in it.
+    pub attestations: &'a [Attestation],
+}
+
 /// Everything a device checked before it takes a rotated vault, ready to
 /// write.
 ///
@@ -180,7 +190,8 @@ impl RekeyPlan {
 /// The log is merged with every new entry verified, and the seed is accepted
 /// only if it is the epoch the log reached and hashes to the owner-signed
 /// commitment. The file must open with it, be this vault, and, when
-/// `min_generation` is given, be newer than what this device had.
+/// `min_generation` is given, be newer than what this device had. Every record
+/// in it must be attested by a writer of the merged log.
 ///
 /// # Errors
 ///
@@ -189,11 +200,12 @@ pub fn prepare_rekey(
     base: &Path,
     old: &SharedRef,
     new: SharedRef,
-    file: VaultFile,
+    incoming: Attested<'_>,
     identity: &SyncIdentity,
     entries: &[Entry],
     min_generation: Option<u64>,
 ) -> anyhow::Result<RekeyPlan> {
+    let Attested { file, attestations } = incoming;
     let own = identity.devices().first().ok_or_else(failed)?;
     let paths = shared_paths_for(base, &old.vault_id);
     let mut log = load_log_any(&paths, old)?;
@@ -203,7 +215,12 @@ pub fn prepare_rekey(
         && new.anchor == old.anchor
         && new.epoch == log.epoch()
         && committed == Some(rotation_commit(&old.vault_id, new.epoch, new.seed.expose()));
-    if !honest || log.role_of(&own.client_id).is_none() {
+    let introduced = !crate::shared::is_pending(base, old)
+        || old
+            .introduction
+            .as_ref()
+            .is_none_or(|intro| intro.confirms(&log));
+    if !honest || !introduced || log.role_of(&own.client_id).is_none() {
         return Err(failed());
     }
     let mut session =
@@ -215,7 +232,12 @@ pub fn prepare_rekey(
     }
     session.set_origin_device(own.device_id)?;
     let state = load_state_any(&paths, old)?;
-    let attest = crate::shared::load_attest_any(&paths, old)?;
+    let attest = attested_store(
+        &session,
+        &log,
+        attestations,
+        crate::shared::load_attest_any(&paths, old)?,
+    )?;
     Ok(RekeyPlan {
         base: base.to_path_buf(),
         reference: new,
@@ -238,12 +260,12 @@ pub fn adopt_rekeyed(
     base: &Path,
     old: &SharedRef,
     new: SharedRef,
-    file: VaultFile,
+    incoming: Attested<'_>,
     identity: &SyncIdentity,
     entries: &[Entry],
     min_generation: Option<u64>,
 ) -> anyhow::Result<SharedVault> {
-    prepare_rekey(base, old, new, file, identity, entries, min_generation)?.commit()
+    prepare_rekey(base, old, new, incoming, identity, entries, min_generation)?.commit()
 }
 
 /// Whether this device's seed is behind the member log: an owner rotated and

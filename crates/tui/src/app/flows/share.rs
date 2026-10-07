@@ -11,6 +11,7 @@ use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::editing::edit_text;
 use crate::app::flows::factors::palette_action;
+pub use crate::app::flows::share_leave::LeaveMode;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::Nav;
@@ -45,6 +46,19 @@ pub enum Step {
         print: Fingerprint,
         role: Role,
     },
+    /// Choosing whose role to change.
+    PickRole(usize),
+    /// Someone picked: choose their new role.
+    RoleConfirm {
+        target: [u8; 64],
+        print: Fingerprint,
+        from: Role,
+        to: Role,
+    },
+    /// Leaving or forgetting the selected vault.
+    LeaveConfirm(LeaveMode),
+    /// Replacing the selected vault's key.
+    RekeyConfirm,
     /// Waiting for a pasted invitation.
     PasteInvite,
     /// An opened invitation: check who it is from and which vault.
@@ -82,7 +96,7 @@ enum Next {
     Leave,
 }
 
-fn cycle(role: Role, forward: bool) -> Role {
+pub(super) fn cycle(role: Role, forward: bool) -> Role {
     const ORDER: [Role; 3] = [Role::Reader, Role::Writer, Role::Owner];
     let at = ORDER.iter().position(|known| *known == role).unwrap_or(0);
     let step = if forward { 1 } else { ORDER.len() - 1 };
@@ -233,6 +247,15 @@ impl Unlocked {
                     _ => Next::Stay(Step::PickPerson(pick)),
                 }
             }
+            Step::PickRole(pick) => Next::Stay(self.pick_role_step(pick, action)),
+            Step::RoleConfirm {
+                target,
+                print,
+                from,
+                to,
+            } => Next::Stay(self.role_confirm_step(target, print, (from, to), action, ctx)),
+            Step::LeaveConfirm(mode) => Next::Stay(self.leave_step(mode, action, ctx)),
+            Step::RekeyConfirm => Next::Stay(self.rekey_step(action, ctx)),
             Step::RemoveConfirm {
                 target,
                 print,
@@ -268,6 +291,9 @@ impl Unlocked {
             Some(Action::ShareAdd) => return Next::Stay(self.begin_add(ctx)),
             Some(Action::ShareJoin) => return Next::Stay(Step::PasteInvite),
             Some(Action::ShareRemove) => return Next::Stay(self.begin_remove(ctx)),
+            Some(Action::ShareRole) => return Next::Stay(self.begin_role(ctx)),
+            Some(Action::ShareLeave) => return Next::Stay(self.begin_leave(ctx)),
+            Some(Action::ShareRekey) => return Next::Stay(self.begin_rekey(ctx)),
             Some(Action::ShareRetry) => self.retry_selected(ctx),
             Some(Action::ShareListen) => self.cycle_listen(ctx),
             _ => {}

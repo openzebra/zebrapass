@@ -18,7 +18,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use local::{create_shared_vault, join_shared_vault, open_shared_vault, SharedRef, SyncIdentity};
+use local::{
+    create_shared_vault, join_shared_vault, open_shared_vault, Introduction, SharedRef,
+    SyncIdentity,
+};
 use memberlog::{Action, Role};
 use p2p_net::{Service, SharedProvider};
 use record::{Document, TAG_TITLE};
@@ -88,6 +91,7 @@ fn the_shared_vault_appears_and_fills_in_when_the_sync_completes() {
         hints: Vec::new(),
         epoch: 0,
         retired: Vec::new(),
+        introduction: None,
     }));
     let node = Service::start(Some("127.0.0.1:0"), provider).unwrap();
     let hint = node.local_addr().unwrap().to_string();
@@ -156,6 +160,11 @@ fn the_shared_vault_appears_and_fills_in_when_the_sync_completes() {
         hints: opened.hints,
         epoch: 0,
         retired: Vec::new(),
+        introduction: Some(Introduction {
+            head: opened.head,
+            inviter_id: opened.inviter_id,
+            inviter_vk: opened.inviter_vk,
+        }),
     };
     join_shared_vault(&bob_dir, &reference, &opened.log).unwrap();
     write_record(

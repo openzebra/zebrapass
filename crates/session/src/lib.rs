@@ -25,8 +25,8 @@ mod wraps_rot;
 
 pub use aead::BodyAlg;
 pub use attest::{
-    accept_revision, attest_latest, frontier, latest_frame, plain_digest, reconcile, Attestation,
-    FrontierEntry, Reconcile, TrustedAccount, MAX_ATTESTED_FRAME,
+    accept_revision, attest_latest, frontier, latest_frame, plain_digest, reconcile,
+    verify_snapshot, Attestation, FrontierEntry, Reconcile, TrustedAccount, MAX_ATTESTED_FRAME,
 };
 pub use container::VaultFile;
 pub use create::{create, fresh_device_id, Session};

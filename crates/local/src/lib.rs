@@ -11,6 +11,7 @@ mod device_key;
 mod last_seen;
 mod limits;
 mod meta;
+mod peer_store;
 mod prefs;
 mod revocations;
 mod share_keys;
@@ -40,18 +41,19 @@ pub use limits::{
     REVEAL_HIDE_S, REVOKED_MAX, SHARED_NAME_MAX,
 };
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
+pub use peer_store::{load_peers, save_peers};
 pub use prefs::{parse_origin, Listen, Prefs, SyncMode};
 pub use revocations::Revocations;
 pub use share_keys::{ShareKeys, SharePublics};
 pub use shared::{
     adopt_shared_file, create_shared_vault, is_pending, join_shared_vault, open_shared_vault,
-    read_member_log, read_shared_state, SharedVault,
+    purge_shared_vault, read_member_log, read_shared_state, SharedVault,
 };
 pub use shared_files::{load_member_log, save_member_log, SharedState};
-pub use shared_ref::SharedRef;
+pub use shared_ref::{Introduction, SharedRef};
 pub use shared_rotate::{
     adopt_rekeyed, apply_rotation, is_behind, plan_rotation, prepare_rekey, seed_matches_log,
-    RekeyPlan, Replace,
+    Attested, RekeyPlan, Replace,
 };
 pub use shared_sync::{verdict_of, Edit, Verdict};
 pub use sync_identity::SyncIdentity;
@@ -87,6 +89,12 @@ impl Paths {
     #[must_use]
     pub fn attest_store(&self) -> PathBuf {
         self.vault_dir().join("attest.store")
+    }
+
+    /// A shared vault's known peer addresses: `vaults/<vault_id_hex>/peers.store`.
+    #[must_use]
+    pub fn peers_store(&self) -> PathBuf {
+        self.vault_dir().join("peers.store")
     }
 
     /// A shared vault's local state: `vaults/<vault_id_hex>/shared.state`.

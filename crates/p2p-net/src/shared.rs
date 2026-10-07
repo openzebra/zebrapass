@@ -5,14 +5,15 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use local::{
-    adopt_shared_file, open_shared_vault, prepare_rekey, read_member_log, read_shared_state,
-    save_member_log, shared_paths_for, verdict_of, RekeyPlan, SharedRef, SharedVault, SyncIdentity,
-    Verdict,
+    adopt_shared_file, is_pending, load_peers, open_shared_vault, prepare_rekey, read_member_log,
+    read_shared_state, save_member_log, save_peers, shared_paths_for, verdict_of, Attested,
+    RekeyPlan, SharedRef, SharedVault, SyncIdentity, Verdict,
 };
 use memberlog::{Entry, ENTRY_WIRE_LEN, MAX_ENTRIES};
 use p2p_core::Account;
 use secret::Secret;
 use session::VaultFile;
+use syncwire::{decode_snapshot, encode_peers, encode_snapshot};
 use zeroize::Zeroizing;
 
 use crate::view::{Provider, VaultView};
@@ -29,6 +30,7 @@ pub struct SharedProvider {
     served: Mutex<Vec<Arc<SharedRef>>>,
     node: Mutex<()>,
     book: crate::peers::PeerBook,
+    delivered: Mutex<Vec<[u8; 16]>>,
 }
 
 impl SharedProvider {
@@ -41,7 +43,30 @@ impl SharedProvider {
             served: Mutex::new(Vec::new()),
             node: Mutex::new(()),
             book: crate::peers::PeerBook::default(),
+            delivered: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Vaults this device has left whose member log another member has since
+    /// fetched from it, once each: the leave has been delivered.
+    pub fn take_delivered(&self) -> Vec<[u8; 16]> {
+        self.delivered
+            .lock()
+            .map(|mut list| std::mem::take(&mut *list))
+            .unwrap_or_default()
+    }
+
+    /// Stop serving a vault.
+    pub fn unserve(&self, vault_id: &[u8; 16]) {
+        if let Ok(mut served) = self.served.lock() {
+            served.retain(|known| &known.vault_id != vault_id);
+        }
+    }
+
+    /// Accept loopback addresses other members publish: for tests and
+    /// single-machine setups.
+    pub fn allow_loopback_peers(&self) {
+        self.book.allow_loopback();
     }
 
     /// The addresses this device can be reached at, offered to members.
@@ -77,10 +102,44 @@ impl SharedProvider {
 
     /// Serve `reference`, replacing an earlier entry for the same vault.
     pub fn serve(&self, reference: Arc<SharedRef>) {
+        self.restore_peers(&reference);
         if let Ok(mut served) = self.served.lock() {
             served.retain(|known| known.vault_id != reference.vault_id);
             served.push(reference);
         }
+    }
+
+    /// Take back the peer addresses stored for `reference`'s vault. Each
+    /// record is checked again as if a member had just sent it, so expired
+    /// ones, removed members' and forbidden addresses drop out; a missing or
+    /// unreadable file only means the search starts from the invitation.
+    fn restore_peers(&self, reference: &SharedRef) {
+        let (Ok(_held), Ok(log), Some(own)) = (
+            self.node.lock(),
+            read_member_log(&self.base, reference),
+            self.identity.devices().first(),
+        ) else {
+            return;
+        };
+        let paths = shared_paths_for(&self.base, &reference.vault_id);
+        let stored = kdf::shared_peers_key(reference.seed.expose(), &reference.vault_id)
+            .and_then(|key| load_peers(&paths.peers_store(), &key))
+            .and_then(|records| encode_peers(&records));
+        if let Ok(bytes) = stored {
+            self.book
+                .accept(&log, &own.device_id, &reference.hints, &bytes);
+        }
+    }
+
+    fn store_peers(&self, reference: &SharedRef) {
+        let Ok(_held) = self.node.lock() else {
+            return;
+        };
+        let paths = shared_paths_for(&self.base, &reference.vault_id);
+        let records = self.book.records_of(&reference.vault_id);
+        // A failed write loses only a hint cache.
+        let _ = kdf::shared_peers_key(reference.seed.expose(), &reference.vault_id)
+            .and_then(|key| save_peers(&paths.peers_store(), &key, &records));
     }
 
     /// The handshake view of one shared vault: its members' accounts, its
@@ -105,6 +164,14 @@ impl SharedProvider {
             .seeds()
             .map(|seed| kdf::shared_gate_key(seed.expose(), &reference.vault_id))
             .collect::<Result<Vec<_>>>()?;
+        let introducer = reference
+            .introduction
+            .as_ref()
+            .filter(|_| is_pending(&self.base, reference))
+            .map(|intro| Account {
+                client_id: intro.inviter_id,
+                root_vk: intro.inviter_vk.clone(),
+            });
         Ok(VaultView {
             vault_id: reference.vault_id,
             cert,
@@ -116,6 +183,7 @@ impl SharedProvider {
                     client_id: member.client_id,
                     root_vk: member.root_vk.clone(),
                 })
+                .chain(introducer)
                 .collect(),
             revoked: state.revocations.all().to_vec(),
             gate_keys,
@@ -156,9 +224,31 @@ impl Provider for SharedProvider {
             .map(|parts| parts.concat())
     }
 
+    fn log_served(&self, vault_id: &[u8; 16], account: &[u8; 64]) {
+        let Some(reference) = self.reference(vault_id) else {
+            return;
+        };
+        let (Ok(log), Some(own)) = (
+            read_member_log(&self.base, &reference),
+            self.identity.devices().first(),
+        ) else {
+            return;
+        };
+        if log.role_of(&own.client_id).is_none() && account != &own.client_id {
+            if let Ok(mut list) = self.delivered.lock() {
+                if !list.contains(vault_id) {
+                    list.push(*vault_id);
+                }
+            }
+        }
+    }
+
     fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
-        self.reference(vault_id)?;
-        std::fs::read(shared_paths_for(&self.base, vault_id).vault_file).ok()
+        self.with_vault(vault_id, |vault, reference, identity| {
+            let attestations = vault.attestations(reference, identity)?;
+            encode_snapshot(vault.file.as_bytes(), &attestations)
+        })
+        .ok()
     }
 
     fn frontier(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
@@ -203,7 +293,13 @@ impl Provider for SharedProvider {
         ) else {
             return 0;
         };
-        self.book.accept(&log, &own.device_id, list)
+        let kept = self
+            .book
+            .accept(&log, &own.device_id, &reference.hints, list);
+        if kept > 0 {
+            self.store_peers(&reference);
+        }
+        kept
     }
 
     fn peer_hints(&self, vault_id: &[u8; 16]) -> Vec<String> {
@@ -356,11 +452,15 @@ pub fn finish_join(
         }
     });
     if let Some(next) = target {
+        let (file, attestations) = decode_snapshot(snapshot)?;
         let plan = prepare_rekey(
             base,
             reference,
             next,
-            VaultFile::new(snapshot),
+            Attested {
+                file: VaultFile::new(file),
+                attestations: &attestations,
+            },
             identity,
             &entries,
             floor,
@@ -370,15 +470,26 @@ pub fn finish_join(
     if known.is_some() {
         return Ok(Joined::Unchanged);
     }
+    let (file, attestations) = decode_snapshot(snapshot)?;
     let paths = shared_paths_for(base, &reference.vault_id);
     let key = kdf::shared_members_key(reference.seed.expose(), &reference.vault_id)?;
     let mut log = read_member_log(base, reference)?;
     log.merge(&entries)?;
     let own = identity.devices().first().ok_or_else(unavailable)?;
-    if log.role_of(&own.client_id).is_none() {
+    let introduced = reference
+        .introduction
+        .as_ref()
+        .is_none_or(|intro| intro.confirms(&log));
+    if log.role_of(&own.client_id).is_none() || !introduced {
         return Err(unavailable());
     }
     save_member_log(&paths.members_log(), &key, &log)?;
-    let vault = adopt_shared_file(base, reference, VaultFile::new(snapshot), identity)?;
+    let vault = adopt_shared_file(
+        base,
+        reference,
+        VaultFile::new(file),
+        &attestations,
+        identity,
+    )?;
     Ok(Joined::Opened(Box::new(vault)))
 }

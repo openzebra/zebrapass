@@ -194,6 +194,12 @@ actions! {
     ShareListen,
     /// Remove a person from the selected shared vault.
     ShareRemove,
+    /// Change what a person may do in the selected shared vault.
+    ShareRole,
+    /// Leave the selected shared vault, or forget it.
+    ShareLeave,
+    /// Replace the key of the selected shared vault.
+    ShareRekey,
 }
 
 /// Where a palette entry is listed.

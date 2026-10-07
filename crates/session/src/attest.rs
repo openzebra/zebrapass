@@ -309,6 +309,101 @@ fn check_shape(
     }
 }
 
+/// The checks that need no decryption: the shape of the frame against the
+/// attestation, the vault, the writer's account and role, the certificate and
+/// the signature.
+fn check_signed(
+    session: &Session,
+    frame_bytes: &[u8],
+    attestation: &Attestation,
+    accounts: &[TrustedAccount<'_>],
+    now_ms: u64,
+) -> anyhow::Result<frame::Header> {
+    if frame_bytes.len() > MAX_ATTESTED_FRAME {
+        return Err(SessionError::HeaderMismatch.into());
+    }
+    let header = frame::parse(frame_bytes)?;
+    check_shape(session, &header, attestation)?;
+    let account = accounts
+        .iter()
+        .find(|account| account.client_id == attestation.signer.client_id)
+        .ok_or(SessionError::DeviceNotTrusted)?;
+    if !account.can_write {
+        return Err(SessionError::NotAWriter.into());
+    }
+    attestation.verify(account.root_vk, now_ms)?;
+    Ok(header)
+}
+
+/// Open the frame with the vault key: its plaintext digest must equal the
+/// signed one.
+fn check_plaintext(
+    session: &Session,
+    header: &frame::Header,
+    frame_bytes: &[u8],
+    attestation: &Attestation,
+) -> anyhow::Result<()> {
+    let plaintext = frame::open(
+        &frame_key(
+            session.vk.expose(),
+            &session.vault_id,
+            attestation.record_id,
+        )?,
+        frame_bytes,
+    )?;
+    let digest = plain_digest(
+        &session.vault_id,
+        attestation.record_id,
+        attestation.revision,
+        header.kind,
+        plaintext.expose(),
+    );
+    if secret::ct_eq_32(&digest, &attestation.plain_digest) {
+        Ok(())
+    } else {
+        Err(SessionError::AttestationMismatch.into())
+    }
+}
+
+/// Check that every record in `session` was written by one of `accounts`.
+///
+/// Each winning revision needs an attestation for exactly that revision and
+/// device, with a valid certificate and signature, over the plaintext the
+/// frame holds. Returns the attestations that matched, one per record.
+///
+/// This is what a device runs on a whole vault file it did not build, so a
+/// member holding the vault key cannot slip in a record no writer signed.
+///
+/// # Errors
+///
+/// [`SessionError::AttestationMismatch`] for a record without a matching
+/// attestation, and the errors of [`accept_revision`] for one that does not
+/// verify.
+pub fn verify_snapshot(
+    session: &Session,
+    attestations: &[Attestation],
+    accounts: &[TrustedAccount<'_>],
+    now_ms: u64,
+) -> anyhow::Result<Vec<Attestation>> {
+    frontier(session)?
+        .into_iter()
+        .map(|entry| {
+            let attestation = attestations
+                .iter()
+                .find(|held| {
+                    held.record_id == entry.record_id
+                        && held.revision == entry.revision
+                        && held.origin_device == entry.origin_device
+                })
+                .ok_or(SessionError::AttestationMismatch)?;
+            let frame_bytes = latest_frame(session, entry.record_id)?;
+            let header = check_signed(session, &frame_bytes, attestation, accounts, now_ms)?;
+            check_plaintext(session, &header, &frame_bytes, attestation)?;
+            Ok(attestation.clone())
+        })
+        .collect()
+}
+
 /// Keep a frame a peer sent, if its attestation holds.
 ///
 /// Cheapest checks first, and nothing is decrypted before the signature
@@ -335,20 +430,7 @@ pub fn accept_revision(
     now_ms: u64,
     last_seen: impl Fn(u32) -> Option<u64>,
 ) -> anyhow::Result<Accepted> {
-    if frame_bytes.len() > MAX_ATTESTED_FRAME {
-        return Err(SessionError::HeaderMismatch.into());
-    }
-    let header = frame::parse(frame_bytes)?;
-    check_shape(session, &header, attestation)?;
-    let account = accounts
-        .iter()
-        .find(|account| account.client_id == attestation.signer.client_id)
-        .ok_or(SessionError::DeviceNotTrusted)?;
-    if !account.can_write {
-        return Err(SessionError::NotAWriter.into());
-    }
-    attestation.verify(account.root_vk, now_ms)?;
-
+    let header = check_signed(session, frame_bytes, attestation, accounts, now_ms)?;
     let record_id = attestation.record_id;
     let refs = frame::parse_index(session.records.expose())?;
     let incoming = (attestation.revision, header.origin_device);
@@ -358,20 +440,7 @@ pub fn accept_revision(
     if behind_seen || local.is_some_and(|winner| incoming <= winner) {
         return Err(SessionError::StaleRevision.into());
     }
-    let plaintext = frame::open(
-        &frame_key(session.vk.expose(), &session.vault_id, record_id)?,
-        frame_bytes,
-    )?;
-    let digest = plain_digest(
-        &session.vault_id,
-        record_id,
-        attestation.revision,
-        header.kind,
-        plaintext.expose(),
-    );
-    if !secret::ct_eq_32(&digest, &attestation.plain_digest) {
-        return Err(SessionError::AttestationMismatch.into());
-    }
+    check_plaintext(session, &header, frame_bytes, attestation)?;
     write_records(session, file, frame_bytes)?;
     Ok(Accepted {
         record_id,

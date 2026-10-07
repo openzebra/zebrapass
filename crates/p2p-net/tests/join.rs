@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use local::{
-    create_shared_vault, is_pending, join_shared_vault, open_shared_vault, SharedRef, SyncIdentity,
+    create_shared_vault, is_pending, join_shared_vault, open_shared_vault, Introduction, SharedRef,
+    SyncIdentity,
 };
 use memberlog::{Action, Role};
 use p2p_net::{finish_join, Event, Joined, Known, Service, SharedProvider};
@@ -56,6 +57,15 @@ fn copy_of(reference: &SharedRef) -> SharedRef {
             .iter()
             .map(|old| Secret::new(*old.expose()))
             .collect(),
+        introduction: reference.introduction.clone(),
+    }
+}
+
+fn introduction_of(opened: &sharing::Opened) -> Introduction {
+    Introduction {
+        head: opened.head,
+        inviter_id: opened.inviter_id,
+        inviter_vk: opened.inviter_vk.clone(),
     }
 }
 
@@ -187,6 +197,7 @@ fn bob_pastes_the_invitation_his_device_syncs_and_the_vault_opens() {
         .unwrap();
     assert_eq!(opened.name, "Family");
     assert_eq!(opened.hints, vec![w.alice_addr.clone()]);
+    let introduction = introduction_of(&opened);
     let bob_ref = SharedRef {
         vault_id: invitation.vault_id,
         anchor: *opened.log.anchor(),
@@ -195,6 +206,7 @@ fn bob_pastes_the_invitation_his_device_syncs_and_the_vault_opens() {
         hints: opened.hints.clone(),
         epoch: 0,
         retired: Vec::new(),
+        introduction: Some(introduction),
     };
     join_shared_vault(&w.bob_dir, &bob_ref, &opened.log).unwrap();
     assert!(is_pending(&w.bob_dir, &bob_ref), "nothing but the log yet");
@@ -357,6 +369,7 @@ fn a_tampered_vault_file_is_refused_and_the_device_stays_pending() {
         hints: opened.hints.clone(),
         epoch: 0,
         retired: Vec::new(),
+        introduction: None,
     };
     join_shared_vault(&w.bob_dir, &bob_ref, &opened.log).unwrap();
     let provider = Arc::new(SharedProvider::new(w.bob_dir.clone(), Arc::clone(&w.bob)));
@@ -436,6 +449,7 @@ fn trio() -> (
         vault.log.append(entry).unwrap();
     }
     vault.save_log(&w.alice_ref.seed).unwrap();
+    let attested = vault.attestations(&w.alice_ref, &w.alice).unwrap();
     let carol_dir = temp_dir("carol");
     let bob_ref = SharedRef {
         hints: vec![w.alice_addr.clone()],
@@ -454,6 +468,7 @@ fn trio() -> (
             dir,
             reference,
             session::VaultFile::new(vault.file.as_bytes().to_vec()),
+            &attested,
             who,
         )
         .unwrap();
@@ -598,4 +613,156 @@ fn a_removed_member_is_refused_and_a_remaining_one_receives_the_new_seed() {
         .unwrap(),
         Joined::Unchanged
     ));
+}
+
+/// Bob joins with an introduction `tamper` has changed, fetches from Alice,
+/// and tries to finish the join.
+fn join_with(
+    tamper: impl FnOnce(&mut Introduction),
+    doctor: impl FnOnce(Vec<u8>) -> Vec<u8>,
+) -> (World, SharedRef, anyhow::Result<()>) {
+    let w = world();
+    let card = card_of(&w.bob, now());
+    let pasted = invite(&w, &card);
+    let invitation = Invitation::from_text(&pasted).unwrap();
+    let opened = invitation
+        .open(
+            &w.bob.share_keys().ec_secret().unwrap(),
+            w.bob.share_keys().kem_seed(),
+            &card_of(&w.bob, now()),
+            now(),
+        )
+        .unwrap();
+    let mut introduction = introduction_of(&opened);
+    tamper(&mut introduction);
+    let bob_ref = SharedRef {
+        vault_id: invitation.vault_id,
+        anchor: *opened.log.anchor(),
+        seed: opened.seed,
+        name: opened.name,
+        hints: opened.hints.clone(),
+        epoch: 0,
+        retired: Vec::new(),
+        introduction: Some(introduction),
+    };
+    join_shared_vault(&w.bob_dir, &bob_ref, &opened.log).unwrap();
+    let provider = Arc::new(SharedProvider::new(w.bob_dir.clone(), Arc::clone(&w.bob)));
+    let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
+    let view = provider.view_for(&bob_ref).unwrap();
+    service.fetch_with(view, opened.hints, 5, Duration::from_millis(200));
+    let Event::Fetched { log, snapshot, .. } = next_event(&service) else {
+        panic!("the fetch did not complete");
+    };
+    let snapshot = doctor(snapshot);
+    let joined = finish_join(&w.bob_dir, &bob_ref, &w.bob, &log, snapshot, None, None).map(|_| ());
+    (w, bob_ref, joined)
+}
+
+#[test]
+fn a_log_that_does_not_reach_the_signed_head_is_refused() {
+    let (w, bob_ref, joined) = join_with(|intro| intro.head[0] ^= 1, |snapshot| snapshot);
+    assert!(joined.is_err());
+    assert!(is_pending(&w.bob_dir, &bob_ref));
+}
+
+#[test]
+fn an_inviter_the_log_does_not_list_is_refused() {
+    let (w, bob_ref, joined) = join_with(|intro| intro.inviter_id = [7; 64], |snapshot| snapshot);
+    assert!(joined.is_err());
+    assert!(is_pending(&w.bob_dir, &bob_ref));
+}
+
+#[test]
+fn an_inviter_with_a_different_root_key_is_refused() {
+    let (w, bob_ref, joined) = join_with(|intro| intro.inviter_vk[0] ^= 1, |snapshot| snapshot);
+    assert!(joined.is_err());
+    assert!(is_pending(&w.bob_dir, &bob_ref));
+}
+
+#[test]
+fn a_snapshot_without_its_attestations_is_refused() {
+    let (w, bob_ref, joined) = join_with(
+        |_| {},
+        |snapshot| {
+            let (file, _) = syncwire::decode_snapshot(snapshot).unwrap();
+            syncwire::encode_snapshot(&file, &[]).unwrap()
+        },
+    );
+    assert!(joined.is_err());
+    assert!(is_pending(&w.bob_dir, &bob_ref));
+}
+
+#[test]
+fn a_snapshot_missing_one_records_attestation_is_refused() {
+    let (w, bob_ref, joined) = join_with(
+        |_| {},
+        |snapshot| {
+            let (file, mut attestations) = syncwire::decode_snapshot(snapshot).unwrap();
+            attestations.pop();
+            syncwire::encode_snapshot(&file, &attestations).unwrap()
+        },
+    );
+    assert!(joined.is_err(), "a record lost its attestation");
+    assert!(is_pending(&w.bob_dir, &bob_ref));
+}
+
+#[test]
+fn a_rotation_that_removes_nobody_reaches_every_member() {
+    let (w, bob, carol, bob_ref, carol_ref, bob_dir, carol_dir) = trio();
+    let mut vault = open_shared_vault(&w.alice_dir, &w.alice_ref, &w.alice).unwrap();
+    let next = local::plan_rotation(&w.alice_ref, vault.log.epoch()).unwrap();
+    local::apply_rotation(&mut vault, &next, &w.alice, local::Replace::Rotate).unwrap();
+    write_record(&mut vault.session, &mut vault.file, None, &titled("after")).unwrap();
+    vault.persist(&next.seed).unwrap();
+    let provider = Arc::new(SharedProvider::new(
+        w.alice_dir.clone(),
+        Arc::clone(&w.alice),
+    ));
+    provider.serve(Arc::new(copy_of(&next)));
+    let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
+    let address = node.local_addr().unwrap().to_string();
+
+    for (dir, reference, who) in [(bob_dir, bob_ref, bob), (carol_dir, carol_ref, carol)] {
+        let known = Known {
+            generation: open_shared_vault(&dir, &reference, &who)
+                .unwrap()
+                .session
+                .generation(),
+            stale: false,
+        };
+        let theirs = Arc::new(SharedProvider::new(dir.clone(), Arc::clone(&who)));
+        let service = Service::start(None, Arc::clone(&theirs)).unwrap();
+        service.fetch_with(
+            theirs.view_for(&reference).unwrap(),
+            vec![address.clone()],
+            3,
+            Duration::from_millis(50),
+        );
+        let Event::Fetched {
+            log,
+            snapshot,
+            rekey,
+            ..
+        } = next_event(&service)
+        else {
+            panic!("the fetch did not complete");
+        };
+        let rekey = rekey.expect("the node offers the new seed");
+        let Joined::Rekey(plan) = finish_join(
+            &dir,
+            &reference,
+            &who,
+            &log,
+            snapshot,
+            Some(&rekey),
+            Some(known),
+        )
+        .unwrap() else {
+            panic!("the vault should be replaced");
+        };
+        assert_eq!(plan.reference().epoch, 1);
+        let adopted = plan.commit().unwrap();
+        assert_eq!(adopted.log.members().len(), 3, "nobody was removed");
+        assert_eq!(list_records(&adopted.session).unwrap().len(), 3);
+    }
 }

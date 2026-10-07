@@ -496,3 +496,103 @@ fn a_rotate_entry_is_canonical_on_the_wire() {
     }
     assert!(Entry::decode(&empty).is_err(), "a rotation must commit");
 }
+
+#[test]
+fn everyone_who_ever_wrote_stays_a_past_writer() {
+    let (alice, bob, carol, dave) = (user(1), user(2), user(3), user(4));
+    let mut log = created_by(&alice);
+    step(&mut log, &alice, add(&bob, Role::Writer)).unwrap();
+    step(&mut log, &alice, add(&carol, Role::Reader)).unwrap();
+    step(&mut log, &alice, add(&dave, Role::Writer)).unwrap();
+    step(
+        &mut log,
+        &alice,
+        Action::SetRole {
+            client_id: carol.client_id,
+            role: Role::Writer,
+        },
+    )
+    .unwrap();
+    step(
+        &mut log,
+        &alice,
+        Action::SetRole {
+            client_id: dave.client_id,
+            role: Role::Reader,
+        },
+    )
+    .unwrap();
+    step(
+        &mut log,
+        &alice,
+        Action::Remove {
+            client_id: bob.client_id,
+            commit: [7; 32],
+        },
+    )
+    .unwrap();
+    let writers = log.past_writers();
+    assert_eq!(writers.len(), 4, "owner, removed, promoted and demoted");
+    for who in [&alice, &bob, &carol, &dave] {
+        assert!(writers
+            .iter()
+            .any(|(id, vk)| **id == who.client_id && **vk == who.root_vk));
+    }
+
+    let (mallory, eve) = (user(5), user(6));
+    let mut readers = created_by(&alice);
+    step(&mut readers, &alice, add(&mallory, Role::Reader)).unwrap();
+    step(&mut readers, &alice, add(&eve, Role::Reader)).unwrap();
+    assert_eq!(readers.past_writers().len(), 1, "readers never wrote");
+}
+
+#[test]
+fn leaves_are_counted_until_the_key_is_replaced() {
+    let (alice, bob, carol, dave) = (user(1), user(2), user(3), user(4));
+    let mut log = created_by(&alice);
+    for member in [&bob, &carol, &dave] {
+        step(&mut log, &alice, add(member, Role::Writer)).unwrap();
+    }
+    assert_eq!(log.leaves_since_rotation(), 0);
+
+    let leave = |who: &User| Action::Remove {
+        client_id: who.client_id,
+        commit: [0; 32],
+    };
+    step(&mut log, &bob, leave(&bob)).unwrap();
+    step(&mut log, &carol, leave(&carol)).unwrap();
+    assert_eq!(log.leaves_since_rotation(), 2);
+    step(
+        &mut log,
+        &alice,
+        Action::SetRole {
+            client_id: dave.client_id,
+            role: Role::Reader,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        log.leaves_since_rotation(),
+        2,
+        "a role change is not a leave"
+    );
+
+    step(&mut log, &alice, Action::Rotate { commit: [9; 32] }).unwrap();
+    assert_eq!(log.leaves_since_rotation(), 0, "the new key covers them");
+    step(&mut log, &dave, leave(&dave)).unwrap();
+    assert_eq!(log.leaves_since_rotation(), 1);
+
+    // An owner removing someone with a new key is not a leave.
+    let mut other = created_by(&alice);
+    step(&mut other, &alice, add(&bob, Role::Writer)).unwrap();
+    step(
+        &mut other,
+        &alice,
+        Action::Remove {
+            client_id: bob.client_id,
+            commit: [7; 32],
+        },
+    )
+    .unwrap();
+    assert_eq!(other.leaves_since_rotation(), 0);
+}

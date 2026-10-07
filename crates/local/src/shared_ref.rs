@@ -3,17 +3,49 @@
 //! an ordinary record, so it syncs to all of the owner's devices and is
 //! sealed under the personal vault's key.
 
+use memberlog::MemberLog;
+use pq::SYNC_VK_LEN;
 use record::{
-    Document, ValueType, SHARED_RETIRED_TAGS, TAG_SHARED_ANCHOR, TAG_SHARED_EPOCH,
-    TAG_SHARED_HINTS, TAG_SHARED_MARK, TAG_SHARED_RETIRED_MIN, TAG_SHARED_SEED,
-    TAG_SHARED_VAULT_ID, TAG_TITLE,
+    Document, ValueType, SHARED_RETIRED_TAGS, TAG_SHARED_ANCHOR, TAG_SHARED_EPOCH, TAG_SHARED_HEAD,
+    TAG_SHARED_HINTS, TAG_SHARED_INTRODUCER, TAG_SHARED_MARK, TAG_SHARED_RETIRED_MIN,
+    TAG_SHARED_SEED, TAG_SHARED_VAULT_ID, TAG_TITLE,
 };
-use secret::Secret;
+use secret::{ct_eq_32, Secret};
 
 use crate::limits::{SHARED_HINTS_MAX, SHARED_HINT_MAX, SHARED_NAME_MAX};
 
 fn corrupted() -> anyhow::Error {
     anyhow::anyhow!("corrupted length")
+}
+
+/// What an invitation proved about the member log before the log itself was
+/// fetched: the hash of its newest entry and the account that invited this
+/// device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Introduction {
+    /// Hash of the newest log entry the inviter signed for.
+    pub head: [u8; 32],
+    /// The inviter's account id.
+    pub inviter_id: [u8; 64],
+    /// The inviter's root key.
+    pub inviter_vk: Box<[u8; SYNC_VK_LEN]>,
+}
+
+impl Introduction {
+    /// Whether `log` is the log the inviter signed for: it contains the head
+    /// they saw, and the inviter is a member with the key they presented.
+    #[must_use]
+    pub fn confirms(&self, log: &MemberLog) -> bool {
+        let reaches_head = log
+            .entries()
+            .iter()
+            .any(|entry| entry.hash().is_ok_and(|hash| ct_eq_32(&hash, &self.head)));
+        let inviter_listed = log
+            .members()
+            .iter()
+            .any(|member| member.client_id == self.inviter_id && member.root_vk == self.inviter_vk);
+        reaches_head && inviter_listed
+    }
 }
 
 /// A shared vault this account belongs to.
@@ -35,6 +67,9 @@ pub struct SharedRef {
     /// Earlier seeds, newest first, kept to open what was sealed before a
     /// rotation reached this device.
     pub retired: Vec<Secret<[u8; 64]>>,
+    /// What the invitation proved; the full member log has to reach it before
+    /// the vault opens. `None` for a vault this device created.
+    pub introduction: Option<Introduction>,
 }
 
 impl SharedRef {
@@ -59,6 +94,7 @@ impl SharedRef {
                 .iter()
                 .map(|old| Secret::new(*old.expose()))
                 .collect(),
+            introduction: self.introduction.clone(),
         }
     }
 
@@ -83,6 +119,7 @@ impl SharedRef {
             hints: self.hints.clone(),
             epoch,
             retired,
+            introduction: self.introduction.clone(),
         }
     }
 
@@ -105,6 +142,13 @@ impl SharedRef {
         );
         for (old, tag) in self.retired.iter().zip(TAG_SHARED_RETIRED_MIN..) {
             doc.set_data(tag, ValueType::Secret, old.expose());
+        }
+        if let Some(intro) = &self.introduction {
+            doc.set_data(TAG_SHARED_HEAD, ValueType::Bytes, &intro.head);
+            let mut who = Vec::with_capacity(64 + SYNC_VK_LEN);
+            who.extend_from_slice(&intro.inviter_id);
+            who.extend_from_slice(intro.inviter_vk.as_slice());
+            doc.set_data(TAG_SHARED_INTRODUCER, ValueType::Bytes, &who);
         }
         doc
     }
@@ -171,6 +215,7 @@ impl SharedRef {
         if stray {
             return Err(corrupted());
         }
+        let introduction = read_introduction(doc)?;
         Ok(Some(Self {
             vault_id,
             anchor,
@@ -179,6 +224,22 @@ impl SharedRef {
             hints,
             epoch,
             retired,
+            introduction,
         }))
+    }
+}
+
+fn read_introduction(doc: &Document) -> anyhow::Result<Option<Introduction>> {
+    match (doc.data(TAG_SHARED_HEAD)?, doc.data(TAG_SHARED_INTRODUCER)?) {
+        (None, None) => Ok(None),
+        (Some(head), Some(who)) => {
+            let (inviter_id, vk) = who.split_first_chunk::<64>().ok_or_else(corrupted)?;
+            Ok(Some(Introduction {
+                head: head.try_into().map_err(|_| corrupted())?,
+                inviter_id: *inviter_id,
+                inviter_vk: Box::new(vk.try_into().map_err(|_| corrupted())?),
+            }))
+        }
+        _ => Err(corrupted()),
     }
 }

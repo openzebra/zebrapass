@@ -18,7 +18,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
-use local::{create_shared_vault, join_shared_vault, open_shared_vault, SharedRef, SyncIdentity};
+use local::{
+    create_shared_vault, join_shared_vault, open_shared_vault, Introduction, SharedRef,
+    SyncIdentity,
+};
 use memberlog::{Action, Role};
 use p2p_net::{Service, SharedProvider};
 use session::{list_records, open_record, KdfProfile};
@@ -157,6 +160,11 @@ fn world(role: Role) -> World {
         hints: opened.hints,
         epoch: 0,
         retired: Vec::new(),
+        introduction: Some(Introduction {
+            head: opened.head,
+            inviter_id: opened.inviter_id,
+            inviter_vk: opened.inviter_vk,
+        }),
     };
     join_shared_vault(&bob_dir, &reference, &opened.log).unwrap();
     session::write_record(

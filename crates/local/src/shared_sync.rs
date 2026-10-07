@@ -10,14 +10,15 @@
 
 use std::collections::HashSet;
 
-use memberlog::Role;
+use memberlog::{Action, MemberLog, Role};
 use record::Document;
 use session::{
     accept_revision, attest_latest, delete_record, frontier, latest_frame, open_record,
-    write_record, Accepted, SessionError, TrustedAccount,
+    verify_snapshot, write_record, Accepted, Attestation, Session, SessionError, TrustedAccount,
 };
 use syncwire::{decode_bundle, encode_bundle, encode_frontier};
 
+use crate::attest_store::AttestStore;
 use crate::now_ms;
 use crate::shared::SharedVault;
 use crate::shared_ref::SharedRef;
@@ -82,7 +83,63 @@ fn fresh_record_id(vault: &SharedVault) -> anyhow::Result<u32> {
     Err(anyhow::anyhow!("os entropy failed"))
 }
 
+/// Check a vault file this device did not build against the attestations
+/// that came with it, and keep them. Every record's winning revision must be
+/// attested by an account that was a writer in `log` at some point, removed
+/// members included: their earlier records are still the vault's history.
+///
+/// # Errors
+///
+/// A record without a matching attestation, or one that does not verify; see
+/// [`session::verify_snapshot`].
+pub fn attested_store(
+    session: &Session,
+    log: &MemberLog,
+    attestations: &[Attestation],
+    into: AttestStore,
+) -> anyhow::Result<AttestStore> {
+    let accounts: Vec<TrustedAccount<'_>> = log
+        .past_writers()
+        .into_iter()
+        .map(|(client_id, root_vk)| TrustedAccount {
+            client_id: *client_id,
+            root_vk,
+            can_write: true,
+        })
+        .collect();
+    verify_snapshot(session, attestations, &accounts, now_ms())?
+        .into_iter()
+        .try_fold(into, |mut store, attestation| {
+            store.put(attestation)?;
+            Ok(store)
+        })
+}
+
 impl SharedVault {
+    /// The attestations of every record this vault holds, as a device that
+    /// takes the whole vault needs them. A revision this device wrote and
+    /// never attested is attested now.
+    ///
+    /// # Errors
+    ///
+    /// A record another device wrote whose attestation was not kept; indexing,
+    /// signing and storage errors.
+    pub fn attestations(
+        &mut self,
+        reference: &SharedRef,
+        identity: &SyncIdentity,
+    ) -> anyhow::Result<Vec<Attestation>> {
+        frontier(&self.session)?
+            .into_iter()
+            .map(|entry| {
+                let id = entry.record_id;
+                self.bundle(reference, identity, id)?
+                    .ok_or_else(unavailable)?;
+                self.attest.get(id).cloned().ok_or_else(unavailable)
+            })
+            .collect()
+    }
+
     /// What this device may do here.
     #[must_use]
     pub fn role_of(&self, identity: &SyncIdentity) -> Option<Role> {
@@ -173,6 +230,79 @@ impl SharedVault {
             .note(accepted.record_id, accepted.revision);
         self.persist(&reference.seed)?;
         Ok(accepted)
+    }
+
+    /// Give `target` another role. Owners only; the log refuses a change
+    /// that leaves the vault without an owner. The seed stays, so a person
+    /// made a reader can still read, and cannot write.
+    ///
+    /// # Errors
+    ///
+    /// `only owners can change roles`, `not a member` for an account the log
+    /// does not list, the log's own refusals, and signing and storage errors.
+    pub fn set_role(
+        &mut self,
+        reference: &SharedRef,
+        identity: &SyncIdentity,
+        target: [u8; 64],
+        role: Role,
+    ) -> anyhow::Result<()> {
+        let own = identity.devices().first().ok_or_else(unavailable)?;
+        if self.log.role_of(&own.client_id) != Some(Role::Owner) {
+            anyhow::bail!("only owners can change roles");
+        }
+        match self.log.role_of(&target) {
+            None => anyhow::bail!("not a member"),
+            Some(held) if held == role => return Ok(()),
+            Some(_) => {}
+        }
+        let entry = self.log.propose(
+            &identity.sign_key(),
+            own,
+            Action::SetRole {
+                client_id: target,
+                role,
+            },
+            now_ms(),
+        )?;
+        self.log.append(entry)?;
+        self.save_log(&reference.seed)
+    }
+
+    /// Whether this account has left: the log no longer lists it.
+    #[must_use]
+    pub fn has_left(&self, identity: &SyncIdentity) -> bool {
+        identity
+            .devices()
+            .first()
+            .is_some_and(|own| self.log.role_of(&own.client_id).is_none())
+    }
+
+    /// Leave the vault: sign an entry that removes this account. The entry
+    /// carries no new seed, so an owner still has to replace the key; until
+    /// then the person keeps what they have seen. The device stays able to
+    /// serve the log so the others can pick the entry up.
+    ///
+    /// # Errors
+    ///
+    /// `not a member` when the account is not listed; the log's refusal when
+    /// this is the only owner; signing and storage errors.
+    pub fn leave(&mut self, reference: &SharedRef, identity: &SyncIdentity) -> anyhow::Result<()> {
+        let own = identity.devices().first().ok_or_else(unavailable)?;
+        if self.log.role_of(&own.client_id).is_none() {
+            anyhow::bail!("not a member");
+        }
+        let entry = self.log.propose(
+            &identity.sign_key(),
+            own,
+            Action::Remove {
+                client_id: own.client_id,
+                commit: [0u8; 32],
+            },
+            now_ms(),
+        )?;
+        self.log.append(entry)?;
+        self.save_log(&reference.seed)
     }
 
     /// Make a change as a writer: write it, sign it, remember its signature

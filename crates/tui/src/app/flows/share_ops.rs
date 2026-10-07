@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use local::{create_shared_vault, join_shared_vault, SharedRef};
+use local::{create_shared_vault, join_shared_vault, Introduction, SharedRef};
 use memberlog::{Action as LogAction, Role};
 use sharing::{account_fingerprint, vault_number, ContactCard, Invitation, Inviter, Offer, Opened};
 use zeroize::Zeroizing;
@@ -287,6 +287,9 @@ impl Unlocked {
             name,
             log,
             hints,
+            head,
+            inviter_id,
+            inviter_vk,
             ..
         } = opened;
         let reference = Arc::new(SharedRef {
@@ -297,6 +300,11 @@ impl Unlocked {
             hints,
             epoch: log.epoch(),
             retired: Vec::new(),
+            introduction: Some(Introduction {
+                head,
+                inviter_id,
+                inviter_vk,
+            }),
         });
         join_shared_vault(&self.base, &reference, &log)?;
         self.shared.push(SharedItem::joined(

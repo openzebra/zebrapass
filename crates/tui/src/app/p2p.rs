@@ -290,6 +290,7 @@ impl Unlocked {
             return;
         }
         self.check_in_due();
+        self.finish_delivered_leaves(ctx);
         let Some(p2p) = self.p2p.as_ref() else {
             return;
         };
@@ -335,12 +336,21 @@ impl Unlocked {
                     if refused > 0 {
                         ctx.toast(Tone::Warn, "A member sent changes that were refused.");
                     }
-                    if let Some(item) = self
-                        .shared
-                        .iter_mut()
-                        .find(|item| item.reference.vault_id == vault_id)
-                    {
-                        item.waiting = None;
+                    let changed = match (
+                        self.shared
+                            .iter_mut()
+                            .find(|item| item.reference.vault_id == vault_id),
+                        self.identity.as_deref(),
+                    ) {
+                        (Some(item), Some(identity)) => {
+                            item.waiting = None;
+                            item.refresh_members(&self.base, identity)
+                        }
+                        _ => false,
+                    };
+                    if changed {
+                        self.reload_shared(&vault_id);
+                        ctx.toast(Tone::Info, "Who is in the vault, or a role, changed.");
                     }
                     ctx.redraw();
                 }
@@ -386,7 +396,7 @@ impl Unlocked {
         match joined {
             Ok(Joined::Opened(vault)) => {
                 if let Some(item) = self.shared.get_mut(index) {
-                    item.adopt(*vault);
+                    item.adopt(*vault, &identity);
                     let message = format!("{name} is synced: {} records.", item.cache.len());
                     ctx.toast(Tone::Success, message);
                 }
@@ -433,7 +443,9 @@ impl Unlocked {
         }
         if let Some(item) = self.shared.get_mut(index) {
             item.reference = reference;
-            item.adopt(vault);
+            if let Some(p2p) = self.p2p.as_deref() {
+                item.adopt(vault, &p2p.identity);
+            }
             let message = format!("{} has a new key from its owner.", item.name());
             ctx.toast(Tone::Success, message);
         }

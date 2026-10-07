@@ -121,8 +121,13 @@ pub fn sync_verifying_key(seed: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Opaque ML-DSA signing key for session-side device keys.
-#[derive(Debug)]
 pub struct SigningKeyMirror(SigningKey<MlDsa65>);
+
+impl std::fmt::Debug for SigningKeyMirror {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningKeyMirror").finish_non_exhaustive()
+    }
+}
 
 /// Build a device signing key from a fixed 32-byte seed. Infallible: the
 /// length is fixed by the type.

@@ -21,6 +21,7 @@ pub mod locked;
 pub mod restore;
 pub mod settings;
 pub mod sync;
+mod sync_confirm;
 pub mod unlock;
 pub mod welcome;
 

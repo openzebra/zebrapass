@@ -142,8 +142,9 @@ fn bob_shares_a_key_alice_adds_him_and_he_joins_with_the_vault_number() {
     assert_eq!(opened.name, "Family");
     assert_eq!(opened.number, vault_number(&VAULT));
     assert_eq!(opened.number, "5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A 5A5A");
-    assert_eq!(opened.log.members().len(), 2);
-    assert_eq!(opened.log.role_of(&[2; 64]), Some(Role::Writer));
+    assert_eq!(opened.log.members().len(), 1);
+    assert_eq!(opened.head, *log.head());
+    assert_eq!(opened.inviter_id, [1; 64]);
     assert_eq!(
         opened.inviter,
         account_fingerprint(&[1; 64], alice.id.root_vk())
@@ -162,8 +163,59 @@ fn alice_can_add_as_many_people_as_she_likes() {
         let invitation = alice.invites(&log, &guest.card(), &seed());
         let opened = guest.opens(&invitation).unwrap();
         assert_eq!(opened.seed.expose(), seed().expose());
-        assert_eq!(opened.log.members().len(), 5);
+        assert_eq!(opened.head, *log.head());
     }
+}
+
+#[test]
+fn a_long_history_does_not_stop_an_invitation() {
+    let (alice, bob) = (person(1), person(2));
+    let mut log = alice.new_vault();
+    alice.adds(&mut log, &bob.card(), Role::Reader);
+    for turn in 0..60 {
+        let role = if turn % 2 == 0 {
+            Role::Writer
+        } else {
+            Role::Reader
+        };
+        let entry = log
+            .propose(
+                &alice.id.sign_key(),
+                &alice.id.devices()[0],
+                Action::SetRole {
+                    client_id: [2; 64],
+                    role,
+                },
+                NOW,
+            )
+            .unwrap();
+        log.append(entry).unwrap();
+    }
+    assert!(log.entries().len() > 60);
+    let text = alice.invites(&log, &bob.card(), &seed()).to_text().unwrap();
+    let opened = bob.opens(&Invitation::from_text(&text).unwrap()).unwrap();
+    assert_eq!(opened.head, *log.head());
+    assert!(
+        text.len() < 32_000,
+        "invitation text is {} characters",
+        text.len()
+    );
+}
+
+#[test]
+fn a_swapped_head_or_inviter_key_does_not_verify() {
+    let (alice, bob, carol) = (person(1), person(2), person(3));
+    let mut log = alice.new_vault();
+    alice.adds(&mut log, &bob.card(), Role::Writer);
+    let invitation = alice.invites(&log, &bob.card(), &seed());
+
+    let mut head = invitation.clone();
+    head.head[0] ^= 1;
+    assert!(bob.opens(&head).is_err());
+
+    let mut key = invitation;
+    *key.inviter_vk = *carol.id.root_vk();
+    assert!(bob.opens(&key).is_err());
 }
 
 #[test]
@@ -317,7 +369,7 @@ fn the_texts_people_copy_stay_a_pasteable_size() {
     alice.adds(&mut log, &bob.card(), Role::Writer);
     let invite = alice.invites(&log, &bob.card(), &seed()).to_text().unwrap();
     assert!(
-        invite.len() < 43_000,
+        invite.len() < 32_000,
         "invitation text is {} characters",
         invite.len()
     );

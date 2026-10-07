@@ -375,10 +375,28 @@ pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
         ConfirmKind::RemovePassword => state.run(Op::RemovePassword, Task::Factor, ctx),
         ConfirmKind::ClearHistory => state.run(Op::ClearHistory, Task::Save, ctx),
         ConfirmKind::RestoreRevision(id, revision) => {
-            state.run(Op::RestoreRevision(id, revision), Task::Save, ctx);
+            if state.in_shared() {
+                restore_shared(state, id, revision, ctx);
+            } else {
+                state.run(Op::RestoreRevision(id, revision), Task::Save, ctx);
+            }
         }
         ConfirmKind::Discard => crate::app::flows::editor_keys::close(state, ctx),
         ConfirmKind::DiscardSettings => crate::app::flows::settings::apply::discard(state, ctx),
+    }
+}
+
+/// Copy an old revision of a shared record into a new one, as a writer.
+fn restore_shared(state: &mut Unlocked, id: u32, revision: u64, ctx: &mut Ctx) {
+    if !state.may_edit_here(ctx) {
+        return;
+    }
+    let doc = state
+        .active_session()
+        .and_then(|session| session::open_revision(session, id, revision).ok());
+    match doc {
+        Some(doc) => state.write_active(Some(id), Box::new(doc), ctx),
+        None => ctx.toast(Tone::Danger, "That revision did not open."),
     }
 }
 

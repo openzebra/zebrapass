@@ -433,3 +433,35 @@ mod canonical {
         }
     }
 }
+
+#[test]
+fn a_snapshot_round_trips_and_is_strict() {
+    let attestations = vec![sample_attestation(), {
+        let mut second = sample_attestation();
+        second.record_id += 1;
+        second
+    }];
+    let file = vec![0xAB; 1000];
+    let bytes = syncwire::encode_snapshot(&file, &attestations).unwrap();
+    let (back, held) = syncwire::decode_snapshot(bytes.clone()).unwrap();
+    assert_eq!(back, file);
+    assert_eq!(held, attestations);
+
+    let (empty_file, none) =
+        syncwire::decode_snapshot(syncwire::encode_snapshot(&file, &[]).unwrap()).unwrap();
+    assert_eq!(empty_file, file);
+    assert!(none.is_empty());
+
+    for len in 0..8 + 2 * syncwire::ATTESTATION_WIRE_LEN {
+        assert!(syncwire::decode_snapshot(bytes[..len].to_vec()).is_err());
+    }
+    let mut magic = bytes.clone();
+    magic[0] ^= 1;
+    assert!(syncwire::decode_snapshot(magic).is_err());
+    let mut version = bytes.clone();
+    version[5] ^= 1;
+    assert!(syncwire::decode_snapshot(version).is_err());
+    let mut count = bytes;
+    count[6..8].copy_from_slice(&u16::MAX.to_be_bytes());
+    assert!(syncwire::decode_snapshot(count).is_err());
+}

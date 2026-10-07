@@ -17,7 +17,9 @@ use local::{
 use memberlog::{Action, Role};
 use record::{Document, TAG_TITLE};
 use secret::Secret;
-use session::{history, list_records, open_record, write_record, KdfProfile, VaultFile};
+use session::{
+    history, list_records, open_record, unlock, write_record, KdfProfile, UnlockCreds, VaultFile,
+};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let mut suffix = [0u8; 8];
@@ -50,6 +52,7 @@ fn copy_of(reference: &SharedRef) -> SharedRef {
         hints: reference.hints.clone(),
         epoch: 0,
         retired: Vec::new(),
+        introduction: reference.introduction.clone(),
     }
 }
 
@@ -60,6 +63,7 @@ struct Scene {
     bob: SyncIdentity,
     alice_ref: SharedRef,
     bob_ref: SharedRef,
+    attested: Vec<session::Attestation>,
 }
 
 fn scene() -> Scene {
@@ -82,6 +86,7 @@ fn scene() -> Scene {
     vault.persist(&alice_ref.seed).unwrap();
     let bob_ref = copy_of(&alice_ref);
     join_shared_vault(&bob_dir, &bob_ref, &vault.log).unwrap();
+    let attested = vault.attestations(&alice_ref, &alice).unwrap();
     Scene {
         alice_dir,
         bob_dir,
@@ -89,6 +94,7 @@ fn scene() -> Scene {
         bob,
         alice_ref,
         bob_ref,
+        attested,
     }
 }
 
@@ -121,7 +127,7 @@ fn a_joined_device_is_pending_until_the_vault_file_arrives_and_then_works() {
     assert!(open_shared_vault(&s.bob_dir, &s.bob_ref, &s.bob).is_err());
 
     let file = VaultFile::new(alice_file(&s));
-    let mut vault = adopt_shared_file(&s.bob_dir, &s.bob_ref, file, &s.bob).unwrap();
+    let mut vault = adopt_shared_file(&s.bob_dir, &s.bob_ref, file, &s.attested, &s.bob).unwrap();
     assert!(!is_pending(&s.bob_dir, &s.bob_ref));
     assert_eq!(vault.log.members().len(), 2);
     assert_eq!(vault.log.role_of(&[2; 64]), Some(Role::Writer));
@@ -151,8 +157,14 @@ fn a_joined_device_is_pending_until_the_vault_file_arrives_and_then_works() {
 fn an_older_copy_of_the_vault_file_is_refused_as_a_rollback() {
     let s = scene();
     let old = alice_file(&s);
-    let mut vault =
-        adopt_shared_file(&s.bob_dir, &s.bob_ref, VaultFile::new(old.clone()), &s.bob).unwrap();
+    let mut vault = adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(old.clone()),
+        &s.attested,
+        &s.bob,
+    )
+    .unwrap();
     write_record(&mut vault.session, &mut vault.file, None, &titled("new")).unwrap();
     vault.persist(&s.bob_ref.seed).unwrap();
     fs::write(&vault.paths.vault_file, &old).unwrap();
@@ -165,18 +177,25 @@ fn a_wrong_seed_a_foreign_file_and_a_wrong_anchor_are_refused() {
     let mut wrong_seed = copy_of(&s.bob_ref);
     wrong_seed.seed = Secret::new([9; 64]);
     let file = || VaultFile::new(alice_file(&s));
-    assert!(adopt_shared_file(&s.bob_dir, &wrong_seed, file(), &s.bob).is_err());
+    assert!(adopt_shared_file(&s.bob_dir, &wrong_seed, file(), &s.attested, &s.bob).is_err());
 
     let other_dir = temp_dir("other");
     let (_, other_ref) =
         create_shared_vault(&other_dir, &s.alice, "Other", KdfProfile::Fast).unwrap();
     let foreign =
         fs::read(local::shared_paths_for(&other_dir, &other_ref.vault_id).vault_file).unwrap();
-    assert!(adopt_shared_file(&s.bob_dir, &s.bob_ref, VaultFile::new(foreign), &s.bob).is_err());
+    assert!(adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(foreign),
+        &s.attested,
+        &s.bob,
+    )
+    .is_err());
 
     let mut wrong_anchor = copy_of(&s.bob_ref);
     wrong_anchor.anchor = [1; 32];
-    assert!(adopt_shared_file(&s.bob_dir, &wrong_anchor, file(), &s.bob).is_err());
+    assert!(adopt_shared_file(&s.bob_dir, &wrong_anchor, file(), &s.attested, &s.bob).is_err());
     let alice_log = open_shared_vault(&s.alice_dir, &s.alice_ref, &s.alice)
         .unwrap()
         .log;
@@ -190,6 +209,7 @@ fn a_tampered_or_missing_local_file_stops_the_vault_from_opening() {
         &s.bob_dir,
         &s.bob_ref,
         VaultFile::new(alice_file(&s)),
+        &s.attested,
         &s.bob,
     )
     .unwrap();
@@ -223,6 +243,7 @@ fn the_reference_record_round_trips_and_other_records_are_not_references() {
         hints: vec![String::from("10.0.0.2:7447")],
         epoch: 0,
         retired: Vec::new(),
+        introduction: None,
     };
     let doc = reference.to_document();
     let parsed = SharedRef::from_document(&doc).unwrap().unwrap();
@@ -302,4 +323,168 @@ fn the_listening_choice_survives_a_round_trip_and_cycles_through_all_three() {
         Prefs::read(&doc).is_err(),
         "an unknown mode is an error, not a default"
     );
+}
+
+#[test]
+fn a_file_with_a_record_no_writer_signed_is_refused_and_nothing_is_written() {
+    let s = scene();
+    let seed = s.alice_ref.seed.expose();
+    let mut file = VaultFile::new(alice_file(&s));
+    let mut session = unlock(&file, &UnlockCreds::master(seed), None).unwrap();
+    session.set_origin_device([2; 16]).unwrap();
+    write_record(&mut session, &mut file, None, &titled("planted")).unwrap();
+
+    let attempt = |attested: &[session::Attestation], file: VaultFile| {
+        adopt_shared_file(&s.bob_dir, &s.bob_ref, file, attested, &s.bob)
+    };
+    assert!(attempt(&s.attested, file.clone()).is_err());
+    assert!(attempt(&[], VaultFile::new(alice_file(&s))).is_err());
+    assert!(is_pending(&s.bob_dir, &s.bob_ref));
+    assert!(attempt(&s.attested, VaultFile::new(alice_file(&s))).is_ok());
+}
+
+#[test]
+fn an_attestation_of_another_revision_or_by_an_outsider_does_not_count() {
+    let s = scene();
+    let mut stale = s.attested.clone();
+    stale[0].revision += 1;
+    assert!(adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(alice_file(&s)),
+        &stale,
+        &s.bob
+    )
+    .is_err());
+
+    let mut forged = s.attested.clone();
+    forged[0].plain_digest[0] ^= 1;
+    assert!(adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(alice_file(&s)),
+        &forged,
+        &s.bob
+    )
+    .is_err());
+
+    let outsider = person(9);
+    let other_dir = temp_dir("outsider");
+    let (mut theirs, their_ref) =
+        create_shared_vault(&other_dir, &outsider, "Other", KdfProfile::Fast).unwrap();
+    write_record(&mut theirs.session, &mut theirs.file, None, &titled("x")).unwrap();
+    theirs.persist(&their_ref.seed).unwrap();
+    let mut swapped = s.attested.clone();
+    swapped[0] = theirs
+        .attestations(&their_ref, &outsider)
+        .unwrap()
+        .remove(0);
+    assert!(adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(alice_file(&s)),
+        &swapped,
+        &s.bob
+    )
+    .is_err());
+}
+
+#[test]
+fn only_an_owner_changes_roles_and_the_change_is_stored() {
+    let s = scene();
+    let mut alice = open_shared_vault(&s.alice_dir, &s.alice_ref, &s.alice).unwrap();
+    let bob_id = [2u8; 64];
+
+    alice
+        .set_role(&s.alice_ref, &s.alice, bob_id, Role::Reader)
+        .unwrap();
+    assert_eq!(alice.log.role_of(&bob_id), Some(Role::Reader));
+    let reopened = open_shared_vault(&s.alice_dir, &s.alice_ref, &s.alice).unwrap();
+    assert_eq!(reopened.log.role_of(&bob_id), Some(Role::Reader));
+
+    alice
+        .set_role(&s.alice_ref, &s.alice, bob_id, Role::Reader)
+        .unwrap();
+    assert_eq!(
+        alice.log.entries().len(),
+        reopened.log.entries().len(),
+        "the same role again writes nothing"
+    );
+
+    let mut bobs = adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(alice_file(&s)),
+        &s.attested,
+        &s.bob,
+    )
+    .unwrap();
+    bobs.log.merge(alice.log.entries()).unwrap();
+    assert!(bobs
+        .set_role(&s.bob_ref, &s.bob, bob_id, Role::Owner)
+        .is_err());
+    assert_eq!(bobs.log.role_of(&bob_id), Some(Role::Reader));
+
+    assert!(alice
+        .set_role(&s.alice_ref, &s.alice, [9; 64], Role::Writer)
+        .is_err());
+    assert!(
+        alice
+            .set_role(&s.alice_ref, &s.alice, [1; 64], Role::Writer)
+            .is_err(),
+        "the only owner cannot leave the vault without one"
+    );
+    assert_eq!(alice.log.role_of(&[1; 64]), Some(Role::Owner));
+}
+
+#[test]
+fn a_member_leaves_with_a_signed_entry_the_owner_accepts_and_the_only_owner_cannot() {
+    let s = scene();
+    let mut alice = open_shared_vault(&s.alice_dir, &s.alice_ref, &s.alice).unwrap();
+    assert!(
+        alice.leave(&s.alice_ref, &s.alice).is_err(),
+        "the only owner cannot leave"
+    );
+    assert!(!alice.has_left(&s.alice));
+
+    let mut bob = adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(alice_file(&s)),
+        &s.attested,
+        &s.bob,
+    )
+    .unwrap();
+    assert!(!bob.has_left(&s.bob));
+    bob.leave(&s.bob_ref, &s.bob).unwrap();
+    assert!(bob.has_left(&s.bob));
+    assert!(bob.leave(&s.bob_ref, &s.bob).is_err(), "not a member now");
+    let reopened = open_shared_vault(&s.bob_dir, &s.bob_ref, &s.bob).unwrap();
+    assert!(reopened.has_left(&s.bob), "stored, and still verifies");
+
+    // The entry is what the owner merges from Bob's log.
+    alice.log.merge(bob.log.entries()).unwrap();
+    assert_eq!(alice.log.role_of(&[2; 64]), None);
+    assert_eq!(alice.log.role_of(&[1; 64]), Some(Role::Owner));
+    assert_eq!(alice.log.epoch(), 0, "a leave does not replace the key");
+}
+
+#[test]
+fn purging_a_shared_vault_deletes_its_files_and_nothing_else() {
+    let s = scene();
+    adopt_shared_file(
+        &s.bob_dir,
+        &s.bob_ref,
+        VaultFile::new(alice_file(&s)),
+        &s.attested,
+        &s.bob,
+    )
+    .unwrap();
+    let paths = local::shared_paths_for(&s.bob_dir, &s.bob_ref.vault_id);
+    assert!(paths.vault_file.exists() && paths.members_log().exists());
+    local::purge_shared_vault(&s.bob_dir, &s.bob_ref.vault_id).unwrap();
+    assert!(!paths.vault_dir().exists());
+    local::purge_shared_vault(&s.bob_dir, &s.bob_ref.vault_id).unwrap();
+    let alices = local::shared_paths_for(&s.alice_dir, &s.alice_ref.vault_id);
+    assert!(alices.vault_file.exists(), "another vault is untouched");
 }

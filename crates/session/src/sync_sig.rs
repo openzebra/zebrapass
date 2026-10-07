@@ -118,10 +118,15 @@ pub fn verify_record(
 }
 
 /// Per-device ML-DSA signing key. `seed` zeroizes on drop.
-#[derive(Debug)]
 pub struct DeviceSignKey {
     seed: Zeroizing<[u8; SYNC_SEED_LEN]>,
     key: pq::SigningKeyMirror,
+}
+
+impl std::fmt::Debug for DeviceSignKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSignKey").finish_non_exhaustive()
+    }
 }
 
 impl DeviceSignKey {

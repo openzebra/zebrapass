@@ -1,17 +1,20 @@
 //! The invitation: what the owner gives a new member after adding them.
 //!
-//! It carries the vault number, the member log, and the vault's seed sealed
-//! to the invitee's device with the same hybrid ML-KEM and P-256 exchange a
+//! It carries the vault number, the first member log entry, the hash of the
+//! log's newest entry, the inviter's root key, and the vault's seed sealed to
+//! the invitee's device with the same hybrid ML-KEM and P-256 exchange a
 //! device wrap uses. The seed key binds the vault, the log head and the exact
 //! contact card, and a device of a member signs the whole thing, so an
-//! invitation cannot be redirected to another card or another vault.
+//! invitation cannot be redirected to another card or another vault. The rest
+//! of the member log is fetched from a member after joining and has to chain
+//! from the first entry to the signed head.
 //!
 //! The invitee still has to check the inviter's fingerprint with the inviter
 //! out loud: anyone who saw the card can wrap a seed to it.
 
 use anyhow::{anyhow, Result};
 use memberlog::{Entry, MemberLog, ENTRY_WIRE_LEN};
-use pq::{sync_sign, sync_verify, INVITE_CTX, SYNC_SIG_LEN};
+use pq::{sync_sign, sync_verify, INVITE_CTX, SYNC_SIG_LEN, SYNC_VK_LEN};
 use secret::Secret;
 use session::{frame_parts, DeviceCert, DeviceSignKey};
 use sha2::{Digest, Sha256};
@@ -25,7 +28,7 @@ use crate::text;
 const DOMAIN_GRANT: &[u8] = b"brby/v2/invitation-grant";
 const DOMAIN_INVITE: &[u8] = b"brby/v2/invitation";
 const MAGIC: [u8; 4] = *b"ZPIV";
-const WIRE_VERSION: u16 = 1;
+const WIRE_VERSION: u16 = 2;
 const GRANT_STREAM: u32 = 0x8000_0010;
 
 /// Prefix of the text form.
@@ -40,21 +43,14 @@ pub const MAX_HINTS: usize = 4;
 /// Longest address hint in bytes (`host:port`).
 pub const MAX_HINT: usize = 64;
 
-/// Most log entries an invitation carries. A longer log has to be fetched
-/// from a member over the network instead.
-pub const MAX_INVITE_ENTRIES: usize = 24;
-
 const SEED_LEN: usize = 64;
 const MAX_SEALED: usize = 512;
 const FIXED_LEN: usize = 4 + 2 + 16 + 32 + 65 + pq::KEM_CT_LEN + CERT_WIRE_LEN + SYNC_SIG_LEN + 2;
+const PROOF_LEN: usize = 32 + SYNC_VK_LEN + ENTRY_WIRE_LEN;
 
 /// Upper bound of an encoded invitation, for the paste buffer.
-pub const MAX_INVITE_WIRE_LEN: usize = FIXED_LEN
-    + MAX_SEALED
-    + 1
-    + MAX_HINTS * (1 + MAX_HINT)
-    + 2
-    + MAX_INVITE_ENTRIES * ENTRY_WIRE_LEN;
+pub const MAX_INVITE_WIRE_LEN: usize =
+    FIXED_LEN + MAX_SEALED + 1 + MAX_HINTS * (1 + MAX_HINT) + PROOF_LEN;
 
 fn invalid() -> anyhow::Error {
     anyhow!("invalid invitation")
@@ -99,8 +95,12 @@ pub struct Invitation {
     pub sealed: Vec<u8>,
     /// Where the inviter's device can be reached (`host:port`), best first.
     pub hints: Vec<String>,
-    /// The member log, oldest first.
-    pub entries: Vec<Entry>,
+    /// The vault's first member log entry.
+    pub genesis: Entry,
+    /// Hash of the newest log entry when the invitation was issued.
+    pub head: [u8; 32],
+    /// Root key the signer's certificate chains to.
+    pub inviter_vk: Box<[u8; SYNC_VK_LEN]>,
 }
 
 /// What an invitation holds once opened and verified.
@@ -110,8 +110,15 @@ pub struct Opened {
     pub seed: Secret<[u8; SEED_LEN]>,
     /// The vault's name.
     pub name: String,
-    /// The verified member log.
+    /// The member log as far as the invitation proves it: the first entry.
     pub log: MemberLog,
+    /// Hash of the newest log entry the inviter signed for: the log fetched
+    /// from a member has to contain it.
+    pub head: [u8; 32],
+    /// The signing member's account id.
+    pub inviter_id: [u8; 64],
+    /// The signing member's root key.
+    pub inviter_vk: Box<[u8; SYNC_VK_LEN]>,
     /// Where the inviter's device can be reached.
     pub hints: Vec<String>,
     /// The signing member's code: compare it with that person aloud.
@@ -138,12 +145,6 @@ fn valid_hints(hints: &[String]) -> bool {
             .all(|hint| !hint.is_empty() && hint.len() <= MAX_HINT && hint.is_ascii())
 }
 
-fn head_and_anchor(entries: &[Entry]) -> Result<([u8; 32], [u8; 32])> {
-    let first = entries.first().ok_or_else(invalid)?;
-    let last = entries.last().ok_or_else(invalid)?;
-    Ok((first.hash()?, last.hash()?))
-}
-
 fn grant_transcript(
     vault_id: &[u8; 16],
     anchor: &[u8; 32],
@@ -166,13 +167,13 @@ fn grant_transcript(
 
 impl Invitation {
     fn signed_message(&self) -> Result<Vec<u8>> {
-        let (anchor, head) = head_and_anchor(&self.entries)?;
+        let anchor = self.genesis.hash()?;
         let sealed_hash: [u8; 32] = Sha256::digest(&self.sealed).into();
         frame_parts(&[
             DOMAIN_INVITE,
             &self.vault_id,
             &anchor,
-            &head,
+            &self.head,
             &self.card_id,
             &self.eph_ec,
             self.kem_ct.as_slice(),
@@ -181,6 +182,7 @@ impl Invitation {
             &self.signer.device_id,
             &self.signer.serial.to_be_bytes(),
             &self.signer.client_id,
+            &Sha256::digest(self.inviter_vk.as_slice()),
         ])
     }
 
@@ -207,16 +209,17 @@ impl Invitation {
         let listed = log.members().iter().any(|member| {
             member.client_id == recipient.cert.client_id && member.root_vk == recipient.root_vk
         });
-        if !listed
-            || log.role_of(&cert.client_id).is_none()
-            || log.entries().len() > MAX_INVITE_ENTRIES
-            || name.len() > MAX_NAME
-            || !valid_hints(hints)
-        {
+        let inviter = log
+            .members()
+            .iter()
+            .find(|member| member.client_id == cert.client_id)
+            .ok_or_else(invalid)?;
+        if !listed || name.len() > MAX_NAME || !valid_hints(hints) {
             return Err(invalid());
         }
-        let entries = log.entries().to_vec();
-        let (anchor, head) = head_and_anchor(&entries)?;
+        let genesis = log.entries().first().ok_or_else(invalid)?.clone();
+        let anchor = *log.anchor();
+        let head = *log.head();
         let card_id = recipient.id();
         let (eph_secret, eph_public) = ec::fresh_pair()?;
         let eph_ec = ec::encode_pub(&eph_public)?;
@@ -258,7 +261,9 @@ impl Invitation {
             signature: Vec::new(),
             sealed,
             hints: hints.to_vec(),
-            entries,
+            genesis,
+            head,
+            inviter_vk: inviter.root_vk.clone(),
         };
         let signature = sync_sign(sign.seed(), INVITE_CTX, &unsigned.signed_message()?)?;
         Ok(Self {
@@ -286,16 +291,12 @@ impl Invitation {
         my_card: &ContactCard,
         now_ms: u64,
     ) -> Result<Opened> {
-        let (anchor, head) = head_and_anchor(&self.entries)?;
-        let log = MemberLog::from_entries(self.vault_id, &self.entries, &anchor)
-            .map_err(|_| invalid())?;
-        let signer = log
-            .members()
-            .iter()
-            .find(|member| member.client_id == self.signer.client_id)
-            .ok_or_else(invalid)?;
+        let anchor = self.genesis.hash()?;
+        let log =
+            MemberLog::from_entries(self.vault_id, std::slice::from_ref(&self.genesis), &anchor)
+                .map_err(|_| invalid())?;
         self.signer
-            .verify(&signer.root_vk, now_ms)
+            .verify(&self.inviter_vk, now_ms)
             .map_err(|_| invalid())?;
         sync_verify(
             &self.signer.device_vk,
@@ -304,10 +305,7 @@ impl Invitation {
             &self.signature,
         )
         .map_err(|_| invalid())?;
-        let me_listed = log.members().iter().any(|member| {
-            member.client_id == my_card.cert.client_id && member.root_vk == my_card.root_vk
-        });
-        if !me_listed || my_card.id() != self.card_id {
+        if my_card.id() != self.card_id {
             return Err(invalid());
         }
 
@@ -316,7 +314,7 @@ impl Invitation {
         let transcript = grant_transcript(
             &self.vault_id,
             &anchor,
-            &head,
+            &self.head,
             &self.card_id,
             &self.eph_ec,
             self.kem_ct.as_slice(),
@@ -337,7 +335,10 @@ impl Invitation {
         Ok(Opened {
             seed,
             name,
-            inviter: account_fingerprint(&signer.client_id, &signer.root_vk),
+            inviter: account_fingerprint(&self.signer.client_id, &self.inviter_vk),
+            head: self.head,
+            inviter_id: self.signer.client_id,
+            inviter_vk: self.inviter_vk.clone(),
             vault: vault_fingerprint(&self.vault_id, &anchor),
             number: vault_number(&self.vault_id),
             hints: self.hints.clone(),
@@ -354,8 +355,6 @@ impl Invitation {
     pub fn encode(&self) -> Result<Vec<u8>> {
         if self.signature.len() != SYNC_SIG_LEN
             || self.sealed.len() > MAX_SEALED
-            || self.entries.is_empty()
-            || self.entries.len() > MAX_INVITE_ENTRIES
             || !valid_hints(&self.hints)
         {
             return Err(invalid());
@@ -376,10 +375,9 @@ impl Invitation {
             out.push(u8::try_from(hint.len())?);
             out.extend_from_slice(hint.as_bytes());
         }
-        out.extend_from_slice(&u16::try_from(self.entries.len())?.to_be_bytes());
-        for entry in &self.entries {
-            out.extend_from_slice(&entry.encode()?);
-        }
+        out.extend_from_slice(&self.head);
+        out.extend_from_slice(self.inviter_vk.as_slice());
+        out.extend_from_slice(&self.genesis.encode()?);
         Ok(out)
     }
 
@@ -417,13 +415,9 @@ impl Invitation {
         if !valid_hints(&hints) {
             return Err(invalid());
         }
-        let count = usize::from(reader.u16()?);
-        if count == 0 || count > MAX_INVITE_ENTRIES {
-            return Err(invalid());
-        }
-        let entries = (0..count)
-            .map(|_| Entry::decode(reader.take(ENTRY_WIRE_LEN)?))
-            .collect::<Result<Vec<_>>>()?;
+        let head = reader.array()?;
+        let inviter_vk = Box::new(reader.array()?);
+        let genesis = Entry::decode(reader.take(ENTRY_WIRE_LEN)?)?;
         reader.finish()?;
         Ok(Self {
             vault_id,
@@ -434,7 +428,9 @@ impl Invitation {
             signature,
             sealed,
             hints,
-            entries,
+            genesis,
+            head,
+            inviter_vk,
         })
     }
 

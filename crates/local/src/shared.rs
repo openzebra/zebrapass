@@ -12,12 +12,13 @@ use aead::BodyAlg;
 use kdf::KdfProfile;
 use memberlog::MemberLog;
 use secret::Secret;
-use session::{unlock, Session, UnlockCreds, VaultFile};
+use session::{unlock, Attestation, Session, UnlockCreds, VaultFile};
 
 use crate::attest_store::AttestStore;
 use crate::meta::{load_local_meta, LocalMeta};
 use crate::shared_files::{load_member_log, save_member_log, SharedState};
 use crate::shared_ref::SharedRef;
+use crate::shared_sync::attested_store;
 use crate::sync_identity::SyncIdentity;
 use crate::usage::Usage;
 use crate::{create_vault, mark_seen, now_ms, shared_paths_for, shared_root, write_atomic, Paths};
@@ -176,6 +177,7 @@ pub fn create_shared_vault(
         hints: Vec::new(),
         epoch: 0,
         retired: Vec::new(),
+        introduction: None,
     };
     let mut vault = SharedVault {
         paths,
@@ -233,6 +235,20 @@ pub fn read_shared_state(base: &Path, reference: &SharedRef) -> anyhow::Result<S
     load_state_any(&shared_paths_for(base, &reference.vault_id), reference)
 }
 
+/// Delete everything this device holds of a shared vault: the vault file,
+/// the member log, the local state and the stored addresses. The reference in
+/// the personal vault is the caller's to remove.
+///
+/// # Errors
+///
+/// A storage error other than the directory already being gone.
+pub fn purge_shared_vault(base: &Path, vault_id: &[u8; 16]) -> anyhow::Result<()> {
+    match std::fs::remove_dir_all(shared_paths_for(base, vault_id).vault_dir()) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+        _ => Ok(()),
+    }
+}
+
 /// Whether this device still waits for the vault file.
 #[must_use]
 pub fn is_pending(base: &Path, reference: &SharedRef) -> bool {
@@ -244,16 +260,18 @@ pub fn is_pending(base: &Path, reference: &SharedRef) -> bool {
 /// Make a joined shared vault usable with the vault file a member sent.
 ///
 /// The file must open with the shared seed and be the vault the reference
-/// names; it becomes the first state this device accepts.
+/// names, and every record in it must be attested by a writer of the member
+/// log; it becomes the first state this device accepts.
 ///
 /// # Errors
 ///
 /// `shared vault unavailable` for a file that is another vault or does not
-/// open; storage and key-derivation errors.
+/// open; a record no writer attested; storage and key-derivation errors.
 pub fn adopt_shared_file(
     base: &Path,
     reference: &SharedRef,
     file: VaultFile,
+    attestations: &[Attestation],
     identity: &SyncIdentity,
 ) -> anyhow::Result<SharedVault> {
     let own = identity.devices().first().ok_or_else(failed)?;
@@ -265,6 +283,8 @@ pub fn adopt_shared_file(
     }
     session.set_origin_device(own.device_id)?;
     let paths = shared_paths_for(base, &reference.vault_id);
+    let log = load_log_any(&paths, reference)?;
+    let attest = attested_store(&session, &log, attestations, AttestStore::default())?;
     write_atomic(&paths.vault_file, file.as_bytes())?;
     let mut meta = LocalMeta {
         device_id: own.device_id,
@@ -276,9 +296,9 @@ pub fn adopt_shared_file(
         usage: Usage::default(),
     };
     mark_seen(&paths, &mut meta, &session)?;
-    let log = load_log_any(&paths, reference)?;
     let state = load_state_any(&paths, reference)?;
-    let attest = load_attest_any(&paths, reference)?;
+    let keys = file_keys(&reference.seed, &reference.vault_id)?;
+    attest.save(&paths.attest_store(), &keys.attest)?;
     Ok(SharedVault {
         paths,
         session,

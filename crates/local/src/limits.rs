@@ -33,6 +33,9 @@ pub const ATTESTATIONS_MAX: usize = 4096;
 /// Most peer devices kept in the sync identity file.
 pub const PEERS_MAX: usize = record::SYNC_PEER_TAGS;
 
+/// Most signed peer address records kept per shared vault.
+pub const SHARED_PEERS_MAX: usize = syncwire::MAX_PEERS;
+
 /// Most signed revocations kept per vault.
 pub const REVOKED_MAX: usize = record::SYNC_REVOKED_TAGS;
 

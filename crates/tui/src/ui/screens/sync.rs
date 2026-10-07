@@ -20,28 +20,32 @@ use crate::app::keymap::Scope;
 use crate::ui::input::TextInput;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::home::header;
+use crate::ui::screens::sync_confirm::{
+    join_confirm_lines, leave_confirm_lines, rekey_confirm_lines, remove_confirm_lines,
+    role_confirm_lines,
+};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::chrome::hint_bar;
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::fingerprint::stripe_print;
 use crate::vault::shared::{SharedItem, Status};
 
-const INDENT: &str = "  ";
+pub(super) const INDENT: &str = "  ";
 
-fn blank() -> Line<'static> {
+pub(super) fn blank() -> Line<'static> {
     Line::from("")
 }
 
-fn heading(text: &str, theme: &Theme) -> Line<'static> {
+pub(super) fn heading(text: &str, theme: &Theme) -> Line<'static> {
     Line::from(Span::styled(format!("{INDENT}{text}"), theme.muted()))
 }
 
-fn say(text: impl Into<String>, style: Style) -> Line<'static> {
+pub(super) fn say(text: impl Into<String>, style: Style) -> Line<'static> {
     Line::from(Span::styled(format!("{INDENT}{}", text.into()), style))
 }
 
 /// A fingerprint as a stripe-print and two lines of grouped hex.
-fn print_lines(print: &Fingerprint, label: &str, theme: &Theme) -> Vec<Line<'static>> {
+pub(super) fn print_lines(print: &Fingerprint, label: &str, theme: &Theme) -> Vec<Line<'static>> {
     let text = print.to_string();
     let (first, second) = text.split_at(text.len().min(24));
     let second = second.trim_start();
@@ -63,7 +67,7 @@ fn print_lines(print: &Fingerprint, label: &str, theme: &Theme) -> Vec<Line<'sta
     ]
 }
 
-const fn role_name(role: Role) -> &'static str {
+pub(super) const fn role_name(role: Role) -> &'static str {
     match role {
         Role::Owner => "owner",
         Role::Writer => "writer",
@@ -71,7 +75,7 @@ const fn role_name(role: Role) -> &'static str {
     }
 }
 
-const fn role_gloss(role: Role) -> &'static str {
+pub(super) const fn role_gloss(role: Role) -> &'static str {
     match role {
         Role::Reader => "can read",
         Role::Writer => "can read and edit",
@@ -97,6 +101,16 @@ const fn reason_word(reason: FetchError) -> &'static str {
 fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
     let glyphs = theme.glyphs;
     match (&item.status, item.waiting) {
+        (Status::Ready(_), _) if item.my_role.is_none() => Span::styled(
+            format!("{} left · d deletes this copy now", glyphs.attention),
+            theme.warn(),
+        ),
+        (Status::Ready(_), _) if item.my_role == Some(Role::Owner) && item.leaves > 0 => {
+            Span::styled(
+                format!("{} someone left · k replaces the key", glyphs.attention),
+                theme.warn(),
+            )
+        }
         (Status::Ready(_), _) if item.stale => {
             Span::styled(format!("{} new key, updating", glyphs.sync), theme.warn())
         }
@@ -276,13 +290,11 @@ fn pick_lines(
     state: &Unlocked,
     vault: usize,
     pick: usize,
+    action: &str,
     vault_name: &str,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        blank(),
-        heading(&format!("remove from «{vault_name}»"), theme),
-    ];
+    let mut lines = vec![blank(), heading(&format!("{action} «{vault_name}»"), theme)];
     for (index, person) in state.people(vault).iter().enumerate() {
         let chosen = index == pick;
         let pointer = if chosen { theme.glyphs.pointer } else { " " };
@@ -306,49 +318,6 @@ fn pick_lines(
         "Pick by the fingerprint you compared when you added them.",
         theme.muted(),
     ));
-    lines
-}
-
-fn remove_confirm_lines(
-    print: &Fingerprint,
-    role: Role,
-    vault_name: &str,
-    theme: &Theme,
-) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        blank(),
-        heading(&format!("remove from «{vault_name}»"), theme),
-    ];
-    lines.extend(print_lines(print, role_name(role), theme));
-    lines.push(blank());
-    for text in [
-        "They keep what they have already seen. Nothing written from now on",
-        "opens for them: the vault gets a new key, and everyone else",
-        "receives it when their device next connects.",
-    ] {
-        lines.push(say(text, theme.text()));
-    }
-    lines.push(blank());
-    lines.push(say("Enter removes · Esc cancels", theme.warn()));
-    lines
-}
-
-fn join_confirm_lines(opened: &sharing::Opened, theme: &Theme) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        blank(),
-        heading(&format!("invitation to «{}»", opened.name), theme),
-        say(
-            format!("{:<14}{}", "vault number", opened.number),
-            theme.strong(),
-        ),
-    ];
-    lines.extend(print_lines(&opened.inviter, "from", theme));
-    lines.push(blank());
-    lines.push(say(
-        "Ask the sender to read their fingerprint aloud. It must match.",
-        theme.text(),
-    ));
-    lines.push(say("Enter joins · Esc cancels", theme.muted()));
     lines
 }
 
@@ -376,10 +345,30 @@ fn step_lines(
             print,
             number,
         } => add_done_lines(invitation, print, number, &vault_name, theme),
-        Step::PickPerson(pick) => pick_lines(state, share.cursor, *pick, &vault_name, theme),
+        Step::PickPerson(pick) => pick_lines(
+            state,
+            share.cursor,
+            *pick,
+            "remove from",
+            &vault_name,
+            theme,
+        ),
+        Step::PickRole(pick) => pick_lines(
+            state,
+            share.cursor,
+            *pick,
+            "change a role in",
+            &vault_name,
+            theme,
+        ),
+        Step::RoleConfirm {
+            print, from, to, ..
+        } => role_confirm_lines(print, *from, *to, &vault_name, theme),
         Step::RemoveConfirm { print, role, .. } => {
             remove_confirm_lines(print, *role, &vault_name, theme)
         }
+        Step::LeaveConfirm(mode) => leave_confirm_lines(*mode, &vault_name, theme),
+        Step::RekeyConfirm => rekey_confirm_lines(&vault_name, theme),
         Step::PasteInvite => prompt(
             "join a shared vault",
             "Paste the invitation you were given.",

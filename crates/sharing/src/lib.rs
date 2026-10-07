@@ -16,7 +16,7 @@ mod text;
 pub use card::{ContactCard, CARD_PREFIX, CARD_WIRE_LEN, MAX_CARD_AGE_MS};
 pub use fingerprint::{account_fingerprint, vault_fingerprint, vault_number, Fingerprint};
 pub use invitation::{
-    Invitation, Inviter, Offer, Opened, INVITE_PREFIX, MAX_HINT, MAX_HINTS, MAX_INVITE_ENTRIES,
-    MAX_INVITE_WIRE_LEN, MAX_NAME,
+    Invitation, Inviter, Offer, Opened, INVITE_PREFIX, MAX_HINT, MAX_HINTS, MAX_INVITE_WIRE_LEN,
+    MAX_NAME,
 };
 pub use text::{decode as decode_text, encode as encode_text};

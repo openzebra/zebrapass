@@ -114,6 +114,14 @@ pub const TAG_SHARED_HINTS: u16 = 0x0274;
 /// 4 bytes little-endian (`Bytes`).
 pub const TAG_SHARED_EPOCH: u16 = 0x0275;
 
+/// Hash of the newest member log entry the inviter signed for, 32 bytes
+/// (`Bytes`). Present while the device has not yet fetched the full log.
+pub const TAG_SHARED_HEAD: u16 = 0x0276;
+
+/// The inviter's account id followed by its root key (`Bytes`). Present with
+/// [`TAG_SHARED_HEAD`].
+pub const TAG_SHARED_INTRODUCER: u16 = 0x0277;
+
 /// First of the retired shared seeds, newest first, contiguous from here
 /// (`Secret`). A device keeps them to open files and logs sealed before the
 /// last rotation reached it.

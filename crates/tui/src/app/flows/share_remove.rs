@@ -120,10 +120,16 @@ impl Unlocked {
         }
     }
 
-    /// Rotate the vault and remove `target`; returns how many other people
+    /// Rotate the vault, removing `target`; returns how many other people
     /// remain besides this account. The new seed is stored in the personal
     /// vault before anything else changes, so a crash cannot lose it.
     fn remove_person(&mut self, target: [u8; 64]) -> Result<usize> {
+        self.replace_key(Replace::Remove(target))
+    }
+
+    /// Replace the vault's seed and vault key as `replace` says; returns how
+    /// many other people remain besides this account.
+    pub(super) fn replace_key(&mut self, replace: Replace) -> Result<usize> {
         let identity = self
             .identity
             .clone()
@@ -134,7 +140,7 @@ impl Unlocked {
             .get(index)
             .ok_or_else(|| anyhow!("No shared vault is selected."))?;
         if item.my_role != Some(Role::Owner) {
-            return Err(anyhow!("Only owners can remove people."));
+            return Err(anyhow!("Only owners can change the key."));
         }
         let epoch = match &item.status {
             crate::vault::shared::Status::Ready(vault) => vault.log.epoch(),
@@ -152,7 +158,7 @@ impl Unlocked {
             let vault = item
                 .vault_mut()
                 .ok_or_else(|| anyhow!("That vault is still syncing."))?;
-            apply_rotation(vault, &next, &identity, Replace::Remove(target))?;
+            apply_rotation(vault, &next, &identity, replace)?;
             (
                 vault.log.members().len(),
                 build_cache(&vault.session).unwrap_or_default(),
@@ -161,6 +167,7 @@ impl Unlocked {
         let next = Arc::new(next);
         item.reference = Arc::clone(&next);
         item.people = people;
+        item.leaves = 0;
         item.cache = cache;
         item.stale = false;
         if let Some(p2p) = self.p2p.as_deref() {
