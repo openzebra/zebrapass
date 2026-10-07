@@ -212,6 +212,23 @@ pub enum Accept {
 }
 
 impl Responder {
+    /// Identifies the hello inside a first message, whether it arrives alone
+    /// or wrapped in a solved puzzle, so a transport can refuse to answer the
+    /// same hello twice however it is presented.
+    ///
+    /// # Errors
+    ///
+    /// `malformed handshake message` for a wrongly shaped message.
+    pub fn first_message_id(input: &[u8]) -> Result<[u8; 32]> {
+        let hello_bytes = match input.get(KIND_OFFSET) {
+            Some(&KIND_HELLO) => input,
+            Some(&KIND_SOLVED) => decode_solved(input)?.hello,
+            _ => return Err(anyhow::anyhow!("malformed handshake message")),
+        };
+        decode_hello(hello_bytes)?;
+        Ok(hello_hash(hello_bytes))
+    }
+
     /// Which of several vaults a first message is for: the one whose gate
     /// keys verify its tag. The hello names no vault, so an observer learns
     /// nothing about which one a peer wants. Every vault is tried, so the

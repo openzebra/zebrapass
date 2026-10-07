@@ -200,6 +200,8 @@ actions! {
     ShareLeave,
     /// Replace the key of the selected shared vault.
     ShareRekey,
+    /// Set the public address this device offers other members.
+    ShareAdvertise,
 }
 
 /// Where a palette entry is listed.

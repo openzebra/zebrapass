@@ -7,6 +7,7 @@ pub mod event;
 pub mod flows;
 pub mod idle;
 pub mod keymap;
+pub mod node;
 pub mod p2p;
 pub mod prefs;
 pub mod screen;

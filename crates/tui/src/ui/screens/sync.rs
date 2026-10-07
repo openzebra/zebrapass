@@ -198,6 +198,15 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
     }
     lines.push(blank());
     lines.push(node_line(state, theme));
+    if let Some(address) = state
+        .advertised()
+        .filter(|_| matches!(state.listen_mode(), Listen::Lan))
+    {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{INDENT}{:<14}", "offering"), theme.muted()),
+            Span::styled(address.to_owned(), theme.text()),
+        ]));
+    }
     lines
 }
 
@@ -228,6 +237,32 @@ fn name_lines(input: &TextInput, width: u16, theme: &Theme) -> Vec<Line<'static>
         Line::from(line),
         blank(),
         say("Enter makes it, and you become its owner.", theme.muted()),
+    ]
+}
+
+fn advertise_lines(input: &TextInput, width: u16, theme: &Theme) -> Vec<Line<'static>> {
+    let mut line = vec![Span::styled(format!("{INDENT}address  "), theme.muted())];
+    line.extend(
+        text_line(input, width.saturating_sub(12), true, theme)
+            .spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style)),
+    );
+    vec![
+        blank(),
+        heading("public address", theme),
+        say(
+            "Behind a router with a forwarded port? Write the address the world",
+            theme.text(),
+        ),
+        say(
+            "sees, as ip:port. Members are told to reach you there. Empty clears it.",
+            theme.text(),
+        ),
+        blank(),
+        Line::from(line),
+        blank(),
+        say("Enter saves · Esc cancels", theme.muted()),
     ]
 }
 
@@ -369,6 +404,7 @@ fn step_lines(
         }
         Step::LeaveConfirm(mode) => leave_confirm_lines(*mode, &vault_name, theme),
         Step::RekeyConfirm => rekey_confirm_lines(&vault_name, theme),
+        Step::Advertise(input) => advertise_lines(input, width, theme),
         Step::PasteInvite => prompt(
             "join a shared vault",
             "Paste the invitation you were given.",

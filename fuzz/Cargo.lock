@@ -128,7 +128,10 @@ version = "0.0.0"
 dependencies = [
  "container",
  "frame",
+ "kdf",
  "libfuzzer-sys",
+ "p2p-core",
+ "secret",
  "session",
  "syncwire",
 ]
@@ -456,6 +459,23 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
+]
+
+[[package]]
+name = "p2p-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ec",
+ "frame",
+ "getrandom",
+ "hmac",
+ "kdf",
+ "pq",
+ "secret",
+ "session",
+ "sha2",
+ "syncwire",
 ]
 
 [[package]]

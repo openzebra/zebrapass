@@ -226,6 +226,34 @@ fn the_same_hello_always_has_the_same_id_so_a_transport_can_refuse_replays() {
 }
 
 #[test]
+fn a_hello_has_one_id_alone_or_inside_a_solved_puzzle() {
+    let (initiator, hello) = hello_from(1, NOW);
+    let challenge = challenge_for(&hello, BUSY);
+    let solved = initiator.solve(&challenge).unwrap();
+    let alone = Responder::first_message_id(&hello).unwrap();
+    assert_eq!(
+        Responder::first_message_id(&solved).unwrap(),
+        alone,
+        "a replay cannot dodge the transport's memory by being re-solved"
+    );
+    let listener = node(0xB2);
+    let answered = match accept(&listener, Load::default(), &hello, NOW).unwrap() {
+        Accept::Reply(responder, _) => *responder.hello_id(),
+        Accept::Challenge(_) => panic!("unexpected challenge"),
+    };
+    assert_eq!(
+        alone, answered,
+        "the id before the reply is the id after it"
+    );
+
+    let (_, another) = hello_from(1, NOW);
+    assert_ne!(Responder::first_message_id(&another).unwrap(), alone);
+    assert!(Responder::first_message_id(&hello[..hello.len() - 1]).is_err());
+    assert!(Responder::first_message_id(&[]).is_err());
+    assert!(Responder::first_message_id(&challenge).is_err());
+}
+
+#[test]
 fn a_harder_puzzle_takes_more_work_to_solve() {
     let (initiator, hello) = hello_from(1, NOW);
     let cookies = CookieSecret::generate().unwrap();

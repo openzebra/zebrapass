@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use p2p_core::{CookieSecret, Load};
-use sha2::{Digest, Sha256};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use zeroize::Zeroizing;
@@ -104,8 +103,8 @@ struct Replay {
 }
 
 impl Replay {
-    /// Whether `hello` is new; remembers it either way.
-    fn fresh(&mut self, hello: &[u8]) -> bool {
+    /// Whether the hello with this id is new; remembers it either way.
+    fn fresh(&mut self, key: [u8; 32]) -> bool {
         let now = Instant::now();
         while let Some((at, key)) = self.order.front().copied() {
             if now.duration_since(at) > REPLAY_WINDOW || self.order.len() >= REPLAY_CAPACITY {
@@ -115,7 +114,6 @@ impl Replay {
                 break;
             }
         }
-        let key: [u8; 32] = Sha256::digest(hello).into();
         if !self.seen.insert(key) {
             return false;
         }
@@ -390,7 +388,11 @@ async fn admit<P: Provider>(
     shared: &Shared,
 ) -> Option<Admitted> {
     let first = first_message(tcp).await.ok()?;
-    let fresh = shared.replay.lock().ok()?.fresh(&first);
+    let fresh = shared
+        .replay
+        .lock()
+        .ok()?
+        .fresh(p2p_core::Responder::first_message_id(&first).ok()?);
     if !fresh {
         return None;
     }

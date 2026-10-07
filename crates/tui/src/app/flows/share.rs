@@ -59,6 +59,8 @@ pub enum Step {
     LeaveConfirm(LeaveMode),
     /// Replacing the selected vault's key.
     RekeyConfirm,
+    /// Writing the public address to offer members.
+    Advertise(TextInput),
     /// Waiting for a pasted invitation.
     PasteInvite,
     /// An opened invitation: check who it is from and which vault.
@@ -172,6 +174,10 @@ impl Unlocked {
                 input.insert_str(text);
                 Step::Name(input)
             }
+            Step::Advertise(mut input) => {
+                input.insert_str(text);
+                Step::Advertise(input)
+            }
             other => other,
         };
         if let Some(share) = self.share_mut() {
@@ -256,6 +262,7 @@ impl Unlocked {
             } => Next::Stay(self.role_confirm_step(target, print, (from, to), action, ctx)),
             Step::LeaveConfirm(mode) => Next::Stay(self.leave_step(mode, action, ctx)),
             Step::RekeyConfirm => Next::Stay(self.rekey_step(action, ctx)),
+            Step::Advertise(input) => Next::Stay(self.advertise_step(input, action, event, ctx)),
             Step::RemoveConfirm {
                 target,
                 print,
@@ -294,6 +301,7 @@ impl Unlocked {
             Some(Action::ShareRole) => return Next::Stay(self.begin_role(ctx)),
             Some(Action::ShareLeave) => return Next::Stay(self.begin_leave(ctx)),
             Some(Action::ShareRekey) => return Next::Stay(self.begin_rekey(ctx)),
+            Some(Action::ShareAdvertise) => return Next::Stay(self.begin_advertise()),
             Some(Action::ShareRetry) => self.retry_selected(ctx),
             Some(Action::ShareListen) => self.cycle_listen(ctx),
             _ => {}

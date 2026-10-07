@@ -60,3 +60,19 @@ path = "fuzz_targets/sync_wire.rs"
 test = false
 doc = false
 bench = false
+
+[dependencies.p2p-core]
+path = "../crates/p2p-core"
+
+[dependencies.secret]
+path = "../crates/secret"
+
+[dependencies.kdf]
+path = "../crates/kdf"
+
+[[bin]]
+name = "handshake"
+path = "fuzz_targets/handshake.rs"
+test = false
+doc = false
+bench = false

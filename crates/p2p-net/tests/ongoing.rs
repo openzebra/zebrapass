@@ -504,3 +504,19 @@ fn three_nodes_editing_at_random_settle_on_the_same_vault() {
     println!("soak: {made} created, {changed} edited, {removed} deleted, {rounds} check-ins");
     assert!(made > 0 && rounds > 0);
 }
+
+#[test]
+fn an_advertised_address_reaches_the_members_ahead_of_the_others() {
+    use p2p_net::Provider;
+    let [alice, bob, _] = trio();
+    let vault = alice.reference.vault_id;
+    let public = String::from("93.184.216.34:7447");
+    bob.provider
+        .set_hints(vec![public.clone(), bob.addr.clone()]);
+    assert_eq!(bob.check_in(&[&alice]), (0, 0, 0));
+    assert_eq!(
+        alice.provider.peer_hints(&vault),
+        [public, bob.addr],
+        "the advertised address comes first and both are kept"
+    );
+}

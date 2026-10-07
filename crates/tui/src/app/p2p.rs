@@ -4,12 +4,11 @@
 //! It starts only when there is a shared vault to serve, listens only where
 //! the user's setting says, and the interface always shows its state.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use local::{Listen, SyncIdentity};
-use p2p_net::{finish_join, reachable_hints, Event, FetchError, Joined, Service, SharedProvider};
+use p2p_net::{finish_join, Event, FetchError, Joined};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::home::Filter;
@@ -19,85 +18,7 @@ use crate::vault::records::Summary;
 use crate::vault::shared::{references, SharedItem, Status};
 use crate::vault::Vault;
 
-/// The port a node tries first, so an invitation stays valid across runs.
-const PORT: u16 = 7447;
-
-/// How long an open shared vault goes without trading revisions.
-const CHECK_EVERY: Duration = Duration::from_secs(15);
-
-/// The running node and what it signs with. Dropping it stops the node and
-/// wipes the identity copy it holds.
-pub struct P2p {
-    /// The network service.
-    pub service: Service,
-    /// What the node serves.
-    pub provider: Arc<SharedProvider>,
-    /// This device's identity.
-    pub identity: Arc<SyncIdentity>,
-    /// Where it was told to listen.
-    pub listen: Listen,
-    checked: Instant,
-}
-
-impl std::fmt::Debug for P2p {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("P2p")
-            .field("status", &self.service.status())
-            .finish_non_exhaustive()
-    }
-}
-
-impl P2p {
-    /// Start a node for `identity` over the shared vaults under `base`.
-    #[must_use]
-    pub fn start(base: &Path, identity: Arc<SyncIdentity>, listen: Listen) -> Option<Box<Self>> {
-        let provider = Arc::new(SharedProvider::new(
-            base.to_path_buf(),
-            Arc::clone(&identity),
-        ));
-        let bind = |port: u16| match listen {
-            Listen::Off => None,
-            Listen::Local => Some(format!("127.0.0.1:{port}")),
-            Listen::Lan => Some(format!("0.0.0.0:{port}")),
-        };
-        let service = Service::start(bind(PORT).as_deref(), Arc::clone(&provider))
-            .or_else(|_| Service::start(bind(0).as_deref(), Arc::clone(&provider)))
-            .ok()?;
-        let node = Box::new(Self {
-            service,
-            provider,
-            identity,
-            listen,
-            checked: Instant::now(),
-        });
-        node.provider.set_hints(node.hints());
-        Some(node)
-    }
-
-    /// Whether it is time to check in with the members again; restarts the
-    /// wait when it is.
-    pub fn check_due(&mut self) -> bool {
-        let due = self.checked.elapsed() >= CHECK_EVERY && self.service.status().fetching == 0;
-        if due {
-            self.checked = Instant::now();
-        }
-        due
-    }
-
-    /// Where other devices can reach this node; empty when it listens
-    /// nowhere.
-    #[must_use]
-    pub fn hints(&self) -> Vec<String> {
-        let Some(port) = self.service.local_addr().map(|addr| addr.port()) else {
-            return Vec::new();
-        };
-        match self.listen {
-            Listen::Off => Vec::new(),
-            Listen::Local => vec![format!("127.0.0.1:{port}")],
-            Listen::Lan => reachable_hints(port),
-        }
-    }
-}
+pub use crate::app::node::P2p;
 
 /// What a freshly unlocked personal vault brings up.
 pub struct Setup {
@@ -143,7 +64,12 @@ pub fn setup(vault: &Vault) -> Setup {
     let p2p = if shared.is_empty() {
         None
     } else {
-        P2p::start(base, Arc::clone(&identity), listen)
+        let advertise = vault
+            .meta
+            .prefs
+            .as_ref()
+            .and_then(|prefs| prefs.p2p_advertise.clone());
+        P2p::start(base, Arc::clone(&identity), listen, advertise)
     };
     if let Some(p2p) = p2p.as_deref() {
         for item in &shared {
@@ -203,6 +129,15 @@ impl Unlocked {
             .map_or_else(Listen::default, |prefs| prefs.p2p_listen)
     }
 
+    /// The address this device advertises, from the saved setting.
+    #[must_use]
+    pub fn advertised(&self) -> Option<&str> {
+        self.info
+            .prefs
+            .as_ref()
+            .and_then(|prefs| prefs.p2p_advertise.as_deref())
+    }
+
     /// Start the node if it is not running and the vault has an identity.
     /// Returns whether a node runs afterwards.
     pub fn ensure_p2p(&mut self) -> bool {
@@ -212,7 +147,12 @@ impl Unlocked {
         let Some(identity) = self.identity.clone() else {
             return false;
         };
-        self.p2p = P2p::start(&self.base, identity, self.listen_mode());
+        self.p2p = P2p::start(
+            &self.base,
+            identity,
+            self.listen_mode(),
+            self.advertised().map(Box::from),
+        );
         if let Some(p2p) = self.p2p.as_deref() {
             for item in &self.shared {
                 p2p.provider.serve(Arc::clone(&item.reference));

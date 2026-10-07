@@ -5,6 +5,7 @@
 //! device's metadata. The metadata never syncs; its key is derived from
 //! the vault key with a dedicated info.
 
+mod address;
 mod atomic;
 mod attest_store;
 mod device_key;
@@ -29,6 +30,7 @@ use aead::BodyAlg;
 use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
+pub use address::{never_dialable, parse_advertise};
 pub use atomic::write_atomic;
 pub use attest_store::AttestStore;
 pub use device_key::{

@@ -8,13 +8,14 @@
 
 use record::{
     Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER,
-    TAG_PREF_P2P_LISTEN, TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN,
-    TAG_PREF_SYNC_MODE, TAG_PREF_THEME,
+    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_LISTEN, TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN,
+    TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE, TAG_PREF_THEME,
 };
 
+use crate::address::parse_advertise;
 use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
 
-const TAGS: [u16; 9] = [
+const TAGS: [u16; 10] = [
     TAG_PREF_LOCK_AFTER,
     TAG_PREF_CLIP_CLEAR,
     TAG_PREF_REVEAL_HIDE,
@@ -24,6 +25,7 @@ const TAGS: [u16; 9] = [
     TAG_PREF_SERVER_ORIGIN,
     TAG_PREF_SERVER_PIN,
     TAG_PREF_P2P_LISTEN,
+    TAG_PREF_P2P_ADVERTISE,
 ];
 
 const FLAG_ANIM: u8 = 1;
@@ -142,6 +144,9 @@ pub struct Prefs {
     pub focus_lock: bool,
     /// Where the sync node accepts connections.
     pub p2p_listen: Listen,
+    /// The address, as `ip:port`, this device offers other members when it
+    /// sits behind a port forward; validated by [`parse_advertise`].
+    pub p2p_advertise: Option<Box<str>>,
 }
 
 impl Default for Prefs {
@@ -158,6 +163,7 @@ impl Default for Prefs {
             ascii: false,
             focus_lock: false,
             p2p_listen: Listen::Lan,
+            p2p_advertise: None,
         }
     }
 }
@@ -188,6 +194,9 @@ impl Prefs {
             ValueType::Bytes,
             &[u8::from(self.p2p_listen)],
         );
+        if let Some(address) = self.p2p_advertise.as_deref() {
+            doc.set_text(TAG_PREF_P2P_ADVERTISE, address);
+        }
         if let Some(origin) = self.server_origin.as_deref() {
             doc.set_text(TAG_PREF_SERVER_ORIGIN, origin);
         }
@@ -234,6 +243,10 @@ impl Prefs {
             .map(|origin| parse_origin(origin).map_err(|_| out_of_range()))
             .transpose()?;
         let server_key_pin = doc.data(TAG_PREF_SERVER_PIN)?.map(fixed).transpose()?;
+        let p2p_advertise = doc
+            .text(TAG_PREF_P2P_ADVERTISE)?
+            .map(|address| parse_advertise(address).map_err(|_| out_of_range()))
+            .transpose()?;
         Ok(Self {
             server_origin,
             server_key_pin,
@@ -247,6 +260,7 @@ impl Prefs {
             focus_lock: flags & FLAG_FOCUS_LOCK != 0,
             p2p_listen: byte(doc, TAG_PREF_P2P_LISTEN)?
                 .map_or(Ok(defaults.p2p_listen), Listen::try_from)?,
+            p2p_advertise,
         })
     }
 
@@ -346,7 +360,15 @@ mod tests {
             ascii: true,
             focus_lock: true,
             p2p_listen: Listen::Off,
+            p2p_advertise: Some("93.184.216.34:7447".into()),
         }
+    }
+
+    #[test]
+    fn a_saved_advertised_address_that_does_not_validate_is_an_error() {
+        let mut doc = written(&custom());
+        doc.set_text(record::TAG_PREF_P2P_ADVERTISE, "localhost:7447");
+        assert!(Prefs::read(&doc).is_err());
     }
 
     fn written(prefs: &Prefs) -> Document {

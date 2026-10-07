@@ -73,6 +73,10 @@ pub const TAG_PREF_SERVER_PIN: u16 = 0x0217;
 /// Where this device's sync node listens, 1 byte (`Bytes`).
 pub const TAG_PREF_P2P_LISTEN: u16 = 0x0218;
 
+/// The public `ip:port` this device tells other members to reach it at, text
+/// (`Text`).
+pub const TAG_PREF_P2P_ADVERTISE: u16 = 0x0219;
+
 /// Record copy usage on this device: packed 16-byte entries
 /// `id u32 LE ‖ count u32 LE ‖ last_ms u64 LE`, sorted by id (`Bytes`).
 pub const TAG_USAGE: u16 = 0x0220;

@@ -11,6 +11,8 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+use local::never_dialable;
+
 /// How strictly learned addresses are filtered.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Policy {
@@ -18,29 +20,9 @@ pub struct Policy {
     pub loopback: bool,
 }
 
-const fn v4_never(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    ip.is_unspecified()
-        || ip.is_multicast()
-        || ip.is_broadcast()
-        || ip.is_link_local()
-        || ip.is_documentation()
-        || octets[0] == 0
-        || octets[0] >= 240
-        || (octets[0] == 198 && (octets[1] & 0xFE) == 18)
-}
-
 const fn v4_shared(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
     ip.is_private() || (octets[0] == 100 && (octets[1] & 0xC0) == 64)
-}
-
-const fn v6_never(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
-    ip.is_unspecified()
-        || ip.is_multicast()
-        || (first & 0xFFC0) == 0xFE80
-        || (first == 0x2001 && ip.segments()[1] == 0x0DB8)
 }
 
 const fn v6_shared(ip: Ipv6Addr) -> bool {
@@ -66,9 +48,10 @@ impl Policy {
         if ip.is_loopback() {
             return self.loopback;
         }
+        if never_dialable(ip) {
+            return false;
+        }
         let shared = match ip {
-            IpAddr::V4(v4) if v4_never(v4) => return false,
-            IpAddr::V6(v6) if v6_never(v6) => return false,
             IpAddr::V4(v4) => v4_shared(v4),
             IpAddr::V6(v6) => v6_shared(v6),
         };

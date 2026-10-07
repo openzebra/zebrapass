@@ -24,6 +24,7 @@ pub mod panels;
 pub mod restore;
 pub mod settings;
 pub mod share;
+pub mod share_advertise;
 pub mod share_file;
 pub mod share_leave;
 pub mod share_ops;
