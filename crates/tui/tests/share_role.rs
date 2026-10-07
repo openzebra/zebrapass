@@ -25,7 +25,10 @@ use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
 use tui::App;
 
-use common::{app, make_vault, press, render, temp_dir, tick, type_text, unlock, wait, PASSWORD};
+use common::{
+    app, keep_to_this_device, make_vault, press, render, temp_dir, tick, type_text, unlock, wait,
+    PASSWORD,
+};
 
 fn state(app: &App) -> &Unlocked {
     let Screen::Unlocked(state) = &app.screen else {
@@ -44,6 +47,7 @@ fn share(app: &App) -> &ShareState {
 fn signed_in(tag: &str) -> App {
     let base = temp_dir(tag);
     make_vault(&base);
+    keep_to_this_device(&base);
     let mut app = app(&base);
     unlock(&mut app, PASSWORD);
     app

@@ -284,7 +284,14 @@ pub fn adopt_shared_file(
     session.set_origin_device(own.device_id)?;
     let paths = shared_paths_for(base, &reference.vault_id);
     let log = load_log_any(&paths, reference)?;
-    let attest = attested_store(&session, &log, attestations, AttestStore::default())?;
+    let state = load_state_any(&paths, reference)?;
+    let attest = attested_store(
+        &session,
+        &log,
+        attestations,
+        state.revocations.all(),
+        AttestStore::default(),
+    )?;
     write_atomic(&paths.vault_file, file.as_bytes())?;
     let mut meta = LocalMeta {
         device_id: own.device_id,
@@ -296,7 +303,6 @@ pub fn adopt_shared_file(
         usage: Usage::default(),
     };
     mark_seen(&paths, &mut meta, &session)?;
-    let state = load_state_any(&paths, reference)?;
     let keys = file_keys(&reference.seed, &reference.vault_id)?;
     attest.save(&paths.attest_store(), &keys.attest)?;
     Ok(SharedVault {

@@ -89,10 +89,12 @@ impl Conn {
     ///
     /// # Errors
     ///
-    /// [`FetchError::Unreachable`] when nobody answers,
+    /// [`FetchError::Unreachable`] when nobody answers or the address is not
+    /// one this device may dial,
     /// [`FetchError::Refused`] when the peer turns this device away or its
     /// answer does not verify, [`FetchError::Failed`] otherwise.
     pub async fn connect(view: &VaultView, addr: &str) -> Outcome<Self> {
+        let addr = view.dialing.resolve(addr).ok_or(FetchError::Unreachable)?;
         let mut tcp = timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
             .await
             .map_err(|_| FetchError::Unreachable)?

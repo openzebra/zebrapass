@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use p2p_core::{Account, CookieSecret, Load};
 use p2p_net::{
-    authenticate, fetch, first_message, serve_requests_with, Conn, Limits, Provider, Service,
-    Tickets, VaultView,
+    authenticate, fetch, first_message, serve_requests_with, Conn, Dialing, Limits, Policy,
+    Provider, Service, Tickets, VaultView,
 };
 use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -62,6 +62,10 @@ impl Dev {
                 .collect(),
             revoked,
             gate_keys: vec![kdf::p2p_gate_key(&[gate; 32], &VAULT).unwrap()],
+            dialing: Dialing {
+                policy: Policy { loopback: true },
+                trusted: Vec::new(),
+            },
         }
     }
 }
@@ -355,6 +359,35 @@ fn a_failed_fetch_says_why() {
 
 fn member_view() -> VaultView {
     client_dev().view(&[(1, [1; 32])], 5, Vec::new())
+}
+
+#[test]
+fn an_address_the_policy_forbids_is_never_dialed() {
+    use p2p_net::FetchError;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let own = listener.local_addr().unwrap().to_string();
+    let mut view = member_view();
+    view.dialing = Dialing::default();
+    block_on(async {
+        for hint in [
+            own.as_str(),
+            "localhost:7447",
+            "169.254.169.254:80",
+            "10.0.0.8:80",
+            "[::1]:7447",
+            "[fd00::1]:7447",
+            "192.168.1.9:0",
+            "no-port",
+        ] {
+            assert_eq!(
+                Conn::connect(&view, hint).await.err(),
+                Some(FetchError::Unreachable),
+                "{hint}"
+            );
+        }
+    });
+    assert!(listener.accept().is_err(), "nothing connected");
 }
 
 #[test]

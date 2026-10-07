@@ -9,9 +9,10 @@
 use record::{Document, TAG_TITLE};
 use session::{
     accept_revision, attest_latest, create, delete_record, frontier, issue_device_cert,
-    latest_frame, list_records, open_record, plain_digest, rotate_vault_key, sync_verifying_key,
-    unlock, write_record, Attestation, BodyAlg, DeviceCert, DeviceSignKey, KdfProfile, RotateCreds,
-    Session, SessionError, TrustedAccount, UnlockCreds, VaultFile, SYNC_VK_LEN,
+    issue_revocation, latest_frame, list_records, open_record, plain_digest, rotate_vault_key,
+    sync_verifying_key, unlock, verify_snapshot, write_record, write_vault_meta, Attestation,
+    BodyAlg, DeviceCert, DeviceSignKey, KdfProfile, RotateCreds, Session, SessionError, Trust,
+    TrustedAccount, UnlockCreds, VaultFile, SYNC_VK_LEN,
 };
 
 const SEED: [u8; 64] = [0x42; 64];
@@ -96,7 +97,10 @@ fn accept(
         &mut to.0,
         frame,
         attestation,
-        accounts,
+        &Trust {
+            accounts,
+            revoked: &[],
+        },
         NOW,
         |_| None,
     )
@@ -301,7 +305,10 @@ fn a_seen_revision_is_never_accepted_below_it() {
         &mut b.0,
         &frame,
         &attestation,
-        &accounts,
+        &Trust {
+            accounts: &accounts,
+            revoked: &[],
+        },
         NOW,
         |record| (record == 7).then_some(5),
     );
@@ -412,4 +419,77 @@ fn two_frontiers_say_what_each_side_lacks_and_agree_on_who_wins() {
     assert_eq!(reconcile(&local, &local), session::Reconcile::default());
     assert_eq!(reconcile(&[], &remote).pull, vec![1, 2, 5, 7]);
     assert_eq!(reconcile(&local, &[]).push, vec![1, 3, 5, 7]);
+}
+
+#[test]
+fn a_revoked_signer_is_refused_live_and_in_a_snapshot() {
+    let alice = person(1, u64::MAX);
+    let bob = person(2, u64::MAX);
+    let (_, mut sessions) = replicas(&[&alice, &bob]);
+    let mut b = sessions.pop().unwrap();
+    let mut a = sessions.pop().unwrap();
+    let (attestation, frame) = write(&alice, &mut a, 7, "wifi");
+    let accounts = [account(&alice, true), account(&bob, true)];
+    let revocation = issue_revocation(&alice.key, &alice.cert, &alice.cert, NOW).unwrap();
+
+    let snapshot = verify_snapshot(
+        &a.1,
+        std::slice::from_ref(&attestation),
+        &trust(&accounts, &[]),
+        NOW,
+    );
+    assert!(snapshot.is_ok());
+    let snapshot = verify_snapshot(
+        &a.1,
+        std::slice::from_ref(&attestation),
+        &trust(&accounts, std::slice::from_ref(&revocation)),
+        NOW,
+    );
+    assert_eq!(why_any(snapshot), "device cert rejected");
+
+    let live = accept_revision(
+        &mut b.1,
+        &mut b.0,
+        &frame,
+        &attestation,
+        &Trust {
+            accounts: &accounts,
+            revoked: &[revocation],
+        },
+        NOW,
+        |_| None,
+    );
+    assert_eq!(why(live), "device cert rejected");
+    assert!(list_records(&b.1).unwrap().is_empty());
+}
+
+#[test]
+fn a_snapshot_with_a_planted_vault_record_is_refused() {
+    let alice = person(1, u64::MAX);
+    let (_, mut sessions) = replicas(&[&alice]);
+    let mut a = sessions.pop().unwrap();
+    let (attestation, _) = write(&alice, &mut a, 7, "wifi");
+    let accounts = [account(&alice, true)];
+    assert!(verify_snapshot(
+        &a.1,
+        std::slice::from_ref(&attestation),
+        &trust(&accounts, &[]),
+        NOW
+    )
+    .is_ok());
+
+    write_vault_meta(&mut a.1, &mut a.0, &titled("planted")).unwrap();
+    let planted = verify_snapshot(&a.1, &[attestation], &trust(&accounts, &[]), NOW);
+    assert_eq!(why_any(planted), "attestation mismatch");
+}
+
+fn why_any<T>(result: anyhow::Result<T>) -> String {
+    result.err().unwrap().to_string()
+}
+
+const fn trust<'a, 'b>(
+    accounts: &'a [TrustedAccount<'b>],
+    revoked: &'a [session::Revocation],
+) -> Trust<'a, 'b> {
+    Trust { accounts, revoked }
 }

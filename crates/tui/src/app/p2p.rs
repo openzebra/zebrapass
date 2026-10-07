@@ -324,17 +324,36 @@ impl Unlocked {
             return;
         };
         let (name, was_ready) = (item.name().to_owned(), item.ready());
-        let joined = finish_join(
-            &base,
-            &item.reference,
-            &identity,
-            log,
-            snapshot,
-            rekey,
-            item.known(),
-        );
+        let joined = p2p
+            .provider
+            .locked(|| {
+                finish_join(
+                    &base,
+                    &item.reference,
+                    &identity,
+                    log,
+                    snapshot,
+                    rekey,
+                    item.known(),
+                )
+            })
+            .unwrap_or_else(|| Err(anyhow::anyhow!("shared vault unavailable")));
         match joined {
             Ok(Joined::Opened(vault)) => {
+                let settled = self
+                    .shared
+                    .get(index)
+                    .map(|item| Arc::new(item.reference.settled()));
+                // A failed store keeps the introduction, which only matters
+                // while the vault is pending.
+                if let Some(settled) = settled.filter(|settled| self.save_reference(settled)) {
+                    if let Some(p2p) = self.p2p.as_deref() {
+                        p2p.provider.serve(Arc::clone(&settled));
+                    }
+                    if let Some(item) = self.shared.get_mut(index) {
+                        item.reference = settled;
+                    }
+                }
                 if let Some(item) = self.shared.get_mut(index) {
                     item.adopt(*vault, &identity);
                     let message = format!("{name} is synced: {} records.", item.cache.len());
@@ -366,7 +385,7 @@ impl Unlocked {
     /// new reference first, then move the files. A crash between the two
     /// leaves files that still open through the retired seed.
     fn take_new_key(&mut self, index: usize, plan: local::RekeyPlan, ctx: &mut Ctx) {
-        let reference = Arc::new(plan.reference().duplicate());
+        let reference = Arc::new(plan.reference().settled());
         if !self.save_reference(&reference) {
             ctx.toast(Tone::Danger, "Could not store the new key. Try again.");
             return;

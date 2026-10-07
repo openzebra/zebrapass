@@ -17,6 +17,7 @@ use tokio::runtime::{Builder, Runtime};
 use zeroize::Zeroizing;
 
 use crate::client::{fetch_paths, FetchError};
+use crate::io::now_ms;
 use crate::limits::{HandshakeSlot, Limits, Tickets};
 use crate::server::{authenticate, first_message, serve_requests_with};
 use crate::view::{Provider, VaultView};
@@ -28,6 +29,10 @@ const MAX_HANDSHAKES: usize = 32;
 const FREE_HANDSHAKES: usize = 6;
 
 /// Hellos remembered to refuse a replay, and for how long.
+/// Threads for work that touches the disk. Well under the peers times streams
+/// a node admits, so an authenticated flood cannot starve new handshakes of
+/// the threads they need.
+const MAX_BLOCKING: usize = 128;
 const REPLAY_CAPACITY: usize = 4096;
 const REPLAY_WINDOW: Duration = Duration::from_secs(120);
 
@@ -103,18 +108,24 @@ struct Replay {
 }
 
 impl Replay {
-    /// Whether the hello with this id is new; remembers it either way.
+    /// Whether the hello with this id has not been seen in the window.
+    fn unseen(&self, key: &[u8; 32]) -> bool {
+        !self.seen.contains(key)
+    }
+
+    /// Whether the hello with this id is new, remembering it if so. Entries
+    /// leave only when they expire: when the cache is full of live ones the
+    /// hello is refused, so flooding never frees a slot for a replay.
     fn fresh(&mut self, key: [u8; 32]) -> bool {
         let now = Instant::now();
-        while let Some((at, key)) = self.order.front().copied() {
-            if now.duration_since(at) > REPLAY_WINDOW || self.order.len() >= REPLAY_CAPACITY {
-                self.order.pop_front();
-                self.seen.remove(&key);
-            } else {
+        while let Some((at, old)) = self.order.front().copied() {
+            if now.duration_since(at) <= REPLAY_WINDOW {
                 break;
             }
+            self.order.pop_front();
+            self.seen.remove(&old);
         }
-        if !self.seen.insert(key) {
+        if self.order.len() >= REPLAY_CAPACITY || !self.seen.insert(key) {
             return false;
         }
         self.order.push_back((now, key));
@@ -165,6 +176,7 @@ impl Service {
     ) -> Result<Self> {
         let runtime = Builder::new_multi_thread()
             .worker_threads(2)
+            .max_blocking_threads(MAX_BLOCKING)
             .thread_name("zebrapass-p2p")
             .enable_all()
             .build()?;
@@ -388,12 +400,8 @@ async fn admit<P: Provider>(
     shared: &Shared,
 ) -> Option<Admitted> {
     let first = first_message(tcp).await.ok()?;
-    let fresh = shared
-        .replay
-        .lock()
-        .ok()?
-        .fresh(p2p_core::Responder::first_message_id(&first).ok()?);
-    if !fresh {
+    let id = p2p_core::Responder::first_message_id(&first).ok()?;
+    if !shared.replay.lock().ok()?.unseen(&id) {
         return None;
     }
     let views = {
@@ -402,6 +410,13 @@ async fn admit<P: Provider>(
             .await
             .ok()?
     };
+    // Only a hello that passes a vault's gate is remembered, so a stranger
+    // cannot fill the cache.
+    let locals: Vec<_> = views.iter().map(VaultView::local).collect();
+    p2p_core::Responder::route(&locals, &first, now_ms()).ok()?;
+    if !shared.replay.lock().ok()?.fresh(id) {
+        return None;
+    }
     let (index, peer, channel) = authenticate(tcp, &views, cookies, load, first).await.ok()?;
     Some((views, index, peer, channel))
 }
@@ -427,4 +442,46 @@ pub fn reachable_hints(port: u16) -> Vec<String> {
     }
     hints.push(format!("127.0.0.1:{port}"));
     hints
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replayed_hello_is_refused() {
+        let mut replay = Replay::default();
+        assert!(replay.unseen(&[1; 32]));
+        assert!(replay.fresh([1; 32]));
+        assert!(!replay.unseen(&[1; 32]));
+        assert!(!replay.fresh([1; 32]));
+    }
+
+    #[test]
+    fn a_full_cache_refuses_new_hellos_and_never_forgets_live_ones() {
+        let mut replay = Replay::default();
+        for n in 0..REPLAY_CAPACITY {
+            let mut key = [0u8; 32];
+            key[..8].copy_from_slice(&u64::try_from(n).unwrap().to_be_bytes());
+            assert!(replay.fresh(key));
+        }
+        assert!(!replay.fresh([0xFF; 32]));
+        assert!(
+            !replay.fresh([0; 32]),
+            "the oldest live entry is still held"
+        );
+    }
+
+    #[test]
+    fn expired_entries_free_their_place() {
+        let mut replay = Replay::default();
+        let old = Instant::now()
+            .checked_sub(REPLAY_WINDOW + Duration::from_secs(1))
+            .unwrap();
+        replay.order.push_back((old, [7; 32]));
+        replay.seen.insert([7; 32]);
+        assert!(replay.fresh([8; 32]));
+        assert!(replay.unseen(&[7; 32]));
+    }
 }

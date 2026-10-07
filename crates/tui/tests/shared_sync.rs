@@ -34,7 +34,7 @@ use tui::vault::open::{unlock_vault, Credential};
 use tui::App;
 use zeroize::Zeroizing;
 
-use common::{app, make_vault, render, tick, unlock, PASSWORD};
+use common::{app, keep_to_this_device, make_vault, render, tick, unlock, PASSWORD};
 
 fn titled(text: &str) -> Document {
     let mut doc = Document::new();
@@ -56,6 +56,7 @@ fn now() -> u64 {
 /// Bob's personal vault on disk, locked, and his identity.
 fn bobs_vault(base: &Path) -> (tui::vault::Vault, SyncIdentity) {
     make_vault(base);
+    keep_to_this_device(base);
     let found = tui::vault::discover::discover(base);
     let paths = found.into_iter().next().unwrap().paths;
     let vault = unlock_vault(

@@ -98,6 +98,16 @@ impl SharedRef {
         }
     }
 
+    /// The reference once the vault is open: the introduction has done its
+    /// work and is forgotten.
+    #[must_use]
+    pub fn settled(&self) -> Self {
+        Self {
+            introduction: None,
+            ..self.duplicate()
+        }
+    }
+
     /// The reference after a rotation: `seed` becomes current at `epoch`, the
     /// seed it replaces is retired (the oldest are forgotten past the
     /// bound).

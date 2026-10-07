@@ -15,7 +15,7 @@ use memberlog::MemberLog;
 use session::{DeviceCert, DeviceSignKey, PeerRecord, PEER_MAX_AGE_MS};
 use syncwire::{decode_peers, encode_peers, MAX_PEERS};
 
-use crate::dialable::Policy;
+use crate::dialable::{Dialing, Policy};
 use crate::io::now_ms;
 
 /// Records kept in all; the oldest are dropped first.
@@ -42,6 +42,22 @@ impl PeerBook {
     pub fn set_own(&self, hints: Vec<String>) {
         if let Ok(mut own) = self.own.lock() {
             *own = hints;
+        }
+    }
+
+    /// What this device may dial: loopback if allowed, and its own networks
+    /// as the only private ones.
+    #[must_use]
+    pub fn dialing(&self) -> Dialing {
+        Dialing {
+            policy: Policy {
+                loopback: self.loopback.load(Ordering::Relaxed),
+            },
+            trusted: self
+                .own
+                .lock()
+                .map(|own| own.iter().filter_map(|hint| hint.parse().ok()).collect())
+                .unwrap_or_default(),
         }
     }
 

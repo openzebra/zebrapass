@@ -86,6 +86,23 @@ pub fn make_vault(base: &Path) -> String {
     words
 }
 
+/// Make the node of the vault under `base` listen on this device only, which
+/// is the mode where loopback peers are dialed: tests run every device on one
+/// machine.
+pub fn keep_to_this_device(base: &Path) {
+    use tui::vault::discover::discover;
+    use tui::vault::open::{unlock_vault, Credential};
+    use tui::vault::ops::{apply, Op};
+    let paths = discover(base).first().unwrap().paths.clone();
+    let password = Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec()));
+    let mut vault = unlock_vault(paths, password).unwrap();
+    let prefs = local::Prefs {
+        p2p_listen: local::Listen::Local,
+        ..local::Prefs::default()
+    };
+    apply(&mut vault, Op::SavePrefs(Box::new(prefs))).unwrap();
+}
+
 /// Parse a normalized phrase back.
 pub fn phrase(words: &str) -> SeedPhrase {
     let phrase = SecretString::new(words.to_owned().into_boxed_str());

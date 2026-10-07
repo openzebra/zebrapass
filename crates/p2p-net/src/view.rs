@@ -6,6 +6,8 @@ use secret::Secret;
 use session::{DeviceCert, DeviceSignKey, Revocation};
 use zeroize::Zeroizing;
 
+use crate::dialable::Dialing;
+
 /// Everything the handshake needs for one vault, owned so it can cross
 /// tasks.
 #[derive(Debug)]
@@ -22,6 +24,8 @@ pub struct VaultView {
     pub revoked: Vec<Revocation>,
     /// Gate keys, the newest first.
     pub gate_keys: Vec<Secret<[u8; 32]>>,
+    /// Which addresses this device may dial for the vault.
+    pub dialing: Dialing,
 }
 
 impl VaultView {

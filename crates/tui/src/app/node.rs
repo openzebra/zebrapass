@@ -53,6 +53,9 @@ impl P2p {
             base.to_path_buf(),
             Arc::clone(&identity),
         ));
+        if matches!(listen, Listen::Local) {
+            provider.allow_loopback_peers();
+        }
         let bind = |port: u16| match listen {
             Listen::Off => None,
             Listen::Local => Some(format!("127.0.0.1:{port}")),

@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use memberlog::{rotation_commit, Action, Entry, MemberLog};
-use secret::Secret;
+use secret::{ct_eq_32, Secret};
 use session::{rotate_vault_key, unlock, Attestation, RotateCreds, UnlockCreds, VaultFile};
 
 use crate::meta::LocalMeta;
@@ -214,7 +214,12 @@ pub fn prepare_rekey(
     let honest = new.vault_id == old.vault_id
         && new.anchor == old.anchor
         && new.epoch == log.epoch()
-        && committed == Some(rotation_commit(&old.vault_id, new.epoch, new.seed.expose()));
+        && committed.is_some_and(|held| {
+            ct_eq_32(
+                &held,
+                &rotation_commit(&old.vault_id, new.epoch, new.seed.expose()),
+            )
+        });
     let introduced = !crate::shared::is_pending(base, old)
         || old
             .introduction
@@ -236,6 +241,7 @@ pub fn prepare_rekey(
         &session,
         &log,
         attestations,
+        state.revocations.all(),
         crate::shared::load_attest_any(&paths, old)?,
     )?;
     Ok(RekeyPlan {
@@ -280,6 +286,7 @@ pub fn is_behind(reference: &SharedRef, log: &MemberLog) -> bool {
 #[must_use]
 pub fn seed_matches_log(log: &MemberLog, epoch: u32, seed: &Secret<[u8; 64]>) -> bool {
     log.epoch() == epoch
-        && log.commit_for(epoch).copied()
-            == Some(rotation_commit(log.vault_id(), epoch, seed.expose()))
+        && log.commit_for(epoch).is_some_and(|held| {
+            ct_eq_32(held, &rotation_commit(log.vault_id(), epoch, seed.expose()))
+        })
 }

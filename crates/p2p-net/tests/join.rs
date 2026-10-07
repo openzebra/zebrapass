@@ -108,6 +108,7 @@ fn world() -> World {
     write_record(&mut vault.session, &mut vault.file, None, &titled("bank")).unwrap();
     vault.persist(&alice_ref.seed).unwrap();
     let provider = Arc::new(SharedProvider::new(alice_dir.clone(), Arc::clone(&alice)));
+    provider.allow_loopback_peers();
     provider.serve(Arc::new(copy_of(&alice_ref)));
     let alice_service = Service::start(Some("127.0.0.1:0"), provider).unwrap();
     let alice_addr = alice_service.local_addr().unwrap().to_string();
@@ -213,6 +214,7 @@ fn bob_pastes_the_invitation_his_device_syncs_and_the_vault_opens() {
 
     // His device starts synchronizing.
     let bob_provider = Arc::new(SharedProvider::new(w.bob_dir.clone(), Arc::clone(&w.bob)));
+    bob_provider.allow_loopback_peers();
     let bob_service = Service::start(Some("127.0.0.1:0"), Arc::clone(&bob_provider)).unwrap();
     let view = bob_provider.view_for(&bob_ref).unwrap();
     bob_service.fetch_with(view, opened.hints, 5, Duration::from_millis(200));
@@ -275,6 +277,7 @@ fn a_person_alice_never_added_gets_nothing() {
         .log;
     join_shared_vault(&dir, &stolen, &log).unwrap();
     let provider = Arc::new(SharedProvider::new(dir.clone(), mallory));
+    provider.allow_loopback_peers();
     let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     // Mallory even has the seed (the gate passes), but her account is not in
     // the member log, so the handshake fails.
@@ -303,6 +306,7 @@ fn someone_without_the_seed_cannot_even_start_a_handshake() {
     let honest = copy_of(&w.alice_ref);
     join_shared_vault(&dir, &honest, &log).unwrap();
     let provider = Arc::new(SharedProvider::new(dir, outsider));
+    provider.allow_loopback_peers();
     let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     let mut view = provider.view_for(&honest).unwrap();
     view.gate_keys = vec![kdf::shared_gate_key(guessed.seed.expose(), &guessed.vault_id).unwrap()];
@@ -326,6 +330,7 @@ fn a_dead_address_is_reported_as_unreachable() {
         .log;
     join_shared_vault(&dir, &reference, &log).unwrap();
     let provider = Arc::new(SharedProvider::new(dir, Arc::clone(&w.alice)));
+    provider.allow_loopback_peers();
     let service = Service::start(None, Arc::clone(&provider)).unwrap();
     assert!(
         service.local_addr().is_none(),
@@ -373,6 +378,7 @@ fn a_tampered_vault_file_is_refused_and_the_device_stays_pending() {
     };
     join_shared_vault(&w.bob_dir, &bob_ref, &opened.log).unwrap();
     let provider = Arc::new(SharedProvider::new(w.bob_dir.clone(), Arc::clone(&w.bob)));
+    provider.allow_loopback_peers();
     let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     service.fetch_with(
         provider.view_for(&bob_ref).unwrap(),
@@ -505,6 +511,7 @@ fn a_removed_member_is_refused_and_a_remaining_one_receives_the_new_seed() {
         w.alice_dir.clone(),
         Arc::clone(&w.alice),
     ));
+    provider.allow_loopback_peers();
     provider.serve(Arc::new(copy_of(&next)));
     let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     let address = node.local_addr().unwrap().to_string();
@@ -512,6 +519,7 @@ fn a_removed_member_is_refused_and_a_remaining_one_receives_the_new_seed() {
     // Bob still knows the old seed, so he passes the cheap gate; the
     // handshake turns him away because his account left the log.
     let bob_provider = Arc::new(SharedProvider::new(bob_dir, Arc::clone(&bob)));
+    bob_provider.allow_loopback_peers();
     let bob_node = Service::start(None, Arc::clone(&bob_provider)).unwrap();
     bob_node.fetch_with(
         bob_provider.view_for(&bob_ref).unwrap(),
@@ -530,6 +538,7 @@ fn a_removed_member_is_refused_and_a_remaining_one_receives_the_new_seed() {
     // Carol connects with her old gate key, authenticates as a member, and is
     // handed the new seed over the channel.
     let carol_provider = Arc::new(SharedProvider::new(carol_dir.clone(), Arc::clone(&carol)));
+    carol_provider.allow_loopback_peers();
     let carol_node = Service::start(None, Arc::clone(&carol_provider)).unwrap();
     carol_node.fetch_with(
         carol_provider.view_for(&carol_ref).unwrap(),
@@ -647,6 +656,7 @@ fn join_with(
     };
     join_shared_vault(&w.bob_dir, &bob_ref, &opened.log).unwrap();
     let provider = Arc::new(SharedProvider::new(w.bob_dir.clone(), Arc::clone(&w.bob)));
+    provider.allow_loopback_peers();
     let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     let view = provider.view_for(&bob_ref).unwrap();
     service.fetch_with(view, opened.hints, 5, Duration::from_millis(200));
@@ -718,6 +728,7 @@ fn a_rotation_that_removes_nobody_reaches_every_member() {
         w.alice_dir.clone(),
         Arc::clone(&w.alice),
     ));
+    provider.allow_loopback_peers();
     provider.serve(Arc::new(copy_of(&next)));
     let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     let address = node.local_addr().unwrap().to_string();
@@ -731,6 +742,7 @@ fn a_rotation_that_removes_nobody_reaches_every_member() {
             stale: false,
         };
         let theirs = Arc::new(SharedProvider::new(dir.clone(), Arc::clone(&who)));
+        theirs.allow_loopback_peers();
         let service = Service::start(None, Arc::clone(&theirs)).unwrap();
         service.fetch_with(
             theirs.view_for(&reference).unwrap(),

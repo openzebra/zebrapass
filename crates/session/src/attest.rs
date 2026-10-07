@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::create::Session;
 use crate::error::SessionError;
+use crate::revocation::Revocation;
 use crate::rotate::write_records;
 use crate::sync_import::Accepted;
 use crate::sync_msg::frame_parts;
@@ -274,6 +275,15 @@ pub fn attest_latest(
     ))
 }
 
+/// Who may sign: the accounts of the vault and the devices revoked from them.
+#[derive(Clone, Copy, Debug)]
+pub struct Trust<'a, 'b> {
+    /// The accounts a signer may belong to.
+    pub accounts: &'a [TrustedAccount<'b>],
+    /// Devices whose signatures are no longer accepted.
+    pub revoked: &'a [Revocation],
+}
+
 /// An account whose members' devices may attest revisions here.
 #[derive(Clone, Copy, Debug)]
 pub struct TrustedAccount<'a> {
@@ -316,7 +326,7 @@ fn check_signed(
     session: &Session,
     frame_bytes: &[u8],
     attestation: &Attestation,
-    accounts: &[TrustedAccount<'_>],
+    trust: &Trust<'_, '_>,
     now_ms: u64,
 ) -> anyhow::Result<frame::Header> {
     if frame_bytes.len() > MAX_ATTESTED_FRAME {
@@ -324,7 +334,8 @@ fn check_signed(
     }
     let header = frame::parse(frame_bytes)?;
     check_shape(session, &header, attestation)?;
-    let account = accounts
+    let account = trust
+        .accounts
         .iter()
         .find(|account| account.client_id == attestation.signer.client_id)
         .ok_or(SessionError::DeviceNotTrusted)?;
@@ -332,6 +343,13 @@ fn check_signed(
         return Err(SessionError::NotAWriter.into());
     }
     attestation.verify(account.root_vk, now_ms)?;
+    if trust
+        .revoked
+        .iter()
+        .any(|revocation| revocation.covers(&attestation.signer))
+    {
+        return Err(SessionError::CertRejected.into());
+    }
     Ok(header)
 }
 
@@ -382,9 +400,14 @@ fn check_plaintext(
 pub fn verify_snapshot(
     session: &Session,
     attestations: &[Attestation],
-    accounts: &[TrustedAccount<'_>],
+    trust: &Trust<'_, '_>,
     now_ms: u64,
 ) -> anyhow::Result<Vec<Attestation>> {
+    let refs = frame::parse_index(session.records.expose())?;
+    if frame::latest(&refs, 0).is_some() {
+        // No writer attests the vault's own record, so a shared vault has none.
+        return Err(SessionError::AttestationMismatch.into());
+    }
     frontier(session)?
         .into_iter()
         .map(|entry| {
@@ -397,7 +420,7 @@ pub fn verify_snapshot(
                 })
                 .ok_or(SessionError::AttestationMismatch)?;
             let frame_bytes = latest_frame(session, entry.record_id)?;
-            let header = check_signed(session, &frame_bytes, attestation, accounts, now_ms)?;
+            let header = check_signed(session, &frame_bytes, attestation, trust, now_ms)?;
             check_plaintext(session, &header, &frame_bytes, attestation)?;
             Ok(attestation.clone())
         })
@@ -419,18 +442,18 @@ pub fn verify_snapshot(
 ///
 /// [`SessionError`]: `VaultMismatch`, `ZeroOrigin`, `HeaderMismatch`,
 /// `DeviceNotTrusted` (an account the vault does not list), `NotAWriter`,
-/// `CertRejected`, `CertExpired`, `StaleRevision`, `AttestationMismatch`;
+/// `CertRejected` (also for a revoked signer), `CertExpired`, `StaleRevision`, `AttestationMismatch`;
 /// frame-opening and publish errors.
 pub fn accept_revision(
     session: &mut Session,
     file: &mut VaultFile,
     frame_bytes: &[u8],
     attestation: &Attestation,
-    accounts: &[TrustedAccount<'_>],
+    trust: &Trust<'_, '_>,
     now_ms: u64,
     last_seen: impl Fn(u32) -> Option<u64>,
 ) -> anyhow::Result<Accepted> {
-    let header = check_signed(session, frame_bytes, attestation, accounts, now_ms)?;
+    let header = check_signed(session, frame_bytes, attestation, trust, now_ms)?;
     let record_id = attestation.record_id;
     let refs = frame::parse_index(session.records.expose())?;
     let incoming = (attestation.revision, header.origin_device);

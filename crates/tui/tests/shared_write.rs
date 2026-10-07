@@ -32,7 +32,10 @@ use tui::vault::open::{unlock_vault, Credential};
 use tui::App;
 use zeroize::Zeroizing;
 
-use common::{app, ctrl, make_vault, press, render, settle, tick, type_text, unlock, PASSWORD};
+use common::{
+    app, ctrl, keep_to_this_device, make_vault, press, render, settle, tick, type_text, unlock,
+    PASSWORD,
+};
 
 fn unlocked(app: &App) -> &tui::app::flows::unlocked::Unlocked {
     let Screen::Unlocked(state) = &app.screen else {
@@ -74,6 +77,7 @@ fn titles_on_alice(world: &World) -> Vec<String> {
 
 fn bobs_identity(base: &Path) -> (tui::vault::Vault, SyncIdentity) {
     make_vault(base);
+    keep_to_this_device(base);
     let found = tui::vault::discover::discover(base);
     let paths = found.into_iter().next().unwrap().paths;
     let vault = unlock_vault(

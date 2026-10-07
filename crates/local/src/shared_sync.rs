@@ -14,7 +14,8 @@ use memberlog::{Action, MemberLog, Role};
 use record::Document;
 use session::{
     accept_revision, attest_latest, delete_record, frontier, latest_frame, open_record,
-    verify_snapshot, write_record, Accepted, Attestation, Session, SessionError, TrustedAccount,
+    verify_snapshot, write_record, Accepted, Attestation, Revocation, Session, SessionError, Trust,
+    TrustedAccount,
 };
 use syncwire::{decode_bundle, encode_bundle, encode_frontier};
 
@@ -96,6 +97,7 @@ pub fn attested_store(
     session: &Session,
     log: &MemberLog,
     attestations: &[Attestation],
+    revoked: &[Revocation],
     into: AttestStore,
 ) -> anyhow::Result<AttestStore> {
     let accounts: Vec<TrustedAccount<'_>> = log
@@ -107,12 +109,20 @@ pub fn attested_store(
             can_write: true,
         })
         .collect();
-    verify_snapshot(session, attestations, &accounts, now_ms())?
-        .into_iter()
-        .try_fold(into, |mut store, attestation| {
-            store.put(attestation)?;
-            Ok(store)
-        })
+    verify_snapshot(
+        session,
+        attestations,
+        &Trust {
+            accounts: &accounts,
+            revoked,
+        },
+        now_ms(),
+    )?
+    .into_iter()
+    .try_fold(into, |mut store, attestation| {
+        store.put(attestation)?;
+        Ok(store)
+    })
 }
 
 impl SharedVault {
@@ -217,7 +227,10 @@ impl SharedVault {
             &mut self.file,
             frame_bytes,
             &attestation,
-            &accounts,
+            &Trust {
+                accounts: &accounts,
+                revoked: self.state.revocations.all(),
+            },
             now_ms(),
             |record| seen.get(record),
         )?;

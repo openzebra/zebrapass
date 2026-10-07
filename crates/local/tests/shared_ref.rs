@@ -52,3 +52,19 @@ fn half_an_introduction_is_corrupt() {
         assert!(SharedRef::from_document(&doc).is_err());
     }
 }
+
+#[test]
+fn a_settled_reference_forgets_its_introduction_and_keeps_the_rest() {
+    let intro = Introduction {
+        head: [9; 32],
+        inviter_id: [1; 64],
+        inviter_vk: Box::new([2; SYNC_VK_LEN]),
+    };
+    let held = reference(Some(intro));
+    let settled = held.settled();
+    assert!(settled.introduction.is_none());
+    assert_eq!(settled.vault_id, held.vault_id);
+    assert_eq!(settled.anchor, held.anchor);
+    assert_eq!(settled.seed.expose(), held.seed.expose());
+    assert_eq!(settled.hints, held.hints);
+}

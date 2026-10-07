@@ -61,3 +61,22 @@ impl Policy {
                 .any(|known| same_network(ip, known.ip().to_canonical()))
     }
 }
+
+/// Where this device may dial: the policy and the addresses it trusts.
+#[derive(Clone, Debug, Default)]
+pub struct Dialing {
+    /// How strictly addresses are filtered.
+    pub policy: Policy,
+    /// Addresses whose private network is trusted: this device's own.
+    pub trusted: Vec<SocketAddr>,
+}
+
+impl Dialing {
+    /// `hint` as an address this device may dial. Names are never resolved.
+    #[must_use]
+    pub fn resolve(&self, hint: &str) -> Option<SocketAddr> {
+        hint.parse()
+            .ok()
+            .filter(|address| self.policy.allows(address, &self.trusted))
+    }
+}
