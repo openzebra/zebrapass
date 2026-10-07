@@ -20,7 +20,7 @@ mod view;
 pub use client::{fetch, fetch_paths, Conn, FetchError, Fetched};
 pub use dialable::Policy;
 pub use io::{now_ms, HANDSHAKE_TIMEOUT};
-pub use limits::Limits;
+pub use limits::{Limits, Tickets};
 pub use peers::PeerBook;
 pub use server::{authenticate, first_message, serve_requests, serve_requests_with};
 pub use service::{reachable_hints, Event, Service, Status};

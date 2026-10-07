@@ -20,7 +20,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::io::{bridge, now_ms, read_msg, write_msg};
-use crate::limits::Limits;
+use crate::limits::{Limits, Tickets};
 use crate::view::Provider;
 use local::Verdict;
 
@@ -212,21 +212,16 @@ pub async fn serve_requests<P: Provider>(
     vault_id: [u8; 16],
     account: [u8; 64],
 ) -> Result<()> {
-    serve_requests_with(
-        tcp,
-        channel,
-        provider,
-        vault_id,
-        account,
-        &Limits::default(),
-    )
-    .await
+    let tickets = Tickets::new(Limits::default());
+    serve_requests_with(tcp, channel, provider, vault_id, account, &tickets).await
 }
 
 /// Whether a response says the peer asked for something it should not have:
 /// a refusal or a malformed request, not an ordinary "newer revision held".
 fn is_failure(status: StatusCode) -> bool {
-    !status.is_success() && status.as_u16() != StatusCode::CONFLICT.as_u16()
+    !status.is_success()
+        && status != StatusCode::CONFLICT
+        && status != StatusCode::SERVICE_UNAVAILABLE
 }
 
 /// [`serve_requests`] under `limits`: the connection is closed when it sits
@@ -241,8 +236,9 @@ pub async fn serve_requests_with<P: Provider>(
     provider: Arc<P>,
     vault_id: [u8; 16],
     account: [u8; 64],
-    limits: &Limits,
+    tickets: &Arc<Tickets>,
 ) -> Result<()> {
+    let limits = tickets.limits();
     let io = bridge(tcp, channel);
     let mut connection = h2::server::Builder::new()
         .max_concurrent_streams(MAX_STREAMS)
@@ -269,13 +265,21 @@ pub async fn serve_requests_with<P: Provider>(
         let provider = Arc::clone(&provider);
         let (failed, active) = (Arc::clone(&failed), Arc::clone(&active));
         let request_limit = limits.request;
+        let wants_snapshot = request.uri().path() == "/v1/snapshot";
+        let permit = wants_snapshot.then(|| tickets.try_snapshot());
         active.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(async move {
-            let done = timeout(
-                request_limit,
-                answer(provider, vault_id, account, request, respond),
-            )
-            .await;
+            let done = if matches!(permit, Some(None)) {
+                let mut respond = respond;
+                Ok(status_only(&mut respond, StatusCode::SERVICE_UNAVAILABLE))
+            } else {
+                timeout(
+                    request_limit,
+                    answer(provider, vault_id, account, request, respond),
+                )
+                .await
+            };
+            drop(permit);
             if !matches!(done, Ok(Ok(status)) if !is_failure(status)) {
                 failed.fetch_add(1, Ordering::Relaxed);
             }

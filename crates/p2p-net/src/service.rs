@@ -366,7 +366,7 @@ async fn connection<P: Provider>(
         provider,
         vault_id,
         peer.client_id,
-        shared.tickets.limits(),
+        &shared.tickets,
     )
     .await;
     shared.peers.fetch_sub(1, Ordering::Relaxed);

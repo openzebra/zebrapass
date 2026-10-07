@@ -10,6 +10,8 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
 /// The bounds a node enforces.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
@@ -25,6 +27,10 @@ pub struct Limits {
     /// How long one request may take to answer, however slowly the peer
     /// reads.
     pub request: Duration,
+    /// Whole vault files being sent at once, over every connection. The file
+    /// is held in memory while it goes out, so this bounds the worst case; a
+    /// peer asking while all are busy is told to come back.
+    pub max_snapshots: usize,
     /// Requests refused or malformed before the connection is closed.
     pub max_failed: u32,
     /// Requests one connection may make in all.
@@ -39,6 +45,7 @@ impl Default for Limits {
             per_address_peers: 8,
             idle: Duration::from_secs(120),
             request: Duration::from_secs(15 * 60),
+            max_snapshots: 2,
             max_failed: 32,
             max_requests: 16_384,
         }
@@ -56,6 +63,7 @@ struct Counts {
 pub struct Tickets {
     limits: Limits,
     counts: Mutex<Counts>,
+    snapshots: Arc<Semaphore>,
 }
 
 fn release(map: &mut HashMap<IpAddr, usize>, ip: IpAddr) {
@@ -74,7 +82,15 @@ impl Tickets {
         Arc::new(Self {
             limits,
             counts: Mutex::new(Counts::default()),
+            snapshots: Arc::new(Semaphore::new(limits.max_snapshots)),
         })
+    }
+
+    /// Room to send one more whole vault file, if there is any; the room is
+    /// given back when the permit is dropped.
+    #[must_use]
+    pub fn try_snapshot(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.snapshots).try_acquire_owned().ok()
     }
 
     /// The bounds in force.
@@ -201,6 +217,19 @@ mod tests {
         assert!(promoted(3).is_none(), "in all");
         drop(one);
         assert!(promoted(3).is_some(), "a place frees when a peer leaves");
+    }
+
+    #[test]
+    fn only_so_many_snapshots_are_sent_at_once() {
+        let tickets = Tickets::new(Limits {
+            max_snapshots: 2,
+            ..Limits::default()
+        });
+        let first = tickets.try_snapshot().unwrap();
+        let _second = tickets.try_snapshot().unwrap();
+        assert!(tickets.try_snapshot().is_none());
+        drop(first);
+        assert!(tickets.try_snapshot().is_some(), "room comes back");
     }
 
     #[test]

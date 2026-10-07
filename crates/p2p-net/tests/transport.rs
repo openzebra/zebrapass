@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use p2p_core::{Account, CookieSecret, Load};
 use p2p_net::{
     authenticate, fetch, first_message, serve_requests_with, Conn, Limits, Provider, Service,
-    VaultView,
+    Tickets, VaultView,
 };
 use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -117,12 +117,17 @@ const fn client_dev() -> Dev {
 }
 
 async fn run_server(listener: TcpListener, provider: Arc<Served>, load: Load, limits: Limits) {
+    let tickets = Tickets::new(limits);
     let cookies = Arc::new(CookieSecret::generate().unwrap());
     loop {
         let Ok((mut tcp, _)) = listener.accept().await else {
             return;
         };
-        let (provider, cookies) = (Arc::clone(&provider), Arc::clone(&cookies));
+        let (provider, cookies, tickets) = (
+            Arc::clone(&provider),
+            Arc::clone(&cookies),
+            Arc::clone(&tickets),
+        );
         tokio::spawn(async move {
             let Ok(first) = first_message(&mut tcp).await else {
                 return;
@@ -135,7 +140,7 @@ async fn run_server(listener: TcpListener, provider: Arc<Served>, load: Load, li
             };
             let vault = views[index].vault_id;
             let _ =
-                serve_requests_with(tcp, channel, provider, vault, peer.client_id, &limits).await;
+                serve_requests_with(tcp, channel, provider, vault, peer.client_id, &tickets).await;
         });
     }
 }
@@ -448,5 +453,75 @@ fn one_address_cannot_hold_every_handshake_slot() {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         assert!(fetched.is_some());
+    });
+}
+
+fn resident_kib() -> u64 {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+}
+
+/// How much memory held connections cost a node, idle and while every one
+/// fetches an 8 MiB vault file at once, under a cap on
+/// concurrent snapshots (`ZP_MEM_CAP`, default 2). Run once per setting, as
+/// the process keeps freed memory: `ZP_MEM_CAP=32 cargo test --release -p p2p-net
+/// --test transport -- --ignored --nocapture memory`.
+#[test]
+#[ignore = "measurement: run on request"]
+fn memory_per_connection_idle_and_while_serving() {
+    const HELD: u64 = 32;
+    let provider = served(vec![7u8; 8 * 1024 * 1024]);
+    block_on(async {
+        let max_snapshots: usize = std::env::var("ZP_MEM_CAP")
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(2);
+        {
+            let label = format!("cap {max_snapshots}");
+            let limits = Limits {
+                per_address_peers: 64,
+                per_address_handshakes: 64,
+                max_snapshots,
+                ..Limits::default()
+            };
+            let addr = start_limited(Arc::clone(&provider), Load::default(), limits).await;
+            let mut warm = Conn::connect(&member_view(), &addr).await.unwrap();
+            warm.get("/v1/log", 1 << 20, false).await.unwrap();
+            drop(warm);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let base = resident_kib();
+            let mut held = Vec::new();
+            for _ in 0..HELD {
+                let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+                conn.get("/v1/log", 1 << 20, false).await.unwrap();
+                held.push(conn);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let idle = resident_kib();
+            let downloads: Vec<_> = held
+                .into_iter()
+                .map(|mut conn| {
+                    tokio::spawn(async move {
+                        conn.get("/v1/snapshot", 16 << 20, false)
+                            .await
+                            .map(|body| body.map(|bytes| bytes.len()))
+                    })
+                })
+                .collect();
+            let (mut peak, mut served_ok) = (idle, 0);
+            for download in downloads {
+                peak = peak.max(resident_kib());
+                served_ok += usize::from(matches!(download.await.unwrap(), Ok(Some(_))));
+            }
+            peak = peak.max(resident_kib());
+            println!(
+                "memory ({label}): {} KiB per idle connection; peak {} KiB over idle with {HELD} concurrent 8 MiB fetches, {served_ok} served at once",
+                idle.saturating_sub(base) / HELD,
+                peak.saturating_sub(idle),
+            );
+        }
     });
 }
