@@ -174,7 +174,21 @@ impl Ctx {
 
     /// Copy a secret with the clear timer, and say so; `true` when copied.
     pub fn copy(&mut self, secret: &[u8], label: &'static str) -> bool {
-        match self.clipboard.copy(secret, label, self.now) {
+        let result = self.clipboard.copy(secret, label, self.now);
+        self.copied(result)
+    }
+
+    /// As [`Ctx::copy`], clearing after `clear_after` instead of the usual
+    /// delay.
+    pub fn copy_for(&mut self, secret: &[u8], label: &'static str, clear_after: Duration) -> bool {
+        let result = self
+            .clipboard
+            .copy_for(secret, label, self.now, clear_after);
+        self.copied(result)
+    }
+
+    fn copied(&mut self, result: Result<(), CopyError>) -> bool {
+        match result {
             Ok(()) => true,
             Err(CopyError::Unavailable) => {
                 self.toast(

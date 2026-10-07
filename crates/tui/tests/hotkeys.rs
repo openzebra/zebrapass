@@ -5,6 +5,7 @@
 #![allow(
     clippy::multiple_crate_versions,
     clippy::unwrap_used,
+    clippy::indexing_slicing,
     clippy::panic,
     reason = "tests may unwrap; ratatui pulls duplicate transitive crates"
 )]
@@ -19,7 +20,7 @@ use tui::app::flows::restore::RestoreField;
 use tui::app::keymap::{Scope, KEYMAP};
 use tui::app::screen::Screen;
 
-use common::{app, ctrl, press, temp_dir, type_text, wait, PASSWORD};
+use common::{app, ctrl, press, temp_dir, tick, type_text, wait, PASSWORD};
 
 fn create_state(app: &tui::App) -> &tui::app::flows::create::CreateState {
     let Screen::Create(state) = &app.screen else {
@@ -53,6 +54,8 @@ fn phrase_step_tabs_to_the_checkbox_and_space_ticks_it() {
 
     press(&mut app, KeyCode::Char(' '));
     assert!(create_state(&app).ceremony.written);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(create_state(&app).ceremony.focus, CeremonyFocus::Copy);
     press(&mut app, KeyCode::Tab);
     assert_eq!(create_state(&app).ceremony.focus, CeremonyFocus::Continue);
     press(&mut app, KeyCode::Tab);
@@ -210,4 +213,46 @@ fn enroll_enter_moves_password_to_repeat_then_confirms() {
     press(&mut app, KeyCode::Enter);
     wait(&mut app);
     assert_eq!(app.screen.name(), "unlocked");
+}
+
+#[test]
+fn the_phrase_step_copies_the_phrase_and_the_clipboard_clears_after_25_seconds() {
+    use std::time::Duration;
+
+    let mut app = app(&temp_dir("keys-copy"));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(create_state(&app).step, Step::Ceremony);
+    let phrase = create_state(&app)
+        .phrase
+        .as_deref()
+        .unwrap()
+        .phrase_normalized()
+        .to_owned();
+    assert!(app.take_outbox().is_empty());
+
+    press(&mut app, KeyCode::Char('c'));
+    let sent = app.take_outbox();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].as_slice(),
+        tui::secure::clipboard::osc52(phrase.as_bytes()).as_slice()
+    );
+
+    tick(&mut app, Duration::from_secs(24));
+    assert!(
+        app.take_outbox().is_empty(),
+        "still on the clipboard at 24 s"
+    );
+    tick(&mut app, Duration::from_secs(1));
+    let cleared = app.take_outbox();
+    assert_eq!(cleared.len(), 1);
+    assert_eq!(cleared[0].as_slice(), b"\x1b]52;c;\x07");
+
+    // Tab to the button and press Space: the same copy.
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(create_state(&app).ceremony.focus, CeremonyFocus::Copy);
+    press(&mut app, KeyCode::Char(' '));
+    assert_eq!(app.take_outbox().len(), 1);
 }

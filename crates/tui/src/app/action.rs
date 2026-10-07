@@ -114,6 +114,8 @@ actions! {
     Reroll,
     /// Copy the generated value.
     CopyGenerated,
+    /// Copy the new recovery phrase.
+    CopyPhrase,
     /// Next generator mode.
     NextMode,
     /// Toggle a-z.

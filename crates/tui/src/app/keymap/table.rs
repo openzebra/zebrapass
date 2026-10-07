@@ -33,6 +33,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Ceremony: key(KeyCode::Up) => Up, "row";
     Ceremony: key(KeyCode::Down) => Down;
     Ceremony: ch('x') => ToggleWritten, "written";
+    Ceremony: ch('c') => CopyPhrase, "copy 25 s";
     Ceremony: key(KeyCode::Enter) => Confirm, "continue";
     Ceremony: key(KeyCode::Esc) => Back, "cancel vault";
 
