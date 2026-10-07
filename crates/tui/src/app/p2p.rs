@@ -63,13 +63,15 @@ impl P2p {
         let service = Service::start(bind(PORT).as_deref(), Arc::clone(&provider))
             .or_else(|_| Service::start(bind(0).as_deref(), Arc::clone(&provider)))
             .ok()?;
-        Some(Box::new(Self {
+        let node = Box::new(Self {
             service,
             provider,
             identity,
             listen,
             checked: Instant::now(),
-        }))
+        });
+        node.provider.set_hints(node.hints());
+        Some(node)
     }
 
     /// Whether it is time to check in with the members again; restarts the
@@ -173,7 +175,7 @@ pub fn fetch(p2p: &P2p, item: &SharedItem) {
 
 /// Trade revisions with the members of an open shared vault, once.
 pub fn check_in(p2p: &P2p, item: &SharedItem) {
-    if item.reference.hints.is_empty() || !item.ready() {
+    if !item.ready() {
         return;
     }
     p2p.service.check_in(

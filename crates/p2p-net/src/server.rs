@@ -109,6 +109,10 @@ fn status_only(respond: &mut SendResponse<Bytes>, status: StatusCode) -> Result<
 /// Largest revision a peer may push: an attestation and a sealed frame.
 pub const MAX_BUNDLE: usize = syncwire::ATTESTATION_WIRE_LEN + syncwire::limits::MAX_FRAME;
 
+/// Largest list of peer records a member may send.
+pub const MAX_PEERS_BODY: usize = 8 + syncwire::MAX_PEERS
+    * (16 + 8 + 1 + 4 * 65 + syncwire::CERT_WIRE_LEN + session::SYNC_SIG_LEN);
+
 async fn read_body(mut stream: h2::RecvStream, max: usize) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     while let Some(chunk) = stream.data().await {
@@ -150,12 +154,20 @@ async fn answer<P: Provider>(
         .await?;
         return status_only(&mut respond, verdict_status(verdict));
     }
+    if parts.method == Method::POST && path == "/v1/peers" {
+        let Ok(list) = read_body(incoming, MAX_PEERS_BODY).await else {
+            return status_only(&mut respond, StatusCode::PAYLOAD_TOO_LARGE);
+        };
+        tokio::task::spawn_blocking(move || provider.accept_peers(&vault_id, &list)).await?;
+        return status_only(&mut respond, StatusCode::OK);
+    }
     if parts.method != Method::GET {
         return status_only(&mut respond, StatusCode::METHOD_NOT_ALLOWED);
     }
     let body = tokio::task::spawn_blocking(move || match path.as_str() {
         "/v1/log" => Some(provider.log(&vault_id)),
         "/v1/snapshot" => Some(provider.snapshot(&vault_id)),
+        "/v1/peers" => Some(provider.peers(&vault_id)),
         "/v1/frontier" => Some(provider.frontier(&vault_id)),
         "/v1/rekey" => Some(
             provider

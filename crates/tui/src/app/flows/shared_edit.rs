@@ -100,12 +100,17 @@ impl Unlocked {
             return;
         };
         let base = self.base.clone();
-        if let Some(item) = self
+        let item = self
             .shared
             .iter_mut()
-            .find(|item| &item.reference.vault_id == vault_id)
-        {
-            item.reload(&base, &identity);
+            .find(|item| &item.reference.vault_id == vault_id);
+        if let Some(item) = item {
+            match self.p2p.as_deref() {
+                Some(p2p) => {
+                    p2p.provider.locked(|| item.reload(&base, &identity));
+                }
+                None => item.reload(&base, &identity),
+            }
         }
         self.home.detail = None;
         self.load_detail();

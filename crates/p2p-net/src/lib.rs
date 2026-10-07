@@ -8,6 +8,7 @@
 
 mod client;
 mod io;
+mod peers;
 mod server;
 mod service;
 mod shared;
@@ -16,6 +17,7 @@ mod view;
 
 pub use client::{fetch, fetch_paths, Conn, FetchError, Fetched};
 pub use io::{now_ms, HANDSHAKE_TIMEOUT};
+pub use peers::PeerBook;
 pub use server::{authenticate, first_message, serve_requests};
 pub use service::{reachable_hints, Event, Service, Status};
 pub use shared::{finish_join, Joined, Known, SharedProvider};

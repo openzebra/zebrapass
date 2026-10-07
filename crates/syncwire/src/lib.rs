@@ -10,6 +10,7 @@
 mod attestation;
 mod cert;
 pub mod limits;
+mod peer;
 pub mod reader;
 mod record;
 mod revocation;
@@ -20,6 +21,7 @@ pub use attestation::{
     MAX_FRONTIER,
 };
 pub use cert::{decode_cert, encode_cert, CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION};
+pub use peer::{decode_peers, encode_peers, MAX_PEERS, PEER_MAGIC, PEER_WIRE_VERSION};
 pub use record::{decode_record, encode_record, RECORD_MAGIC, RECORD_WIRE_VERSION};
 pub use revocation::{
     decode_revocation, encode_revocation, REVOCATION_MAGIC, REVOCATION_WIRE_LEN,

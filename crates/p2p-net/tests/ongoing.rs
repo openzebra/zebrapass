@@ -18,7 +18,7 @@ use local::{
     SyncIdentity,
 };
 use memberlog::{Action, Role};
-use p2p_net::{Event, Service, SharedProvider};
+use p2p_net::{Event, PeerBook, Service, SharedProvider};
 use record::{Document, TAG_TITLE};
 use session::{attest_latest, list_records, open_record, write_record, KdfProfile, VaultFile};
 
@@ -137,6 +137,7 @@ fn trio() -> [Node; 3] {
         provider.serve(Arc::clone(&reference));
         let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
         let addr = service.local_addr().unwrap().to_string();
+        provider.set_hints(vec![addr.clone()]);
         nodes.push(Node {
             base: dirs[index].clone(),
             id,
@@ -205,4 +206,46 @@ fn a_readers_forged_record_is_refused_over_the_wire() {
     assert_eq!((pulled, pushed), (0, 0));
     assert_eq!(refused, 1);
     assert!(alice.titles().is_empty());
+}
+
+#[test]
+fn a_member_that_calls_in_is_found_again_without_being_told_where() {
+    let [alice, bob, _] = trio();
+    bob.edit(Edit::Create(titled("wifi"))).unwrap();
+    assert_eq!(bob.check_in(&[&alice]), (0, 1, 0));
+    // Alice was given no address for Bob, yet she can reach him now.
+    let id = alice.edit(Edit::Create(titled("bank"))).unwrap();
+    assert_ne!(id, 0);
+    assert_eq!(alice.check_in(&[]), (0, 1, 0));
+    assert_eq!(bob.titles(), ["bank", "wifi"]);
+}
+
+#[test]
+fn a_member_learns_of_others_from_a_member_it_knows() {
+    let [alice, bob, carol] = trio();
+    assert_eq!(bob.check_in(&[&alice]), (0, 0, 0));
+    bob.edit(Edit::Create(titled("wifi"))).unwrap();
+    // Carol only knows Alice. Alice has nothing from Bob, so the record can
+    // only have come from Bob himself, whom Carol found through Alice.
+    assert_eq!(carol.check_in(&[&alice]), (1, 0, 0));
+    assert_eq!(carol.titles(), ["wifi"]);
+}
+
+#[test]
+fn addresses_signed_by_an_outsider_are_not_kept() {
+    let [alice, ..] = trio();
+    let outsider = SyncIdentity::enroll(&[9; 64], &[9; 64], [9; 16], u64::MAX).unwrap();
+    let record = session::PeerRecord::sign(
+        &outsider.sign_key(),
+        &outsider.devices()[0],
+        alice.reference.vault_id,
+        vec!["10.6.6.6:7447".to_owned()],
+        p2p_net::now_ms(),
+    )
+    .unwrap();
+    let list = syncwire::encode_peers(&[record]).unwrap();
+    let log = local::read_member_log(&alice.base, &alice.reference).unwrap();
+    let book = PeerBook::default();
+    assert_eq!(book.accept(&log, &[0; 16], &list), 0);
+    assert!(book.hints(&log).is_empty());
 }

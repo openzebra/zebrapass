@@ -25,6 +25,10 @@ fuzz_target!(|data: &[u8]| {
     let msg_version = u16::from_le_bytes(head[60..62].try_into().unwrap_or_default());
     let key_generation = u32::from_le_bytes(head[62..66].try_into().unwrap_or_default());
     let record = session::SyncRecord {
+        client_id: [0u8; 64],
+        device_id: [0u8; 16],
+        prev_hash: [0u8; 32],
+        server_origin: Box::default(),
         vault_id: vault,
         record_id,
         revision,

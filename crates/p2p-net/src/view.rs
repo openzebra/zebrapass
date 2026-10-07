@@ -79,6 +79,21 @@ pub trait Provider: Send + Sync + 'static {
         false
     }
 
+    /// This device's signed addresses and the ones it knows, as a list.
+    fn peers(&self, _vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Keep the addresses a member sent that verify. Returns how many.
+    fn accept_peers(&self, _vault_id: &[u8; 16], _list: &[u8]) -> usize {
+        0
+    }
+
+    /// Addresses of the other members, learned from them.
+    fn peer_hints(&self, _vault_id: &[u8; 16]) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Whether a peer's offer (its rekey answer, if any) means this device
     /// should take over the peer's vault file: a later epoch, or an open vault
     /// that is stale.

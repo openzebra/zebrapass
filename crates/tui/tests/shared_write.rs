@@ -50,8 +50,11 @@ fn now() -> u64 {
     p2p_net::now_ms()
 }
 
+/// Alice's records; an unreadable moment (her node is mid-write) is empty.
 fn titles_on_alice(world: &World) -> Vec<String> {
-    let vault = open_shared_vault(&world.alice_dir, &world.alice_ref, &world.alice).unwrap();
+    let Ok(vault) = open_shared_vault(&world.alice_dir, &world.alice_ref, &world.alice) else {
+        return Vec::new();
+    };
     list_records(&vault.session)
         .unwrap()
         .iter()

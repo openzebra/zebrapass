@@ -232,7 +232,7 @@ impl Unlocked {
     }
 
     pub(super) fn invitation_pasted(&self, text: &str, ctx: &mut Ctx) -> Step {
-        match self.open_invitation(text) {
+        match self.open_invitation(&crate::app::flows::share_file::invitation_text(text)) {
             Ok(opened) => Step::JoinConfirm(Box::new(opened)),
             Err(error) => {
                 Self::fail(ctx, &error);

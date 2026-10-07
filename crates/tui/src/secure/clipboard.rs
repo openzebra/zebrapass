@@ -19,7 +19,12 @@ const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 pub enum CopyError {
     /// This terminal most likely ignores OSC 52 (or the feature is off).
     Unavailable,
+    /// More than terminals accept in one escape sequence.
+    TooLarge,
 }
+
+/// Most bytes one copy carries; terminals drop or cut longer sequences.
+const MAX_PAYLOAD: usize = 75_000;
 
 /// Clipboard state and the escape sequences waiting to be written.
 pub struct Clipboard {
@@ -83,6 +88,9 @@ impl Clipboard {
     ) -> Result<(), CopyError> {
         if !self.supported {
             return Err(CopyError::Unavailable);
+        }
+        if secret.len() > MAX_PAYLOAD {
+            return Err(CopyError::TooLarge);
         }
         self.outbox.push(osc52(secret));
         self.armed = Some((now, label));

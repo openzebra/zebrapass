@@ -11,13 +11,16 @@ use session::{reconcile, FrontierEntry};
 use syncwire::decode_frontier;
 
 use crate::client::{Conn, FetchError};
-use crate::server::MAX_BUNDLE;
+use crate::server::{MAX_BUNDLE, MAX_PEERS_BODY};
 use crate::service::{Event, Service};
 use crate::view::{Provider, VaultView};
 
 /// Revisions moved in each direction in one check-in; the rest wait for the
 /// next one.
 const MAX_MOVED: usize = 512;
+
+/// Addresses one check-in dials at most, however many it learns on the way.
+const MAX_DIALED: usize = 8;
 
 const MAX_LOG: usize = ENTRY_WIRE_LEN * MAX_ENTRIES;
 const MAX_FRONTIER_BODY: usize = syncwire::MAX_FRONTIER * 32 + 8;
@@ -59,6 +62,19 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| FetchError::Failed)
 }
 
+/// Swap address lists with a member. A failure here never fails the sync:
+/// the addresses are a convenience on top of it.
+async fn exchange_peers<P: Provider>(provider: &Arc<P>, conn: &mut Conn, vault_id: [u8; 16]) {
+    if let Ok(Some(list)) = conn.get("/v1/peers", MAX_PEERS_BODY, true).await {
+        let provider = Arc::clone(provider);
+        let _ = blocking(move || provider.accept_peers(&vault_id, &list)).await;
+    }
+    let provider = Arc::clone(provider);
+    if let Ok(Some(own)) = blocking(move || provider.peers(&vault_id)).await {
+        let _ = conn.post("/v1/peers", own).await;
+    }
+}
+
 async fn talk<P: Provider>(
     provider: &Arc<P>,
     view: &VaultView,
@@ -77,6 +93,7 @@ async fn talk<P: Provider>(
     if !merged {
         return Err(FetchError::Failed);
     }
+    exchange_peers(provider, &mut conn, vault_id).await;
     let rekey = conn.get("/v1/rekey", 128, true).await?;
     let needs = {
         let (provider, rekey) = (Arc::clone(provider), rekey.clone());
@@ -153,7 +170,24 @@ impl Service {
             let mut total = Moved::default();
             let mut reached = false;
             let mut outcome = None;
-            for hint in &hints {
+            let mut queue = hints;
+            let remembered = {
+                let provider = Arc::clone(&provider);
+                blocking(move || provider.peer_hints(&vault_id))
+                    .await
+                    .unwrap_or_default()
+            };
+            for found in remembered {
+                if !queue.contains(&found) {
+                    queue.push(found);
+                }
+            }
+            let mut tried = 0;
+            while let Some(hint) = queue.get(tried).cloned() {
+                if tried >= MAX_DIALED {
+                    break;
+                }
+                tried += 1;
                 let views = {
                     let provider = Arc::clone(&provider);
                     blocking(move || provider.views()).await.unwrap_or_default()
@@ -162,7 +196,7 @@ impl Service {
                     reason = FetchError::Failed;
                     break;
                 };
-                match talk(&provider, view, hint).await {
+                match talk(&provider, view, &hint).await {
                     Ok(Step::Synced(moved)) => {
                         reached = true;
                         total.add(moved);
@@ -173,9 +207,20 @@ impl Service {
                     }
                     Err(error) => reason = error,
                 }
+                let learned = {
+                    let provider = Arc::clone(&provider);
+                    blocking(move || provider.peer_hints(&vault_id))
+                        .await
+                        .unwrap_or_default()
+                };
+                for found in learned {
+                    if !queue.contains(&found) {
+                        queue.push(found);
+                    }
+                }
             }
             shared.fetching.fetch_sub(1, Ordering::Relaxed);
-            let _ = sender.send(outcome.unwrap_or(if reached {
+            let _ = sender.send(outcome.unwrap_or(if reached || tried == 0 {
                 Event::Synced {
                     vault_id,
                     pulled: total.pulled,

@@ -11,6 +11,7 @@ pub(crate) mod create;
 mod devices;
 mod directory;
 mod error;
+mod peers;
 mod records;
 mod revocation;
 mod rewrap;
@@ -36,8 +37,10 @@ pub use devices::{
 pub use directory::{wrap_directory, ChipFactor, Factor, WrapDirectory};
 pub use error::{Seen, SessionError};
 pub use kdf::KdfProfile;
+pub use peers::{PeerRecord, MAX_HINTS, MAX_HINT_LEN, PEER_MAX_AGE_MS};
 pub use pq::{
-    DEVICE_CERT_CTX, REVISION_CTX, REVOKE_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN, SYNC_VK_LEN,
+    DEVICE_CERT_CTX, PEER_CTX, REVISION_CTX, REVOKE_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN,
+    SYNC_VK_LEN,
 };
 pub use records::{
     clear_history, delete_record, history, list_records, open_record, open_revision,

@@ -183,6 +183,10 @@ impl Ctx {
                 );
                 false
             }
+            Err(CopyError::TooLarge) => {
+                self.toast(Tone::Warn, "Too large for the terminal clipboard.");
+                false
+            }
         }
     }
 

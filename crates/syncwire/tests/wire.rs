@@ -317,3 +317,119 @@ fn a_frontier_round_trips_and_refuses_disorder_and_oversize() {
     );
     assert!(syncwire::decode_frontier(&over).is_err());
 }
+
+mod peers {
+    use session::{issue_device_cert, DeviceSignKey, PeerRecord};
+    use syncwire::{decode_peers, encode_peers, MAX_PEERS};
+
+    fn record(n: u8) -> PeerRecord {
+        let key = DeviceSignKey::from_seed(&[n; 32]);
+        let cert = issue_device_cert(
+            &[n ^ 1; 32],
+            &[n; 64],
+            &[n; 16],
+            &key.verifying_key().unwrap(),
+            u64::MAX,
+            1,
+        )
+        .unwrap();
+        PeerRecord::sign(
+            &key,
+            &cert,
+            [4; 16],
+            vec!["10.0.0.1:7447".to_owned(), "[::1]:7447".to_owned()],
+            1_700_000_000_000,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_list_roundtrips() {
+        let list = vec![record(1), record(2)];
+        let bytes = encode_peers(&list).unwrap();
+        assert_eq!(&bytes[..4], b"ZPRP");
+        assert_eq!(decode_peers(&bytes).unwrap(), list);
+        assert!(decode_peers(&encode_peers(&[]).unwrap())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn every_truncation_and_trailing_byte_is_refused() {
+        let bytes = encode_peers(&[record(1)]).unwrap();
+        for cut in 0..bytes.len() {
+            assert!(decode_peers(&bytes[..cut]).is_err(), "cut at {cut}");
+        }
+        let mut longer = bytes;
+        longer.push(0);
+        assert!(decode_peers(&longer).is_err());
+    }
+
+    #[test]
+    fn a_hostile_count_is_refused_before_anything_is_read() {
+        let mut bytes = encode_peers(&[]).unwrap();
+        *bytes.last_mut().unwrap() = u8::try_from(MAX_PEERS + 1).unwrap();
+        assert!(decode_peers(&bytes).is_err());
+        let many = vec![record(1); MAX_PEERS + 1];
+        assert!(encode_peers(&many).is_err());
+    }
+}
+
+mod canonical {
+    use session::{issue_device_cert, DeviceSignKey, FrontierEntry, PeerRecord};
+    use syncwire::{decode_frontier, decode_peers, encode_frontier, encode_peers};
+
+    /// Whatever a mutated list still decodes to must encode back to exactly
+    /// the same bytes, so two encodings never mean the same thing.
+    #[test]
+    fn a_list_that_decodes_encodes_back_identically() {
+        let key = DeviceSignKey::from_seed(&[3; 32]);
+        let cert = issue_device_cert(
+            &[4; 32],
+            &[3; 64],
+            &[3; 16],
+            &key.verifying_key().unwrap(),
+            u64::MAX,
+            1,
+        )
+        .unwrap();
+        let peers = encode_peers(&[PeerRecord::sign(
+            &key,
+            &cert,
+            [1; 16],
+            vec!["10.0.0.1:7447".to_owned()],
+            1_700_000_000_000,
+        )
+        .unwrap()])
+        .unwrap();
+        let frontier = encode_frontier(&[
+            FrontierEntry {
+                record_id: 1,
+                revision: 2,
+                origin_device: [3; 16],
+            },
+            FrontierEntry {
+                record_id: 9,
+                revision: 4,
+                origin_device: [5; 16],
+            },
+        ])
+        .unwrap();
+        for index in 0..peers.len().max(frontier.len()) {
+            for bit in 0..8 {
+                if let Some(mut bytes) = Some(peers.clone()).filter(|b| index < b.len()) {
+                    bytes[index] ^= 1 << bit;
+                    if let Ok(list) = decode_peers(&bytes) {
+                        assert_eq!(encode_peers(&list).unwrap(), bytes);
+                    }
+                }
+                if let Some(mut bytes) = Some(frontier.clone()).filter(|b| index < b.len()) {
+                    bytes[index] ^= 1 << bit;
+                    if let Ok(list) = decode_frontier(&bytes) {
+                        assert_eq!(encode_frontier(&list).unwrap(), bytes);
+                    }
+                }
+            }
+        }
+    }
+}

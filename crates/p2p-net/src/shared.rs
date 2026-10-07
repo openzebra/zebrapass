@@ -28,18 +28,32 @@ pub struct SharedProvider {
     identity: Arc<SyncIdentity>,
     served: Mutex<Vec<Arc<SharedRef>>>,
     node: Mutex<()>,
+    book: crate::peers::PeerBook,
 }
 
 impl SharedProvider {
     /// A provider for the vaults under `base`, signing as `identity`.
     #[must_use]
-    pub const fn new(base: PathBuf, identity: Arc<SyncIdentity>) -> Self {
+    pub fn new(base: PathBuf, identity: Arc<SyncIdentity>) -> Self {
         Self {
             base,
             identity,
             served: Mutex::new(Vec::new()),
             node: Mutex::new(()),
+            book: crate::peers::PeerBook::default(),
         }
+    }
+
+    /// The addresses this device can be reached at, offered to members.
+    pub fn set_hints(&self, hints: Vec<String>) {
+        self.book.set_own(hints);
+    }
+
+    /// Run `act` while holding the node lock, for readers that open the files
+    /// themselves and must not see a half-finished write.
+    pub fn locked<T>(&self, act: impl FnOnce() -> T) -> Option<T> {
+        let _held = self.node.lock().ok()?;
+        Some(act())
     }
 
     /// Open the vault fresh from disk and run `act` on it while holding the
@@ -170,6 +184,33 @@ impl Provider for SharedProvider {
                 .map_or_else(|error| verdict_of(&error), |_| Verdict::Applied))
         })
         .unwrap_or(Verdict::Refused)
+    }
+
+    fn peers(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        let reference = self.reference(vault_id)?;
+        let log = read_member_log(&self.base, &reference).ok()?;
+        let cert = self.identity.devices().first()?;
+        self.book.list(&log, cert, &self.identity.sign_key()).ok()
+    }
+
+    fn accept_peers(&self, vault_id: &[u8; 16], list: &[u8]) -> usize {
+        let Some(reference) = self.reference(vault_id) else {
+            return 0;
+        };
+        let (Ok(log), Some(own)) = (
+            read_member_log(&self.base, &reference),
+            self.identity.devices().first(),
+        ) else {
+            return 0;
+        };
+        self.book.accept(&log, &own.device_id, list)
+    }
+
+    fn peer_hints(&self, vault_id: &[u8; 16]) -> Vec<String> {
+        self.reference(vault_id)
+            .and_then(|reference| read_member_log(&self.base, &reference).ok())
+            .map(|log| self.book.hints(&log))
+            .unwrap_or_default()
     }
 
     fn needs_snapshot(&self, vault_id: &[u8; 16], rekey: Option<&[u8]>) -> bool {

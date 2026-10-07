@@ -34,6 +34,8 @@ pub const INVITE_CTX: &[u8] = b"zebrapass/invitation/v1";
 
 /// Signing context of the peer-to-peer handshake authentication signature.
 pub const P2P_AUTH_CTX: &[u8] = b"zebrapass/p2p-auth/v1";
+/// Signing context of a device's signed list of addresses it can be reached at.
+pub const PEER_CTX: &[u8] = b"zebrapass/peer-record/v1";
 /// ML-DSA-65 seed length.
 pub const SYNC_SEED_LEN: usize = 32;
 /// ML-DSA-65 verifying key length.

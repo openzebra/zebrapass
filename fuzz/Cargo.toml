@@ -50,3 +50,13 @@ path = "fuzz_targets/frame_index.rs"
 test = false
 doc = false
 bench = false
+
+[dependencies.syncwire]
+path = "../crates/syncwire"
+
+[[bin]]
+name = "sync_wire"
+path = "fuzz_targets/sync_wire.rs"
+test = false
+doc = false
+bench = false

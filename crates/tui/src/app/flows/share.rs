@@ -206,7 +206,9 @@ impl Unlocked {
             } => match action {
                 Some(Action::Back) => Next::Stay(Step::Overview),
                 Some(Action::Confirm) => {
-                    ctx.copy(invitation.as_bytes(), "invitation");
+                    if !ctx.copy(invitation.as_bytes(), "invitation") {
+                        self.save_invitation(&invitation, &number, ctx);
+                    }
                     Next::Stay(Step::AddDone {
                         invitation,
                         print,
