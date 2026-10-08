@@ -465,3 +465,68 @@ fn a_snapshot_round_trips_and_is_strict() {
     count[6..8].copy_from_slice(&u16::MAX.to_be_bytes());
     assert!(syncwire::decode_snapshot(count).is_err());
 }
+
+fn sealed_frame() -> Vec<u8> {
+    let meta = frame::FrameMeta {
+        kind: frame::KIND_REVISION,
+        record_id: 3,
+        revision: 2,
+        origin_device: [4; 16],
+        timestamp_ms: 5,
+        alg: frame::ALG_CASCADE,
+    };
+    frame::seal(&secret::Secret::new([8u8; 32]), &meta, b"plain").unwrap()
+}
+
+#[test]
+fn an_announcement_round_trips_and_is_strict() {
+    let announce = syncwire::Announce {
+        vault_id: [1; 16],
+        generation: 9,
+        commit_tag: [2; 32],
+    };
+    let bytes = syncwire::encode_announce(&announce);
+    assert_eq!(bytes.len(), syncwire::ANNOUNCE_WIRE_LEN);
+    assert_eq!(syncwire::decode_announce(&bytes).unwrap(), announce);
+    for len in 0..bytes.len() {
+        assert!(syncwire::decode_announce(&bytes[..len]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(syncwire::decode_announce(&trailing).is_err());
+    let mut magic = bytes.clone();
+    magic[0] ^= 1;
+    assert!(syncwire::decode_announce(&magic).is_err());
+    let mut version = bytes;
+    version[5] ^= 1;
+    assert!(syncwire::decode_announce(&version).is_err());
+}
+
+#[test]
+fn a_personal_frame_round_trips_and_is_strict() {
+    let frame = sealed_frame();
+    let bytes = syncwire::encode_personal_frame(&frame).unwrap();
+    assert_eq!(syncwire::decode_personal_frame(&bytes).unwrap(), frame);
+    for len in 0..bytes.len() {
+        assert!(syncwire::decode_personal_frame(&bytes[..len]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(syncwire::decode_personal_frame(&trailing).is_err());
+    let mut magic = bytes.clone();
+    magic[1] ^= 1;
+    assert!(syncwire::decode_personal_frame(&magic).is_err());
+    let mut version = bytes.clone();
+    version[5] ^= 1;
+    assert!(syncwire::decode_personal_frame(&version).is_err());
+    let mut liar = bytes;
+    liar[6..10].copy_from_slice(&u32::MAX.to_be_bytes());
+    assert!(syncwire::decode_personal_frame(&liar).is_err());
+    let mut over = Vec::new();
+    over.extend_from_slice(&syncwire::PERSONAL_FRAME_MAGIC);
+    over.extend_from_slice(&syncwire::PERSONAL_FRAME_WIRE_VERSION.to_be_bytes());
+    over.extend_from_slice(&u32::try_from(MAX_FRAME + 1).unwrap().to_be_bytes());
+    over.resize(over.len() + MAX_FRAME + 1, 0);
+    assert!(syncwire::decode_personal_frame(&over).is_err());
+    assert!(syncwire::encode_personal_frame(&[0u8; 8]).is_err());
+}

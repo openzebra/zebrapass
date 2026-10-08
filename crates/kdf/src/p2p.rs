@@ -32,6 +32,54 @@ pub fn p2p_gate_key(secret: &[u8; 32], vault_id: &[u8; 16]) -> anyhow::Result<Se
     hkdf_sha512(secret, vault_id, INFO_P2P_GATE)
 }
 
+/// HKDF info of the secret every device of one account derives its personal
+/// vault's hello gate from.
+pub const INFO_P2P_ACCOUNT_GATE: &[u8] = b"brby/v2/p2p-account-gate";
+
+/// HKDF info of the id a personal vault is addressed by before its real
+/// vault id is known to the dialing device.
+pub const INFO_P2P_ACCOUNT_ROUTE: &[u8] = b"brby/v2/p2p-account-route";
+
+/// HKDF info of the key that seals a personal vault's stored peer addresses.
+pub const INFO_PERSONAL_PEERS: &[u8] = b"brby/v2/personal-peers";
+
+/// The secret behind the hello gate of an account's personal vault, from the
+/// 64-byte seed. Every device that was enrolled with the phrase keeps it in
+/// its sealed identity; the seed itself is never kept.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn account_gate_secret(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; 32]>> {
+    hkdf_sha512(seed, &[0u8; 16], INFO_P2P_ACCOUNT_GATE)
+}
+
+/// The id a personal vault is addressed by in the handshake.
+///
+/// A device that only holds the phrase does not know the vault's own id yet,
+/// so both sides salt the handshake with this one, which they derive from the
+/// gate secret.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn account_route_id(gate_secret: &Secret<[u8; 32]>) -> anyhow::Result<[u8; 16]> {
+    let okm = hkdf_sha512(gate_secret.expose(), &[0u8; 16], INFO_P2P_ACCOUNT_ROUTE)?;
+    okm.expose()
+        .first_chunk::<16>()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("kdf parameters rejected"))
+}
+
+/// Key of a personal vault's stored peer addresses, from the vault key.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn personal_peers_key(vk: &[u8; 32], vault_id: &[u8; 16]) -> anyhow::Result<Secret<[u8; 32]>> {
+    hkdf_sha512(vk, vault_id, INFO_PERSONAL_PEERS)
+}
+
 /// HKDF info of the key that wraps a shared-vault seed for one invitee.
 pub const INFO_SHARE_GRANT: &[u8] = b"brby/v2/share-grant";
 
@@ -112,6 +160,28 @@ mod tests {
             assert_ne!(base, other);
         }
         assert_ne!(base, key(INFO_P2P_APP_I2R, 1, 2, 3, 4));
+    }
+
+    #[test]
+    fn account_secrets_follow_the_seed_and_stay_apart() {
+        let gate = super::account_gate_secret(&[1; 64]).unwrap();
+        assert_eq!(
+            gate.expose(),
+            super::account_gate_secret(&[1; 64]).unwrap().expose()
+        );
+        assert_ne!(
+            gate.expose(),
+            super::account_gate_secret(&[2; 64]).unwrap().expose()
+        );
+        let route = super::account_route_id(&gate).unwrap();
+        assert_eq!(route, super::account_route_id(&gate).unwrap());
+        assert_ne!(
+            route,
+            super::account_route_id(&super::account_gate_secret(&[2; 64]).unwrap()).unwrap()
+        );
+        assert_ne!(&route[..], &gate.expose()[..16]);
+        let peers = super::personal_peers_key(gate.expose(), &route).unwrap();
+        assert_ne!(peers.expose(), gate.expose());
     }
 
     #[test]

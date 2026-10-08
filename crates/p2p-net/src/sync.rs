@@ -17,13 +17,13 @@ use crate::view::{Provider, VaultView};
 
 /// Revisions moved in each direction in one check-in; the rest wait for the
 /// next one.
-const MAX_MOVED: usize = 512;
+pub const MAX_MOVED: usize = 512;
 
 /// Addresses one check-in dials at most, however many it learns on the way.
-const MAX_DIALED: usize = 8;
+pub const MAX_DIALED: usize = 8;
 
 const MAX_LOG: usize = ENTRY_WIRE_LEN * MAX_ENTRIES;
-const MAX_FRONTIER_BODY: usize = syncwire::MAX_FRONTIER * 32 + 8;
+pub const MAX_FRONTIER_BODY: usize = syncwire::MAX_FRONTIER * 32 + 8;
 const MAX_SNAPSHOT: usize = 512 << 20;
 
 /// What one check-in did.

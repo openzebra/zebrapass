@@ -13,6 +13,7 @@ frame = { path = "../frame" }
 session = { path = "../session" }
 
 [dev-dependencies]
+secret = { path = "../secret" }
 sha2.workspace = true
 
 [lints]

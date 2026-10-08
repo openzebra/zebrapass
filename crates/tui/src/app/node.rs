@@ -29,6 +29,9 @@ pub struct P2p {
     /// The address it tells members to use, when it sits behind a port
     /// forward.
     pub advertise: Option<Box<str>>,
+    /// The addresses other devices can reach it at, best first, as found when
+    /// it started.
+    pub reachable: Box<[String]>,
     checked: Instant,
 }
 
@@ -42,6 +45,9 @@ impl std::fmt::Debug for P2p {
 
 impl P2p {
     /// Start a node for `identity` over the shared vaults under `base`.
+    ///
+    /// TODO(client-only): a phone could run with no listener at all and only
+    /// pull from the account's other devices; `Listen::Off` is the seam.
     #[must_use]
     pub fn start(
         base: &Path,
@@ -64,16 +70,27 @@ impl P2p {
         let service = Service::start(bind(PORT).as_deref(), Arc::clone(&provider))
             .or_else(|_| Service::start(bind(0).as_deref(), Arc::clone(&provider)))
             .ok()?;
-        let node = Box::new(Self {
+        let mut node = Box::new(Self {
             service,
             provider,
             identity,
             listen,
             advertise,
+            reachable: Box::default(),
             checked: Instant::now(),
         });
-        node.provider.set_hints(node.hints());
+        let hints = node.hints();
+        node.provider.set_hints(hints.clone());
+        node.reachable = hints.into_boxed_slice();
         Some(node)
+    }
+
+    /// Serve `vault`, the personal vault, to the other devices of this
+    /// account. Call again whenever the vault key may have changed. Returns
+    /// `false` for an identity that cannot be reached by them.
+    pub fn serve_personal(&self, vault: &crate::vault::Vault) -> bool {
+        self.provider
+            .serve_personal(vault.paths.vault_file.clone(), vault.session.reopen_key())
     }
 
     /// Whether it is time to check in with the members again; restarts the

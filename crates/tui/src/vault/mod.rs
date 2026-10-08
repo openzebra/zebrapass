@@ -10,6 +10,7 @@ pub mod limits;
 pub mod open;
 pub mod ops;
 pub mod records;
+pub mod restore_net;
 pub mod shared;
 
 pub use open::Vault;

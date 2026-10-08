@@ -40,12 +40,27 @@ pub const fn never_dialable(ip: IpAddr) -> bool {
 ///
 /// A short reason the interface can show as is.
 pub fn parse_advertise(input: &str) -> Result<Box<str>, &'static str> {
+    parse_peer_address(input, false)
+}
+
+/// As [`parse_advertise`], for an address this device is asked to dial.
+///
+/// `allow_loopback` is for an address its user typed in on purpose, such as
+/// a device reached through an SSH tunnel or on this machine; an address
+/// another device published is never loopback.
+///
+/// # Errors
+///
+/// A short reason the interface can show as is.
+pub fn parse_peer_address(input: &str, allow_loopback: bool) -> Result<Box<str>, &'static str> {
     let address: std::net::SocketAddr = input
         .trim()
         .parse()
         .map_err(|_| "Write it as ip:port, for example 93.184.216.34:7447.")?;
     let ip = address.ip().to_canonical();
-    if address.port() == 0 || ip.is_loopback() || crate::never_dialable(ip) {
+    let loopback_refused = ip.is_loopback() && !allow_loopback;
+    let refused = !ip.is_loopback() && crate::never_dialable(ip);
+    if address.port() == 0 || loopback_refused || refused {
         return Err("Other devices cannot reach that address.");
     }
     Ok(address.to_string().into_boxed_str())

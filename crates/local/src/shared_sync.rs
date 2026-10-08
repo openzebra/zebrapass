@@ -85,7 +85,12 @@ fn fresh_record_id(vault: &SharedVault) -> anyhow::Result<u32> {
 }
 
 /// Check a vault file this device did not build against the attestations
-/// that came with it, and keep them. Every record's winning revision must be
+/// that came with it, and keep them.
+///
+/// Shared vaults only. A personal vault restored from another device of the
+/// same account carries no attestations and never passes through here: its
+/// trust anchor is the file's integrity commitment over a channel whose peer
+/// proved the account's root (`tui::vault::restore_net`). Every record's winning revision must be
 /// attested by an account that was a writer in `log` at some point, removed
 /// members included: their earlier records are still the vault's history.
 ///

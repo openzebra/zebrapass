@@ -19,11 +19,14 @@ use crate::secure::phrase_input::{secret_string, PhraseInput, Typed};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
-use crate::vault::create::{Enrollment, RestoreVault};
+use crate::vault::create::{Enrollment, RestoreSource, RestoreVault};
 use crate::vault::discover::discover;
 use crate::vault::factors::presence;
 use crate::vault::limits::{MAX_PATH_INPUT, MAX_VAULT_NAME};
 use crate::vault::open::read_directory;
+
+/// Longest address typed in: a bracketed IPv6 address with a port.
+const MAX_ADDRESS_INPUT: usize = 64;
 
 /// Reveal key of the last finished word.
 pub const REVEAL_LAST: RevealKey = RevealKey(20);
@@ -81,6 +84,11 @@ pub struct RestoreState {
     pub passphrase: SecretInput,
     /// Vault file path.
     pub source: TextInput,
+    /// Address of another device of the account, for a restore over the
+    /// network.
+    pub address: TextInput,
+    /// The vault comes from another device instead of a file.
+    pub network: bool,
     /// Display name.
     pub name: TextInput,
     /// Focus.
@@ -118,6 +126,8 @@ impl RestoreState {
             phrase: PhraseInput::default(),
             passphrase: SecretInput::new(MAX_PASSPHRASE),
             source: TextInput::with_value(&path, MAX_PATH_INPUT),
+            address: TextInput::with_value("", MAX_ADDRESS_INPUT),
+            network: false,
             name: TextInput::with_value("Personal", MAX_VAULT_NAME),
             field: RestoreField::Phrase,
             hide_current: false,
@@ -129,6 +139,26 @@ impl RestoreState {
         };
         state.check_source();
         state
+    }
+
+    /// The address typed in, validated as an address this device may dial:
+    /// the advertise rules, with loopback allowed because the user chose it.
+    ///
+    /// # Errors
+    ///
+    /// A short reason to show as is.
+    pub fn peer_address(&self) -> Result<Box<str>, &'static str> {
+        local::parse_peer_address(self.address.value(), true)
+    }
+
+    /// Whether the source looks usable: a vault file, or an address.
+    #[must_use]
+    pub fn source_ready(&self) -> bool {
+        if self.network {
+            self.peer_address().is_ok()
+        } else {
+            self.source_factors.is_some()
+        }
     }
 
     /// Re-read the wrap directory at `source`. Unauthenticated: this only
@@ -155,6 +185,7 @@ impl RestoreState {
                 EnrollEvent::Stay => Nav::Stay,
                 EnrollEvent::Back => {
                     self.parsed = None;
+                    self.field = RestoreField::Phrase;
                     self.step = RestoreStep::Phrase;
                     Nav::Stay
                 }
@@ -193,6 +224,9 @@ impl RestoreState {
             RestoreField::Passphrase => {
                 edit_secret(&mut self.passphrase, event);
             }
+            RestoreField::Source if self.network => {
+                edit_text(&mut self.address, event);
+            }
             RestoreField::Source => {
                 if edit_text(&mut self.source, event) == Edit::Consumed {
                     self.check_source();
@@ -224,6 +258,9 @@ impl RestoreState {
             }
             RestoreField::Passphrase => {
                 self.passphrase.insert_str(text);
+            }
+            RestoreField::Source if self.network => {
+                self.address.insert_str(text);
             }
             RestoreField::Source => {
                 self.source.insert_str(text);
@@ -263,6 +300,10 @@ impl RestoreState {
             Action::NextField | Action::PrevField => {
                 self.field = self.field.shift(action == Action::NextField);
             }
+            Action::RestoreSource => {
+                self.network = !self.network;
+                self.error = None;
+            }
             Action::Confirm => self.enter_enroll(ctx),
             Action::Back => return Nav::To(crate::app::flows::gate::initial_screen(ctx)),
             _ => {}
@@ -287,11 +328,19 @@ impl RestoreState {
             self.error = Some("Give the vault a name.");
             return;
         }
-        let Ok(directory) = read_directory(Path::new(self.source.value().trim())) else {
-            self.error = Some("No ZebraPass vault file at that path.");
-            return;
+        let existing = if self.network {
+            if let Err(problem) = self.peer_address() {
+                self.error = Some(problem);
+                return;
+            }
+            false
+        } else {
+            let Ok(directory) = read_directory(Path::new(self.source.value().trim())) else {
+                self.error = Some("No ZebraPass vault file at that path.");
+                return;
+            };
+            presence(&directory, None).password
         };
-        let existing = presence(&directory, None).password;
         self.parsed = Some(Box::new(parsed));
         self.phrase.clear();
         self.passphrase.clear();
@@ -311,7 +360,14 @@ impl RestoreState {
             phrase,
             name: self.name.value().trim().to_owned(),
             base: ctx.base.clone(),
-            source: PathBuf::from(self.source.value().trim()),
+            source: self
+                .network
+                .then(|| self.peer_address().ok())
+                .flatten()
+                .map_or_else(
+                    || RestoreSource::File(PathBuf::from(self.source.value().trim())),
+                    RestoreSource::Network,
+                ),
             profile: KdfProfile::Balanced,
             factor,
         };
@@ -320,6 +376,8 @@ impl RestoreState {
 
     /// The restore job failed with the uniform error.
     pub fn failed(&mut self, message: &'static str) {
+        // The phrase was wiped when the job started: type it again.
+        self.field = RestoreField::Phrase;
         self.step = RestoreStep::Phrase;
         self.error = Some(message);
         self.enroll = EnrollState::new(false);

@@ -145,10 +145,7 @@ fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
             theme.accent(),
         ),
         Some(None) => (format!("not listening · {mode}"), theme.muted()),
-        None => (
-            format!("stopped until a shared vault exists · {mode}"),
-            theme.muted(),
-        ),
+        None => (format!("stopped · {mode}"), theme.muted()),
     };
     Line::from(vec![
         Span::styled(format!("{INDENT}{:<14}", "node"), theme.muted()),
@@ -198,6 +195,12 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
     }
     lines.push(blank());
     lines.push(node_line(state, theme));
+    if let Some(address) = state.p2p.as_deref().and_then(|p2p| p2p.reachable.first()) {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{INDENT}{:<14}", "restore from"), theme.muted()),
+            Span::styled(format!("{address}  type it on a new device"), theme.text()),
+        ]));
+    }
     if let Some(address) = state
         .advertised()
         .filter(|_| matches!(state.listen_mode(), Listen::Lan))

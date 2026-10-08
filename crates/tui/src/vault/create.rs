@@ -3,14 +3,14 @@
 //! Both end the same way: this device enrolls its own unlock factor, the
 //! file is written atomically, and the rollback cursor is recorded.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use local::{paths_for, LocalMeta, Paths};
 use record::Document;
 use seed::SeedPhrase;
 use session::{
-    add_human_password, unlock, wrap_directory, write_records_batch, BodyAlg, HumanPasswordPublics,
-    KdfProfile, Session, UnlockCreds, VaultFile,
+    add_human_password, replace_human_password, unlock, wrap_directory, write_records_batch,
+    BodyAlg, HumanPasswordPublics, KdfProfile, Session, UnlockCreds, VaultFile,
 };
 use zeroize::Zeroizing;
 
@@ -24,6 +24,11 @@ pub enum Enrollment {
     Password(Zeroizing<Vec<u8>>),
     /// Keep the password factor the restored file already has.
     KeepExisting,
+    /// Replace the password the restored file already has with this one. A
+    /// file carries one human password and the first one found opens it, so
+    /// a restore over the network, which brings another device's file, must
+    /// not add a second that would never be tried.
+    ReplacePassword(Zeroizing<Vec<u8>>),
     /// This device's keys, sealed under this PIN with this Argon2id preset.
     Device(Zeroizing<Vec<u8>>, KdfProfile),
 }
@@ -51,6 +56,15 @@ pub struct NewVault {
     pub records: Vec<Document>,
 }
 
+/// Where a restore gets the vault file from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RestoreSource {
+    /// A vault file on this machine: a backup or a copy from another device.
+    File(PathBuf),
+    /// Another device of the same account, at this `ip:port`.
+    Network(Box<str>),
+}
+
 /// A restore request.
 #[derive(Debug)]
 pub struct RestoreVault {
@@ -60,8 +74,8 @@ pub struct RestoreVault {
     pub name: String,
     /// Data directory.
     pub base: PathBuf,
-    /// The vault file to restore (a backup or a copy from another device).
-    pub source: PathBuf,
+    /// Where the vault file comes from.
+    pub source: RestoreSource,
     /// Argon2id profile for a newly enrolled password.
     pub profile: KdfProfile,
     /// This device's factor.
@@ -115,16 +129,25 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
 /// [`UnlockError::Denied`] when the phrase does not open the file; storage
 /// errors as [`UnlockError::Io`].
 pub fn restore(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
+    match request.source.clone() {
+        RestoreSource::File(source) => restore_file(request, &source),
+        RestoreSource::Network(address) => {
+            crate::vault::restore_net::restore_over_network(request, &address)
+        }
+    }
+}
+
+fn restore_file(request: RestoreVault, source: &Path) -> Result<Box<Vault>, UnlockError> {
     let RestoreVault {
         phrase,
         name,
         base,
-        source,
         profile,
         factor,
+        ..
     } = request;
-    let mut file = read_vault_file(&source)?;
-    let mut session = unlock(&file, &UnlockCreds::master(phrase.seed()), None)
+    let file = read_vault_file(source)?;
+    let session = unlock(&file, &UnlockCreds::master(phrase.seed()), None)
         .map_err(|error| UnlockError::from(&error))?;
     let client_id = kdf::client_id(phrase.seed()).map_err(|_| UnlockError::Io)?;
     let paths = paths_for(&base, session.vault_id());
@@ -132,6 +155,17 @@ pub fn restore(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
         .and_then(|identity| identity.save(&paths.sync_identity(), &session.sync_identity_key()?))
         .map_err(|_| UnlockError::Io)?;
     drop(phrase);
+    land((session, file, paths), (client_id, name), profile, factor)
+}
+
+/// Make a restored vault this device's: its metadata with a fresh rollback
+/// cursor, this device's factor, and the file written.
+pub(crate) fn land(
+    (mut session, mut file, paths): (Session, VaultFile, Paths),
+    (client_id, name): ([u8; 64], String),
+    profile: KdfProfile,
+    factor: Enrollment,
+) -> Result<Box<Vault>, UnlockError> {
     let meta = LocalMeta {
         device_id: session.origin_device(),
         client_id,
@@ -165,6 +199,9 @@ fn enroll(
     match factor {
         Enrollment::Password(password) => add_password(session, file, &password, profile),
         Enrollment::KeepExisting => Ok(()),
+        Enrollment::ReplacePassword(password) => {
+            replace_password(session, file, &password, profile)
+        }
         Enrollment::Device(pin, pin_profile) => {
             device::enroll(session, file, paths, &pin, pin_profile)
         }
@@ -184,6 +221,16 @@ pub fn add_password(
 ) -> anyhow::Result<()> {
     let cost = (profile.m_kib(), profile.t(), profile.p());
     add_human_password(session, file, &password_publics(password, cost)?)
+}
+
+fn replace_password(
+    session: &mut Session,
+    file: &mut VaultFile,
+    password: &[u8],
+    profile: KdfProfile,
+) -> anyhow::Result<()> {
+    let cost = (profile.m_kib(), profile.t(), profile.p());
+    replace_human_password(session, file, &password_publics(password, cost)?)
 }
 
 /// A human password wrap request with a fresh key id and Argon2id `cost`

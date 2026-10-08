@@ -145,7 +145,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
     frame.render_widget(block, card);
     let columns = slot_columns(inner.width.saturating_sub(6));
     let grid_rows = u16::try_from(MAX_WORDS.div_ceil(columns)).unwrap_or(24);
-    let [phrase_head, grid, suggest, _, file_head, file, file_status, _, details, footer] =
+    let [phrase_head, grid, suggest, _, file_head, file, file_status, method, details, footer] =
         Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(grid_rows + 2),
@@ -168,33 +168,70 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
         ctx,
     );
     draw_words(frame, grid, suggest, state, columns, ctx);
-    section(
-        frame,
-        file_head,
-        "2",
-        "Vault file",
-        "backup or copy from another device",
-        ctx,
-    );
+    if state.network {
+        section(
+            frame,
+            file_head,
+            "2",
+            "Another device",
+            "its address, ip:port",
+            ctx,
+        );
+    } else {
+        section(
+            frame,
+            file_head,
+            "2",
+            "Vault file",
+            "backup or copy from another device",
+            ctx,
+        );
+    }
     let file_focus = state.field == RestoreField::Source;
     let file_rect = Rect {
         x: file.x + 2,
         width: file.width.saturating_sub(4),
         ..file
     };
+    let typed = if state.network {
+        &state.address
+    } else {
+        &state.source
+    };
     boxed(
         frame,
         file_rect,
-        text_line(
-            &state.source,
-            file_rect.width.saturating_sub(2),
-            file_focus,
-            theme,
-        ),
+        text_line(typed, file_rect.width.saturating_sub(2), file_focus, theme),
         file_focus,
         theme,
     );
-    let status = state.source_factors.map_or_else(
+    frame.render_widget(Paragraph::new(source_status(state, theme)), file_status);
+    frame.render_widget(Paragraph::new(method_line(state, theme)), method);
+    draw_details(frame, details, state, ctx);
+    draw_footer(frame, footer, state, ctx);
+    hint_bar(frame, hints, Scope::Restore, "", ctx);
+}
+
+/// What is known about the source so far.
+fn source_status<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
+    if state.network {
+        return match (
+            state.address.value().trim().is_empty(),
+            state.peer_address(),
+        ) {
+            (true, _) => Span::styled(
+                "    the phrase and a device that is on and unlocked are enough",
+                theme.muted(),
+            ),
+            (false, Ok(address)) => {
+                Span::styled(format!("    {} {address}", theme.glyphs.ok), theme.accent())
+            }
+            (false, Err(problem)) => {
+                Span::styled(format!("    {} {problem}", theme.glyphs.fail), theme.warn())
+            }
+        };
+    }
+    state.source_factors.map_or_else(
         || {
             Span::styled(
                 format!("    {} no vault file at this path", theme.glyphs.fail),
@@ -210,11 +247,44 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
                 theme.accent(),
             )
         },
-    );
-    frame.render_widget(Paragraph::new(status), file_status);
-    draw_details(frame, details, state, ctx);
-    draw_footer(frame, footer, state, ctx);
-    hint_bar(frame, hints, Scope::Restore, "", ctx);
+    )
+}
+
+/// Which source is chosen, and how to switch.
+fn method_line<'a>(state: &RestoreState, theme: &Theme) -> Line<'a> {
+    let (file, network) = if state.network {
+        ("( ) from a file", "(•) over the network")
+    } else {
+        ("(•) from a file", "( ) over the network")
+    };
+    let ascii = |text: &'a str| {
+        if theme.ascii {
+            text.replace('•', "*")
+        } else {
+            text.to_owned()
+        }
+    };
+    Line::from(vec![
+        Span::styled("    ", theme.muted()),
+        Span::styled(
+            ascii(file),
+            if state.network {
+                theme.muted()
+            } else {
+                theme.accent()
+            },
+        ),
+        Span::styled("   ", theme.muted()),
+        Span::styled(
+            ascii(network),
+            if state.network {
+                theme.accent()
+            } else {
+                theme.muted()
+            },
+        ),
+        Span::styled("   Ctrl-N switches", theme.muted()),
+    ])
 }
 
 /// `3 / 24 words` plus a short bar.
@@ -374,7 +444,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ct
             },
         );
     }
-    let ready = state.phrase.plausible() && state.source_factors.is_some();
+    let ready = state.phrase.plausible() && state.source_ready();
     let rect = Rect {
         x: action.x + 1,
         width: action.width.saturating_sub(3),

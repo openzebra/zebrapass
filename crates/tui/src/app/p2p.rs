@@ -40,7 +40,8 @@ pub fn load_identity(vault: &Vault) -> Option<Arc<SyncIdentity>> {
 }
 
 /// The node and shared vaults for a freshly unlocked personal vault. A vault
-/// without a sync identity, or without shared vaults, runs no node.
+/// without a sync identity runs no node; without shared vaults it runs one
+/// only to serve itself to the account's other devices.
 #[must_use]
 pub fn setup(vault: &Vault) -> Setup {
     let identity = load_identity(vault);
@@ -61,17 +62,23 @@ pub fn setup(vault: &Vault) -> Setup {
         .prefs
         .as_ref()
         .map_or_else(Listen::default, |prefs| prefs.p2p_listen);
-    let p2p = if shared.is_empty() {
-        None
-    } else {
+    let p2p = if crate::app::personal::wants_node(
+        identity.account_gate().is_some(),
+        shared.len(),
+        listen,
+    ) {
         let advertise = vault
             .meta
             .prefs
             .as_ref()
             .and_then(|prefs| prefs.p2p_advertise.clone());
         P2p::start(base, Arc::clone(&identity), listen, advertise)
+    } else {
+        None
     };
     if let Some(p2p) = p2p.as_deref() {
+        p2p.serve_personal(vault);
+        crate::app::personal::pull_personal(p2p, vault);
         for item in &shared {
             p2p.provider.serve(Arc::clone(&item.reference));
             fetch(p2p, item);
@@ -154,6 +161,10 @@ impl Unlocked {
             self.advertised().map(Box::from),
         );
         if let Some(p2p) = self.p2p.as_deref() {
+            if let Some(vault) = self.vault.as_deref() {
+                p2p.serve_personal(vault);
+                crate::app::personal::pull_personal(p2p, vault);
+            }
             for item in &self.shared {
                 p2p.provider.serve(Arc::clone(&item.reference));
                 fetch(p2p, item);
@@ -165,7 +176,14 @@ impl Unlocked {
     /// Stop the node and start it again where the setting now says.
     pub fn restart_p2p(&mut self) {
         self.p2p = None;
-        if !self.shared.is_empty() {
+        let wanted = self.identity.as_deref().is_some_and(|identity| {
+            crate::app::personal::wants_node(
+                identity.account_gate().is_some(),
+                self.shared.len(),
+                self.listen_mode(),
+            )
+        });
+        if wanted {
             self.ensure_p2p();
         }
     }
@@ -294,6 +312,7 @@ impl Unlocked {
                     }
                     ctx.redraw();
                 }
+                Event::PersonalPulled { frames, .. } => self.apply_pulled(&frames, ctx),
                 Event::PeerConnected { .. } | Event::PeerGone { .. } => ctx.redraw(),
                 Event::Listening(_) => {}
             }

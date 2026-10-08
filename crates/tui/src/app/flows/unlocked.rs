@@ -67,7 +67,8 @@ pub struct Unlocked {
     pub cache: Box<[Summary]>,
     /// Shared vaults this account belongs to.
     pub shared: Vec<SharedItem>,
-    /// The peer-to-peer node, while there is a shared vault to serve.
+    /// The peer-to-peer node, while there is a shared vault to serve or the
+    /// personal vault may be served to this account's other devices.
     pub p2p: Option<Box<P2p>>,
     /// This device's sync identity, when the vault has one.
     pub identity: Option<Arc<SyncIdentity>>,
@@ -315,6 +316,7 @@ impl Unlocked {
     pub fn on_result(&mut self, vault: Box<Vault>, result: Result<Outcome, String>, ctx: &mut Ctx) {
         self.info = VaultInfo::from(&*vault);
         self.vault = Some(vault);
+        self.refresh_personal();
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(message) => {

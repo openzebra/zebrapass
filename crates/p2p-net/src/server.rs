@@ -2,8 +2,9 @@
 //!
 //! Only authenticated devices of an account the vault trusts ever reach the
 //! request stage, so a request needs no further check here. A request is
-//! `GET /v1/log` (the member log) or `GET /v1/snapshot` (the vault file);
-//! anything else is refused.
+//! `GET /v1/log` (the member log) or `GET /v1/snapshot` (the vault file), or
+//! one of the per-record and personal-vault endpoints below; anything else is
+//! refused.
 
 use std::future::poll_fn;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -179,6 +180,7 @@ async fn answer<P: Provider>(
             Some(log)
         }
         "/v1/snapshot" => Some(provider.snapshot(&vault_id)),
+        "/v1/announce" => Some(provider.announce(&vault_id)),
         "/v1/peers" => Some(provider.peers(&vault_id)),
         "/v1/frontier" => Some(provider.frontier(&vault_id)),
         "/v1/rekey" => Some(

@@ -58,6 +58,12 @@ pub trait Provider: Send + Sync + 'static {
     /// The vault file.
     fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>>;
 
+    /// Which vault file this device holds for a personal vault: its number,
+    /// generation and commit tag. Only a personal vault has one.
+    fn announce(&self, _vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        None
+    }
+
     /// The frontier of the vault: the winning revision of every record.
     fn frontier(&self, _vault_id: &[u8; 16]) -> Option<Vec<u8>> {
         None

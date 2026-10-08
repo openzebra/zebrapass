@@ -5,8 +5,11 @@
 //! The account root seed is never stored. It exists only inside [`enroll`]
 //! while the phrase is at hand, signs this device's certificate, and is
 //! wiped. The file is one cascade frame under `kdf::sync_identity_key`; its
-//! plaintext is the 32-byte signing seed and the invitation keys followed by
-//! a document, so no secret passes through a non-zeroizing document buffer.
+//! plaintext is the 32-byte signing seed, from revision 2 on the 32-byte
+//! account gate secret, and the invitation keys, followed by a document, so
+//! no secret passes through a non-zeroizing document buffer. Revision 1 files
+//! (no gate secret) still load; such a device cannot serve its personal vault
+//! to the account's other devices until it is enrolled again.
 
 use std::path::Path;
 
@@ -28,12 +31,29 @@ use crate::share_keys::{ShareKeys, SharePublics, SHARE_KEYS_LEN};
 #[derive(Debug)]
 pub struct SyncIdentity {
     sign_seed: Secret<[u8; SYNC_SEED_LEN]>,
+    account_gate: Option<Secret<[u8; GATE_LEN]>>,
     share: ShareKeys,
     root_vk: Box<[u8; SYNC_VK_LEN]>,
     devices: Vec<DeviceCert>,
     revocations: Revocations,
     last_seen: LastSeen,
 }
+
+/// The secret parts of an identity: signing seed, account gate, invitation keys.
+type SecretParts = (
+    Secret<[u8; SYNC_SEED_LEN]>,
+    Option<Secret<[u8; GATE_LEN]>>,
+    ShareKeys,
+);
+
+/// Length of the account gate secret.
+const GATE_LEN: usize = 32;
+
+/// Frame revision of a file that holds the account gate secret.
+const REVISION_WITH_GATE: u64 = 2;
+
+/// Frame revision of a file written before the gate secret existed.
+const REVISION_LEGACY: u64 = 1;
 
 fn corrupted() -> anyhow::Error {
     anyhow::anyhow!("corrupted length")
@@ -71,7 +91,11 @@ impl SyncIdentity {
             u64::from_le_bytes(serial),
         )?;
         Self::from_parts(
-            (sign_seed, ShareKeys::generate()?),
+            (
+                sign_seed,
+                Some(kdf::account_gate_secret(master_seed)?),
+                ShareKeys::generate()?,
+            ),
             root_vk,
             vec![cert],
             Revocations::default(),
@@ -80,7 +104,7 @@ impl SyncIdentity {
     }
 
     fn from_parts(
-        (sign_seed, share): (Secret<[u8; SYNC_SEED_LEN]>, ShareKeys),
+        (sign_seed, account_gate, share): SecretParts,
         root_vk: Box<[u8; SYNC_VK_LEN]>,
         devices: Vec<DeviceCert>,
         revocations: Revocations,
@@ -93,12 +117,20 @@ impl SyncIdentity {
         }
         Ok(Self {
             sign_seed,
+            account_gate,
             share,
             root_vk,
             devices,
             revocations,
             last_seen,
         })
+    }
+
+    /// The secret every device of this account derives its personal vault's
+    /// hello gate from. `None` for an identity written before it existed.
+    #[must_use]
+    pub const fn account_gate(&self) -> Option<&Secret<[u8; GATE_LEN]>> {
+        self.account_gate.as_ref()
     }
 
     /// The public halves of this device's invitation keys, for a contact
@@ -244,17 +276,24 @@ impl SyncIdentity {
         // Exact capacity: growing the buffer would leave a copy of the seed
         // in freed memory.
         let mut payload = Secret::new(Vec::with_capacity(
-            SYNC_SEED_LEN + SHARE_KEYS_LEN + document.len(),
+            SYNC_SEED_LEN + GATE_LEN + SHARE_KEYS_LEN + document.len(),
         ));
         payload
             .expose_mut()
             .extend_from_slice(self.sign_seed.expose());
+        if let Some(gate) = self.account_gate.as_ref() {
+            payload.expose_mut().extend_from_slice(gate.expose());
+        }
         self.share.append_to(payload.expose_mut());
         payload.expose_mut().extend_from_slice(&document);
         let meta = FrameMeta {
             kind: KIND_REVISION,
             record_id: 0,
-            revision: 1,
+            revision: if self.account_gate.is_some() {
+                REVISION_WITH_GATE
+            } else {
+                REVISION_LEGACY
+            },
             origin_device: own_cert.device_id,
             timestamp_ms: 0,
             alg: ALG_CASCADE,
@@ -272,12 +311,23 @@ impl SyncIdentity {
     pub fn load(path: &Path, key: &Secret<[u8; 32]>) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path).map_err(|_| anyhow::anyhow!("sync identity unreadable"))?;
         let plaintext = frame::open(key, &bytes)?;
+        let revision = frame::parse(&bytes)?.revision;
         let (seed, rest) = plaintext
             .expose()
             .split_first_chunk::<SYNC_SEED_LEN>()
             .ok_or_else(corrupted)?;
         let mut sign_seed = Secret::new([0u8; SYNC_SEED_LEN]);
         sign_seed.expose_mut().copy_from_slice(seed);
+        let (account_gate, rest) = match revision {
+            REVISION_LEGACY => (None, rest),
+            REVISION_WITH_GATE => {
+                let (gate, rest) = rest.split_first_chunk::<GATE_LEN>().ok_or_else(corrupted)?;
+                let mut secret = Secret::new([0u8; GATE_LEN]);
+                secret.expose_mut().copy_from_slice(gate);
+                (Some(secret), rest)
+            }
+            _ => return Err(corrupted()),
+        };
         let (share, rest) = ShareKeys::split_from(rest)?;
         let doc = Document::parse(rest)?;
         let root_vk: Box<[u8; SYNC_VK_LEN]> = Box::new(
@@ -301,11 +351,53 @@ impl SyncIdentity {
             return Err(corrupted());
         }
         Self::from_parts(
-            (sign_seed, share),
+            (sign_seed, account_gate, share),
             root_vk,
             devices,
             Revocations::read(&doc)?,
             LastSeen::read(&doc)?,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
+
+    use super::SyncIdentity;
+
+    fn key() -> secret::Secret<[u8; 32]> {
+        secret::Secret::new([5; 32])
+    }
+
+    #[test]
+    fn the_gate_secret_is_kept_and_follows_the_seed() {
+        let dir = std::env::temp_dir().join(format!("zp-sid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sync.id");
+        let identity = SyncIdentity::enroll(&[7; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
+        identity.save(&path, &key()).unwrap();
+        let loaded = SyncIdentity::load(&path, &key()).unwrap();
+        let expected = kdf::account_gate_secret(&[7; 64]).unwrap();
+        assert_eq!(loaded.account_gate().unwrap().expose(), expected.expose());
+        let other = SyncIdentity::enroll(&[8; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
+        assert_ne!(
+            other.account_gate().unwrap().expose(),
+            expected.expose(),
+            "another phrase has another gate"
+        );
+    }
+
+    #[test]
+    fn an_identity_written_before_the_gate_existed_still_loads_without_one() {
+        let dir = std::env::temp_dir().join(format!("zp-sid-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sync.id");
+        let mut identity = SyncIdentity::enroll(&[7; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
+        identity.account_gate = None;
+        identity.save(&path, &key()).unwrap();
+        let loaded = SyncIdentity::load(&path, &key()).unwrap();
+        assert!(loaded.account_gate().is_none());
+        assert_eq!(loaded.devices().len(), 1);
     }
 }

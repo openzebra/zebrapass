@@ -13,6 +13,7 @@ mod last_seen;
 mod limits;
 mod meta;
 mod peer_store;
+mod personal_peers;
 mod prefs;
 mod revocations;
 mod share_keys;
@@ -30,7 +31,7 @@ use aead::BodyAlg;
 use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
-pub use address::{never_dialable, parse_advertise};
+pub use address::{never_dialable, parse_advertise, parse_peer_address};
 pub use atomic::write_atomic;
 pub use attest_store::AttestStore;
 pub use device_key::{
@@ -40,10 +41,11 @@ pub use device_key::{
 pub use last_seen::LastSeen;
 pub use limits::{
     CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S, ORIGIN_MAX, PEERS_MAX,
-    REVEAL_HIDE_S, REVOKED_MAX, SHARED_NAME_MAX,
+    PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN, REVEAL_HIDE_S, REVOKED_MAX, SHARED_NAME_MAX,
 };
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 pub use peer_store::{load_peers, save_peers};
+pub use personal_peers::{load_personal_peers, remember_personal_peer, save_personal_peers};
 pub use prefs::{parse_origin, Listen, Prefs, SyncMode};
 pub use revocations::Revocations;
 pub use share_keys::{ShareKeys, SharePublics};

@@ -1,5 +1,6 @@
 //! Fuzz target: every decoder of what a peer sends over the wire (records,
-//! certificates, revocations, attestations, bundles, frontiers, peer lists, snapshots)
+//! certificates, revocations, attestations, bundles, frontiers, peer lists, snapshots,
+//! personal-vault announcements and frames)
 //! must return an error, never panic, and whatever decodes must encode back.
 
 #![no_main]
@@ -20,6 +21,12 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(syncwire::encode_frontier(&frontier).ok().as_deref(), Some(data));
     }
     let _ = syncwire::decode_snapshot(data.to_vec());
+    if let Ok(announce) = syncwire::decode_announce(data) {
+        assert_eq!(syncwire::encode_announce(&announce), data);
+    }
+    if let Ok(frame) = syncwire::decode_personal_frame(data) {
+        assert_eq!(syncwire::encode_personal_frame(&frame).ok().as_deref(), Some(data));
+    }
     if let Ok(peers) = syncwire::decode_peers(data) {
         assert_eq!(syncwire::encode_peers(&peers).ok().as_deref(), Some(data));
     }

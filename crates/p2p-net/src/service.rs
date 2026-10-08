@@ -74,6 +74,13 @@ pub enum Event {
         pushed: usize,
         refused: usize,
     },
+    /// A check-in with another device of this account brought back the sealed
+    /// record frames this device lacks (possibly none), from `address`. The
+    /// receiver applies them to its own open vault.
+    PersonalPulled {
+        address: String,
+        frames: Vec<Vec<u8>>,
+    },
     /// A fetch gave up, and why (the last attempt's reason).
     FetchFailed {
         vault_id: [u8; 16],

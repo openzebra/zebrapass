@@ -6,6 +6,7 @@
 //! present) and the rollback alarm, which is an attack signal rather than a
 //! statement about the key.
 
+use p2p_net::FetchError;
 use session::SessionError;
 
 /// Unlock outcome shown to the user.
@@ -33,6 +34,12 @@ pub enum UnlockError {
     MetaMissing,
     /// Not a vault file this build can read.
     NotAVault,
+    /// The other device could not be reached, turned this one away, or did
+    /// not answer properly.
+    Peer(FetchError),
+    /// The other device sent a file that is not the vault it announced, or
+    /// that does not open with this phrase.
+    WrongVault,
     /// Storage or OS failure unrelated to any key.
     Io,
 }
@@ -49,6 +56,10 @@ impl UnlockError {
             Self::Conflict { .. } => "This vault file conflicts with the one this device last saw.",
             Self::MetaMissing => "This device's rollback record for the vault is missing.",
             Self::NotAVault => "This is not a ZebraPass vault file.",
+            Self::Peer(FetchError::Unreachable) => "That device could not be reached.",
+            Self::Peer(FetchError::Refused) => "That device turned this one away.",
+            Self::Peer(FetchError::Failed) => "That device did not answer properly.",
+            Self::WrongVault => "That device did not send your vault.",
             Self::Io => "Couldn't read the vault file.",
         }
     }

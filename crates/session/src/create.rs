@@ -112,6 +112,23 @@ impl Session {
     pub fn sync_identity_key(&self) -> anyhow::Result<Secret<[u8; 32]>> {
         kdf::sync_identity_key(self.vk.expose(), &self.vault_id)
     }
+
+    /// Key of the sealed file of peer addresses next to this vault.
+    ///
+    /// # Errors
+    ///
+    /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+    pub fn personal_peers_key(&self) -> anyhow::Result<Secret<[u8; 32]>> {
+        kdf::personal_peers_key(self.vk.expose(), &self.vault_id)
+    }
+
+    /// The vault key, in a wrapper of its own, for the in-process node that
+    /// serves this vault and opens it afresh from disk for each request
+    /// ([`crate::unlock_with_key`]). It dies with the node.
+    #[must_use]
+    pub const fn reopen_key(&self) -> Secret<[u8; 32]> {
+        Secret::new(*self.vk.expose())
+    }
 }
 
 /// Create a vault and the session that holds its keys.

@@ -90,11 +90,16 @@ pub fn make_vault(base: &Path) -> String {
 /// is the mode where loopback peers are dialed: tests run every device on one
 /// machine.
 pub fn keep_to_this_device(base: &Path) {
+    keep_to_this_device_with(base, PASSWORD);
+}
+
+/// As [`keep_to_this_device`], for a vault that opens with `password`.
+pub fn keep_to_this_device_with(base: &Path, password: &str) {
     use tui::vault::discover::discover;
     use tui::vault::open::{unlock_vault, Credential};
     use tui::vault::ops::{apply, Op};
     let paths = discover(base).first().unwrap().paths.clone();
-    let password = Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec()));
+    let password = Credential::Password(Zeroizing::new(password.as_bytes().to_vec()));
     let mut vault = unlock_vault(paths, password).unwrap();
     let prefs = local::Prefs {
         p2p_listen: local::Listen::Local,

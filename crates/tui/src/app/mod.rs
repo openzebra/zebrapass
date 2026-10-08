@@ -9,6 +9,7 @@ pub mod idle;
 pub mod keymap;
 pub mod node;
 pub mod p2p;
+pub mod personal;
 pub mod prefs;
 pub mod screen;
 pub mod worker;
@@ -440,6 +441,12 @@ impl App {
                 Err(UnlockError::Io) => {
                     state.failed("Couldn't write the restored vault on this device.");
                 }
+                Err(
+                    error @ (UnlockError::Peer(_)
+                    | UnlockError::WrongVault
+                    | UnlockError::Rollback { .. }
+                    | UnlockError::Conflict { .. }),
+                ) => state.failed(error.message()),
                 Err(_) => state.failed("Couldn't unlock that vault file with this phrase."),
             },
             // Anything else was cancelled or outlived its screen: dropping it

@@ -65,6 +65,17 @@ impl<'a> Reader<'a> {
         Ok(u64::from_be_bytes(self.array()?))
     }
 
+    /// A `u8` length then that many bytes, at most `max`.
+    ///
+    /// # Errors
+    ///
+    /// `sync wire length over limit` when the length exceeds `max`;
+    /// `truncated sync wire` when the bytes are missing.
+    pub fn bytes_u8(&mut self, max: usize) -> Result<&'a [u8]> {
+        let len = usize::from(u8::from_be_bytes(self.array()?));
+        self.bounded(len, max)
+    }
+
     /// A `u16` length then that many bytes, at most `max`.
     ///
     /// # Errors

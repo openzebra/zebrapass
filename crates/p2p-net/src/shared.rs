@@ -10,9 +10,11 @@ use local::{
 };
 use memberlog::{Entry, ENTRY_WIRE_LEN, MAX_ENTRIES};
 use p2p_core::Account;
+use secret::Secret;
 use syncwire::{encode_peers, encode_snapshot};
 use zeroize::Zeroizing;
 
+use crate::personal::{personal_view, PersonalServe};
 use crate::shared_join::parse_rekey;
 use crate::view::{Provider, VaultView};
 
@@ -29,6 +31,7 @@ pub struct SharedProvider {
     node: Mutex<()>,
     book: crate::peers::PeerBook,
     delivered: Mutex<Vec<[u8; 16]>>,
+    personal: Mutex<Option<Arc<PersonalServe>>>,
 }
 
 impl SharedProvider {
@@ -42,7 +45,38 @@ impl SharedProvider {
             node: Mutex::new(()),
             book: crate::peers::PeerBook::default(),
             delivered: Mutex::new(Vec::new()),
+            personal: Mutex::new(None),
         }
+    }
+
+    /// Serve the personal vault whose file is `vault_file`, opened with `key`,
+    /// to the other devices of this account. Returns `false` when the
+    /// identity predates the account gate and so cannot be reached by them.
+    pub fn serve_personal(&self, vault_file: PathBuf, key: Secret<[u8; 32]>) -> bool {
+        let Some(device_id) = self.identity.device_id() else {
+            return false;
+        };
+        let Some(route) = self
+            .identity
+            .account_gate()
+            .and_then(|gate| kdf::account_route_id(gate).ok())
+        else {
+            return false;
+        };
+        let serve = Arc::new(PersonalServe::new(route, vault_file, key, device_id));
+        self.personal
+            .lock()
+            .map(|mut slot| *slot = Some(serve))
+            .is_ok()
+    }
+
+    fn personal_for(&self, vault_id: &[u8; 16]) -> Option<Arc<PersonalServe>> {
+        self.personal
+            .lock()
+            .ok()?
+            .as_ref()
+            .filter(|serve| serve.route() == vault_id)
+            .cloned()
     }
 
     /// Vaults this device has left whose member log another member has since
@@ -223,9 +257,14 @@ impl Provider for SharedProvider {
             .lock()
             .map(|list| list.clone())
             .unwrap_or_default();
+        let serving = self.personal.lock().is_ok_and(|slot| slot.is_some());
+        let personal = serving
+            .then(|| personal_view(&self.identity, self.book.dialing()))
+            .flatten();
         served
             .iter()
             .filter_map(|reference| self.view_for(reference).ok())
+            .chain(personal)
             .collect()
     }
 
@@ -259,7 +298,14 @@ impl Provider for SharedProvider {
         }
     }
 
+    fn announce(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        self.personal_for(vault_id)?.announce()
+    }
+
     fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        if let Some(serve) = self.personal_for(vault_id) {
+            return serve.snapshot();
+        }
         self.with_vault(vault_id, |vault, reference, identity| {
             let attestations = vault.attestations(reference, identity)?;
             encode_snapshot(vault.file.as_bytes(), &attestations)
@@ -268,10 +314,16 @@ impl Provider for SharedProvider {
     }
 
     fn frontier(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        if let Some(serve) = self.personal_for(vault_id) {
+            return serve.frontier();
+        }
         self.read_vault(vault_id, SharedVault::frontier_wire).ok()
     }
 
     fn revision(&self, vault_id: &[u8; 16], record_id: u32) -> Option<Vec<u8>> {
+        if let Some(serve) = self.personal_for(vault_id) {
+            return serve.revision(record_id);
+        }
         self.with_vault(vault_id, |vault, reference, identity| {
             vault.bundle(reference, identity, record_id)
         })

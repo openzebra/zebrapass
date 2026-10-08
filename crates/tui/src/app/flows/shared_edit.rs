@@ -137,5 +137,8 @@ impl Unlocked {
         for vault_id in &due {
             self.check_in_now(vault_id);
         }
+        if let (Some(p2p), Some(vault)) = (self.p2p.as_deref(), self.vault.as_deref()) {
+            crate::app::personal::pull_personal(p2p, vault);
+        }
     }
 }

@@ -36,6 +36,12 @@ pub const PEERS_MAX: usize = record::SYNC_PEER_TAGS;
 /// Most signed peer address records kept per shared vault.
 pub const SHARED_PEERS_MAX: usize = syncwire::MAX_PEERS;
 
+/// Most peer addresses kept next to a personal vault.
+pub const PERSONAL_PEERS_MAX: usize = 8;
+
+/// Longest stored peer address in bytes (`[ipv6]:port` fits).
+pub const PERSONAL_PEER_MAX_LEN: usize = 64;
+
 /// Most signed revocations kept per vault.
 pub const REVOKED_MAX: usize = record::SYNC_REVOKED_TAGS;
 
