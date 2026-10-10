@@ -162,14 +162,17 @@ const fn answers(request: MsgType, reply: MsgType) -> bool {
         MsgType::LogChunk => matches!(reply, MsgType::LogChunk),
         MsgType::Frontier => matches!(reply, MsgType::Frontier),
         MsgType::Want | MsgType::Bundle => matches!(reply, MsgType::Bundle),
-        MsgType::SnapReq => matches!(reply, MsgType::SnapChunk),
+        MsgType::SnapReq => matches!(reply, MsgType::SnapHead | MsgType::SnapChunk),
         MsgType::Rekey => matches!(reply, MsgType::Rekey),
         MsgType::Peers => matches!(reply, MsgType::Peers),
         MsgType::WhoAmI => matches!(reply, MsgType::WhoAmI),
         MsgType::Ping => matches!(reply, MsgType::Pong),
-        MsgType::SnapChunk | MsgType::Pong | MsgType::Busy | MsgType::Refused | MsgType::Stale => {
-            false
-        }
+        MsgType::SnapChunk
+        | MsgType::SnapHead
+        | MsgType::Pong
+        | MsgType::Busy
+        | MsgType::Refused
+        | MsgType::Stale => false,
     }
 }
 
@@ -235,6 +238,7 @@ impl Dispatcher {
             | MsgType::Bundle
             | MsgType::SnapReq
             | MsgType::SnapChunk
+            | MsgType::SnapHead
             | MsgType::Rekey
             | MsgType::Peers
             | MsgType::WhoAmI
@@ -332,6 +336,7 @@ impl Inbound {
             | MsgType::Want
             | MsgType::Bundle
             | MsgType::SnapChunk
+            | MsgType::SnapHead
             | MsgType::Rekey
             | MsgType::Peers
             | MsgType::WhoAmI

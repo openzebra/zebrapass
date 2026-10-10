@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use syncwire::{
-    Chunk, ChunkRequest, Direction, Extent, Header, Ping, Want, WhoAmI,
+    Chunk, ChunkRequest, Direction, Extent, Header, Ping, SnapHead, Want, WhoAmI,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -20,6 +20,9 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(x.encode(), data);
     }
     if let Ok(x) = ChunkRequest::try_from(data) {
+        assert_eq!(x.encode(), data);
+    }
+    if let Ok(x) = SnapHead::try_from(data) {
         assert_eq!(x.encode(), data);
     }
     if let Ok(x) = Ping::try_from(data) {

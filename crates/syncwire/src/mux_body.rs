@@ -85,8 +85,7 @@ impl TryFrom<&[u8]> for Extent {
     }
 }
 
-/// Ask for the chunk at `offset` of the blob `id`; an all-zero `id` means
-/// whichever blob is current.
+/// Ask for the chunk at `offset` of the blob `id`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChunkRequest {
     /// Names the blob.
@@ -267,5 +266,80 @@ impl TryFrom<&[u8]> for WhoAmI {
         let port = reader.u16()?;
         reader.finish()?;
         Ok(Self(SocketAddr::new(ip, port)))
+    }
+}
+
+/// The start of a snapshot transfer: which snapshot it is and how it is cut.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SnapHead {
+    /// Names the snapshot; a chunk of another one is stale.
+    pub id: [u8; 32],
+    /// Total length in bytes.
+    pub size: u64,
+    /// Length of every chunk but the last.
+    pub chunk_size: u32,
+    /// How many chunks there are.
+    pub chunk_count: u32,
+}
+
+impl SnapHead {
+    /// Exact encoded length.
+    pub const LEN: usize = 32 + 8 + 4 + 4;
+
+    /// The head of a snapshot of `size` bytes in chunks of [`CHUNK_LEN`].
+    ///
+    /// # Errors
+    ///
+    /// The size is over the snapshot bound.
+    pub fn new(id: [u8; 32], size: u64) -> Result<Self> {
+        let chunk_size = u32::try_from(CHUNK_LEN)?;
+        let head = Self {
+            id,
+            size,
+            chunk_size,
+            chunk_count: u32::try_from(size.div_ceil(u64::from(chunk_size)))?,
+        };
+        head.checked()
+    }
+
+    fn checked(self) -> Result<Self> {
+        let cut = u64::from(self.chunk_size);
+        let sound = self.size <= MAX_SNAPSHOT_LEN
+            && cut != 0
+            && cut <= u64::try_from(CHUNK_LEN)?
+            && u64::from(self.chunk_count) == self.size.div_ceil(cut);
+        if sound {
+            Ok(self)
+        } else {
+            Err(invalid())
+        }
+    }
+
+    /// The wire form.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        [
+            &self.id[..],
+            &self.size.to_be_bytes(),
+            &self.chunk_size.to_be_bytes(),
+            &self.chunk_count.to_be_bytes(),
+        ]
+        .concat()
+    }
+}
+
+impl TryFrom<&[u8]> for SnapHead {
+    type Error = anyhow::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self> {
+        let mut reader = Reader::new(bytes);
+        let head = Self {
+            id: reader.array()?,
+            size: reader.u64()?,
+            chunk_size: reader.u32()?,
+            chunk_count: reader.u32()?,
+        };
+        reader.finish()?;
+        head.checked()
     }
 }

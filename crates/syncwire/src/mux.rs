@@ -10,10 +10,13 @@ use anyhow::{anyhow, Result};
 use crate::limits::{
     CHUNK_LEN, MAX_BUNDLE, MAX_FRONTIER_PAYLOAD, MAX_PEERS_PAYLOAD, MUX_HEADER_LEN, REKEY_LEN,
 };
-use crate::mux_body::{Chunk, ChunkRequest, Extent, Ping, Want, WhoAmI};
+use crate::mux_body::{Chunk, ChunkRequest, Extent, Ping, SnapHead, Want, WhoAmI};
 use crate::ANNOUNCE_WIRE_LEN;
 
 /// Every message type. There is no negotiation: the table is fixed.
+///
+/// Type bytes `0x00` and `0xE0..=0xFF` are reserved: they are never sent,
+/// and receiving one closes the connection like any other unknown type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum MsgType {
@@ -49,6 +52,9 @@ pub enum MsgType {
     Refused = 15,
     /// The request names something that has moved on.
     Stale = 16,
+    /// The size of a snapshot and how it is cut into chunks, sent before
+    /// the first chunk.
+    SnapHead = 17,
 }
 
 /// Who sends a message: the dialing side asks, the answering side replies.
@@ -81,6 +87,7 @@ impl TryFrom<u8> for MsgType {
             14 => Self::Busy,
             15 => Self::Refused,
             16 => Self::Stale,
+            17 => Self::SnapHead,
             _ => return Err(invalid()),
         })
     }
@@ -101,12 +108,18 @@ impl MsgType {
                 Self::Bundle => Some(MAX_BUNDLE),
                 Self::Peers => Some(MAX_PEERS_PAYLOAD),
                 Self::Ping => Some(Ping::LEN),
-                Self::SnapChunk | Self::Pong | Self::Busy | Self::Refused | Self::Stale => None,
+                Self::SnapChunk
+                | Self::SnapHead
+                | Self::Pong
+                | Self::Busy
+                | Self::Refused
+                | Self::Stale => None,
             },
             Direction::Response => match self {
                 Self::Announce => Some(ANNOUNCE_WIRE_LEN),
                 Self::LogHead => Some(Extent::LEN),
                 Self::LogChunk | Self::SnapChunk => Some(Chunk::HEADER_LEN + CHUNK_LEN),
+                Self::SnapHead => Some(SnapHead::LEN),
                 Self::Frontier => Some(MAX_FRONTIER_PAYLOAD),
                 Self::Bundle => Some(MAX_BUNDLE),
                 Self::Rekey => Some(REKEY_LEN),

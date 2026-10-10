@@ -26,7 +26,7 @@ pub use attestation::{
 };
 pub use cert::{decode_cert, encode_cert, CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION};
 pub use mux::{Direction, Header, MsgType};
-pub use mux_body::{Chunk, ChunkRequest, Extent, Ping, Want, WhoAmI};
+pub use mux_body::{Chunk, ChunkRequest, Extent, Ping, SnapHead, Want, WhoAmI};
 pub use peer::{decode_peers, encode_peers, MAX_PEERS, PEER_MAGIC, PEER_WIRE_VERSION};
 pub use personal::{
     decode_announce, decode_personal_frame, encode_announce, encode_personal_frame, Announce,

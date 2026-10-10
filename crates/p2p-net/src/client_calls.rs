@@ -3,8 +3,8 @@
 use std::net::SocketAddr;
 
 use p2p_core::Reply;
-use syncwire::limits::{CHUNK_LEN, MAX_LOG_LEN, MAX_SNAPSHOT_LEN, PIPELINE_DEPTH};
-use syncwire::{Chunk, ChunkRequest, Extent, MsgType, Ping, Want, WhoAmI};
+use syncwire::limits::{CHUNK_LEN, MAX_LOG_LEN, PIPELINE_DEPTH};
+use syncwire::{Chunk, ChunkRequest, Extent, MsgType, Ping, SnapHead, Want, WhoAmI};
 use zeroize::Zeroizing;
 
 use crate::client::{Conn, FetchError, Fetched};
@@ -179,23 +179,20 @@ impl Conn {
     ///
     /// # Errors
     ///
-    /// [`FetchError::Failed`] for a refusal, a busy peer, a file that changes
-    /// while it is read, or a broken connection.
+    /// [`FetchError::Failed`] for a refusal, a busy peer, a head that is not
+    /// sound, a file that changes while it is read, or a broken connection.
     pub async fn snapshot(&mut self) -> Outcome<Vec<u8>> {
-        let first = ChunkRequest {
-            id: [0; 32],
-            offset: 0,
-        };
-        let first = body(self.call(MsgType::SnapReq, first.encode()).await?)?;
-        let first = Chunk::decode_snapshot(&first).map_err(|_| FetchError::Failed)?;
-        if first.offset != 0 || first.total > MAX_SNAPSHOT_LEN {
+        let head = body(self.call(MsgType::SnapReq, Vec::new()).await?)?;
+        let head = SnapHead::try_from(&head[..]).map_err(|_| FetchError::Failed)?;
+        if head.chunk_size != u32::try_from(CHUNK_LEN).map_err(|_| FetchError::Failed)? {
             return Err(FetchError::Failed);
         }
-        let mut file = first.data.to_vec();
+        let mut file =
+            Vec::with_capacity(usize::try_from(head.size).map_err(|_| FetchError::Failed)?);
         self.pull(
             MsgType::SnapReq,
-            first.id,
-            first.total,
+            head.id,
+            head.size,
             &mut file,
             Chunk::decode_snapshot,
         )

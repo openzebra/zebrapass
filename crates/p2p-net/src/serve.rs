@@ -13,7 +13,7 @@ use std::time::Instant;
 use local::Verdict;
 use p2p_core::Outcome;
 use syncwire::limits::{CHUNK_LEN, MAX_LOG_LEN};
-use syncwire::{Chunk, ChunkRequest, Extent, MsgType, Ping, Want, WhoAmI};
+use syncwire::{Chunk, ChunkRequest, Extent, MsgType, Ping, SnapHead, Want, WhoAmI};
 use tokio::sync::OwnedSemaphorePermit;
 use zeroize::Zeroizing;
 
@@ -180,6 +180,7 @@ impl<P: Provider> Serve<P> {
                 |ping| Answer::ok(MsgType::Pong, ping.encode()),
             ),
             MsgType::SnapChunk
+            | MsgType::SnapHead
             | MsgType::Pong
             | MsgType::Busy
             | MsgType::Refused
@@ -270,26 +271,21 @@ impl<P: Provider> Serve<P> {
     }
 
     async fn snapshot(&self, payload: &[u8]) -> Answer {
+        if payload.is_empty() {
+            return self.snapshot_head().await;
+        }
         let Ok(request) = ChunkRequest::try_from(payload) else {
             return Answer::refused();
         };
-        let transfer = if request.id == [0; 32] {
-            if request.offset != 0 {
-                return Answer::refused();
-            }
-            match self.begin().await {
-                Ok(transfer) => transfer,
-                Err(answer) => return answer,
-            }
-        } else {
-            match self.current().filter(|transfer| {
-                transfer.blob.id() == &request.id
-                    && transfer.started.elapsed() <= self.tickets.limits().transfer
-            }) {
-                Some(transfer) => transfer,
-                None => return Answer::stale(),
-            }
+        let Some(transfer) = self.current().filter(|transfer| {
+            transfer.blob.id() == &request.id
+                && transfer.started.elapsed() <= self.tickets.limits().transfer
+        }) else {
+            return Answer::stale();
         };
+        if request.offset % u64::try_from(CHUNK_LEN).unwrap_or(u64::MAX) != 0 {
+            return Answer::refused();
+        }
         let reader = Arc::clone(&transfer);
         let data = tokio::task::spawn_blocking(move || reader.blob.chunk(request.offset))
             .await
@@ -300,6 +296,22 @@ impl<P: Provider> Serve<P> {
         };
         transfer.sent(data.len());
         chunk_answer(MsgType::SnapChunk, &transfer.blob, request.offset, data)
+    }
+
+    async fn snapshot_head(&self) -> Answer {
+        let transfer = match self.begin().await {
+            Ok(transfer) => transfer,
+            Err(answer) => return answer,
+        };
+        SnapHead::new(*transfer.blob.id(), transfer.blob.total()).map_or_else(
+            |_| {
+                if let Ok(mut slot) = self.snapshot.lock() {
+                    slot.take();
+                }
+                Answer::refused()
+            },
+            |head| Answer::ok(MsgType::SnapHead, head.encode()),
+        )
     }
 }
 

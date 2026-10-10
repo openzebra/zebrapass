@@ -17,7 +17,7 @@ use p2p_net::{
 };
 use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
 use syncwire::limits::CHUNK_LEN;
-use syncwire::{ChunkRequest, Direction, Header, MsgType};
+use syncwire::{ChunkRequest, Direction, Header, MsgType, SnapHead};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -665,17 +665,17 @@ fn a_busy_node_says_so_and_that_does_not_count_against_the_peer() {
         }
         conn.ping(1).await.unwrap();
         let mut raw = raw(&member_view(), &addr).await;
-        raw.request(MsgType::SnapReq, &first_chunk()).await;
+        raw.request(MsgType::SnapReq, &[]).await;
         assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Busy);
     });
 }
 
-fn first_chunk() -> Vec<u8> {
-    ChunkRequest {
-        id: [0; 32],
-        offset: 0,
-    }
-    .encode()
+/// Begin a snapshot transfer on `raw` and return its head.
+async fn begin(raw: &mut Raw) -> SnapHead {
+    raw.request(MsgType::SnapReq, &[]).await;
+    let reply = raw.reply().await.unwrap();
+    assert_eq!(reply.header.ty, MsgType::SnapHead);
+    SnapHead::try_from(&reply.payload.expose()[..]).unwrap()
 }
 
 #[test]
@@ -688,9 +688,7 @@ fn the_node_serves_only_so_many_snapshots_at_once_and_frees_the_place() {
         };
         let addr = start_limited(provider, Load::default(), limits).await;
         let mut holder = raw(&member_view(), &addr).await;
-        holder.request(MsgType::SnapReq, &first_chunk()).await;
-        let first = holder.reply().await.unwrap();
-        assert_eq!(first.header.ty, MsgType::SnapChunk);
+        begin(&mut holder).await;
 
         let mut other = Conn::connect(&member_view(), &addr).await.unwrap();
         assert!(other.snapshot().await.is_err(), "the only place is taken");
@@ -732,9 +730,10 @@ fn a_chunk_of_another_transfer_or_out_of_range_is_not_served() {
     block_on(async {
         let addr = start(provider, Load::default()).await;
         let mut raw = raw(&member_view(), &addr).await;
-        raw.request(MsgType::SnapReq, &first_chunk()).await;
-        let first = raw.reply().await.unwrap();
-        let id: [u8; 32] = first.payload.expose()[..32].try_into().unwrap();
+        let head = begin(&mut raw).await;
+        assert_eq!(head.size, u64::try_from(2 * CHUNK_LEN).unwrap());
+        assert_eq!((head.chunk_size as usize, head.chunk_count), (CHUNK_LEN, 2));
+        let id = head.id;
 
         raw.request(
             MsgType::SnapReq,
@@ -758,16 +757,13 @@ fn a_chunk_of_another_transfer_or_out_of_range_is_not_served() {
         .await;
         assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Refused);
 
-        raw.request(
-            MsgType::SnapReq,
-            &ChunkRequest {
-                id: [0; 32],
-                offset: 5,
-            }
-            .encode(),
-        )
-        .await;
-        assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Refused);
+        raw.request(MsgType::SnapReq, &ChunkRequest { id, offset: 5 }.encode())
+            .await;
+        assert_eq!(
+            raw.reply().await.unwrap().header.ty,
+            MsgType::Refused,
+            "a chunk starts on a chunk boundary"
+        );
 
         let at = u64::try_from(CHUNK_LEN).unwrap();
         raw.request(MsgType::SnapReq, &ChunkRequest { id, offset: at }.encode())

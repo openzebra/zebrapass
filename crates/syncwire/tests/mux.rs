@@ -9,10 +9,11 @@ use std::net::SocketAddr;
 
 use syncwire::limits::{CHUNK_LEN, MAX_BUNDLE, MAX_LOG_LEN, MUX_HEADER_LEN};
 use syncwire::{
-    Chunk, ChunkRequest, Direction, Extent, Header, MsgType, Ping, Want, WhoAmI, ANNOUNCE_WIRE_LEN,
+    Chunk, ChunkRequest, Direction, Extent, Header, MsgType, Ping, SnapHead, Want, WhoAmI,
+    ANNOUNCE_WIRE_LEN,
 };
 
-const ALL: [MsgType; 16] = [
+const ALL: [MsgType; 17] = [
     MsgType::Announce,
     MsgType::LogHead,
     MsgType::LogChunk,
@@ -29,6 +30,7 @@ const ALL: [MsgType; 16] = [
     MsgType::Busy,
     MsgType::Refused,
     MsgType::Stale,
+    MsgType::SnapHead,
 ];
 
 #[test]
@@ -56,7 +58,7 @@ fn every_type_code_round_trips_and_nothing_else_parses() {
 #[test]
 fn unknown_types_are_refused_in_both_directions() {
     for direction in [Direction::Request, Direction::Response] {
-        for byte in [0, 17, 255] {
+        for byte in [0, 18, 0xDF, 0xE0, 0xEF, 0xFF] {
             let mut bytes = [0; MUX_HEADER_LEN];
             bytes[0] = byte;
             assert!(Header::decode(&bytes, direction).is_err());
@@ -230,4 +232,64 @@ fn whoami_round_trips_both_families_and_rejects_the_rest() {
     let mut bad = WhoAmI("1.2.3.4:5".parse().unwrap()).encode();
     bad[0] = 5;
     assert!(WhoAmI::try_from(&bad[..]).is_err());
+}
+
+#[test]
+fn reserved_type_bytes_never_parse() {
+    assert!(MsgType::try_from(0x00).is_err());
+    for byte in 0xE0..=0xFF {
+        assert!(MsgType::try_from(byte).is_err(), "{byte:#x}");
+    }
+}
+
+#[test]
+fn snap_head_golden_layout() {
+    let head = SnapHead::new([0xAB; 32], 3 * 65_536 + 5).unwrap();
+    let bytes = head.encode();
+    assert_eq!(bytes.len(), SnapHead::LEN);
+    assert_eq!(&bytes[..32], &[0xAB; 32]);
+    assert_eq!(&bytes[32..40], &[0, 0, 0, 0, 0, 3, 0, 5]);
+    assert_eq!(&bytes[40..44], &[0, 1, 0, 0], "chunk size 65536");
+    assert_eq!(&bytes[44..48], &[0, 0, 0, 4], "four chunks");
+    assert_eq!(SnapHead::try_from(&bytes[..]).unwrap(), head);
+    assert_eq!(MsgType::SnapHead as u8, 17);
+    assert_eq!(
+        MsgType::SnapHead.max_payload(Direction::Response),
+        Some(SnapHead::LEN)
+    );
+    assert_eq!(MsgType::SnapHead.max_payload(Direction::Request), None);
+}
+
+#[test]
+fn snap_head_is_strict() {
+    let bytes = SnapHead::new([1; 32], 100_000).unwrap().encode();
+    for len in 0..bytes.len() {
+        assert!(SnapHead::try_from(&bytes[..len]).is_err());
+    }
+    assert!(SnapHead::try_from(&[&bytes[..], &[0]].concat()[..]).is_err());
+    let with = |at: usize, value: &[u8]| {
+        let mut copy = bytes.clone();
+        copy[at..at + value.len()].copy_from_slice(value);
+        copy
+    };
+    let over = (syncwire::limits::MAX_SNAPSHOT_LEN + 1).to_be_bytes();
+    assert!(
+        SnapHead::try_from(&with(32, &over)[..]).is_err(),
+        "size over the bound"
+    );
+    assert!(SnapHead::try_from(&with(32, &u64::MAX.to_be_bytes())[..]).is_err());
+    assert!(
+        SnapHead::try_from(&with(40, &[0, 0, 0, 0])[..]).is_err(),
+        "no chunk size"
+    );
+    assert!(
+        SnapHead::try_from(&with(40, &[0, 2, 0, 0])[..]).is_err(),
+        "chunk over the bound"
+    );
+    assert!(
+        SnapHead::try_from(&with(44, &[0, 0, 0, 9])[..]).is_err(),
+        "wrong count"
+    );
+    assert!(SnapHead::new([1; 32], syncwire::limits::MAX_SNAPSHOT_LEN + 1).is_err());
+    assert!(SnapHead::try_from(&SnapHead::new([1; 32], 0).unwrap().encode()[..]).is_ok());
 }
