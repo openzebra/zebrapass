@@ -9,6 +9,7 @@
 
 mod admission;
 mod auth;
+mod beacon;
 mod channel;
 mod handshake;
 mod mux;
@@ -17,6 +18,7 @@ mod wire;
 
 pub use admission::{CookieSecret, Load, COOKIE_WINDOW_MS, GATE_WINDOW_MS, MAX_DIFFICULTY};
 pub use auth::{Account, Local, Role};
+pub use beacon::{open_beacon, seal_beacon, BEACON_WINDOW_MS, MAX_BEACON};
 pub use channel::{Channel, RecvHalf, SendHalf, Side, MAX_MESSAGES, MAX_PLAINTEXT, OVERHEAD};
 pub use handshake::{Accept, Established, Initiator, Responder};
 pub use mux::{Dispatcher, Done, Inbound, Message, Outcome, Reassembler, Reply};

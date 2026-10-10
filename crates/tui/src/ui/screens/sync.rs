@@ -136,6 +136,7 @@ fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
 fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
     let mode = match state.listen_mode() {
         Listen::Lan => "local network",
+        Listen::Beacon => "local network, announced",
         Listen::Local => "this device only",
         Listen::Off => "fetch only",
     };
@@ -203,7 +204,7 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
     }
     if let Some(address) = state
         .advertised()
-        .filter(|_| matches!(state.listen_mode(), Listen::Lan))
+        .filter(|_| matches!(state.listen_mode(), Listen::Lan | Listen::Beacon))
     {
         lines.push(Line::from(vec![
             Span::styled(format!("{INDENT}{:<14}", "offering"), theme.muted()),

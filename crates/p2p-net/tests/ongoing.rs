@@ -18,7 +18,7 @@ use local::{
     SyncIdentity,
 };
 use memberlog::{Action, Role};
-use p2p_net::{Event, PeerBook, Service, SharedProvider};
+use p2p_net::{Conn, Event, PeerBook, Provider, Push, Service, SharedProvider, SnapshotSource};
 use record::{Document, TAG_TITLE};
 use session::{attest_latest, list_records, open_record, write_record, KdfProfile, VaultFile};
 
@@ -541,4 +541,131 @@ fn a_check_in_learns_the_address_a_member_sees() {
     let seen = seen.expect("the member said what it sees");
     assert!(seen.ip().is_loopback(), "{seen}");
     assert_ne!(seen.port(), 0);
+}
+
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
+}
+
+#[test]
+fn a_stale_push_is_answered_stale_never_counts_as_a_failure_and_a_newer_one_needs_no_base() {
+    let [alice, bob, _] = trio();
+    let id = bob.edit(Edit::Create(titled("one"))).unwrap();
+    let vault = bob.reference.vault_id;
+    let first = bob.provider.revision(&vault, id).unwrap();
+    let view = bob.provider.view_for(&bob.reference).unwrap();
+    block_on(async {
+        let mut conn = Conn::connect(&view, &alice.addr).await.unwrap();
+        assert_eq!(
+            conn.push(vec![first.clone()]).await.unwrap(),
+            [Push::Applied]
+        );
+        // Far more than the failure budget (32): stale is not a failure.
+        for _ in 0..40 {
+            assert_eq!(conn.push(vec![first.clone()]).await.unwrap(), [Push::Stale]);
+        }
+        // A newer revision of the same record lands in one step: a frame
+        // replaces the record whole, so there is no base to fetch first.
+        bob.edit(Edit::Update(id, titled("two"))).unwrap();
+        let second = bob.provider.revision(&vault, id).unwrap();
+        assert_eq!(
+            conn.push(vec![second.clone()]).await.unwrap(),
+            [Push::Applied]
+        );
+        assert_eq!(conn.push(vec![first]).await.unwrap(), [Push::Stale]);
+        assert_eq!(conn.push(vec![second]).await.unwrap(), [Push::Stale]);
+    });
+    assert_eq!(alice.titles(), ["two"]);
+}
+
+/// A peer that advertises everything and gives nothing.
+struct Stubborn {
+    inner: Arc<SharedProvider>,
+    wanted: std::sync::atomic::AtomicUsize,
+}
+
+impl Provider for Stubborn {
+    fn views(&self) -> Vec<p2p_net::VaultView> {
+        self.inner.views()
+    }
+    fn log(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        self.inner.log(vault_id)
+    }
+    fn snapshot_source(&self, vault_id: &[u8; 16]) -> Option<SnapshotSource> {
+        self.inner.snapshot_source(vault_id)
+    }
+    fn frontier(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        self.inner.frontier(vault_id)
+    }
+    fn revision(&self, _vault_id: &[u8; 16], _record_id: u32) -> Option<Vec<u8>> {
+        self.wanted
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        None
+    }
+    fn peers(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+        self.inner.peers(vault_id)
+    }
+}
+
+#[test]
+fn a_stubborn_peer_is_asked_once_per_record_per_check_in_and_never_in_a_loop() {
+    let [alice, bob, _] = trio();
+    for title in ["a", "b", "c"] {
+        alice.edit(Edit::Create(titled(title))).unwrap();
+    }
+    let stubborn = Arc::new(Stubborn {
+        inner: Arc::clone(&alice.provider),
+        wanted: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&stubborn)).unwrap();
+    let hint = node.local_addr().unwrap().to_string();
+    let ask = || {
+        bob.service.check_in(
+            Arc::clone(&bob.provider),
+            bob.reference.vault_id,
+            vec![hint.clone()],
+        );
+        loop {
+            match bob.service.events().recv_timeout(WAIT).unwrap() {
+                Event::Synced { pulled, .. } => return pulled,
+                Event::FetchFailed { reason, .. } => panic!("check-in failed: {reason}"),
+                _ => {}
+            }
+        }
+    };
+    // The check-in also follows the addresses it has learned, so the owner
+    // supplies what the stubborn peer withholds.
+    assert_eq!(ask(), 3);
+    let wanted = || stubborn.wanted.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        wanted(),
+        3,
+        "each record asked for once, no retry in the check-in"
+    );
+    assert_eq!(ask(), 0);
+    assert_eq!(wanted(), 3, "nothing missing, nothing asked");
+    alice.edit(Edit::Create(titled("d"))).unwrap();
+    assert_eq!(ask(), 1);
+    assert_eq!(wanted(), 4, "the one new record, once");
+    assert_eq!(frontier_of(&bob), frontier_of(&alice));
+}
+
+#[test]
+fn a_member_that_was_away_ends_with_the_same_frontier_through_any_member() {
+    let [alice, bob, carol] = trio();
+    let one = alice.edit(Edit::Create(titled("one"))).unwrap();
+    alice.edit(Edit::Create(titled("two"))).unwrap();
+    assert_eq!(bob.check_in(&[&alice]), (2, 0, 0));
+    bob.edit(Edit::Update(one, titled("uno"))).unwrap();
+    bob.edit(Edit::Create(titled("three"))).unwrap();
+    assert_eq!(alice.check_in(&[&bob]), (2, 0, 0));
+    // Carol was never reachable for any of it, and now asks only Bob.
+    assert_eq!(carol.check_in(&[&bob]).0, 3);
+    assert_eq!(frontier_of(&carol), frontier_of(&alice));
+    assert_eq!(frontier_of(&carol), frontier_of(&bob));
+    assert_eq!(carol.titles(), ["three", "two", "uno"]);
 }

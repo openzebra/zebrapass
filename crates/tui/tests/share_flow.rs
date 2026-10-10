@@ -185,6 +185,24 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     wait(&mut alice);
     let screen = render(&alice, 100, 30);
     assert!(screen.contains("local network"), "{screen}");
+    assert!(
+        !screen.contains("announced"),
+        "the beacon is off by default"
+    );
+    press(&mut alice, KeyCode::Char('l'));
+    wait(&mut alice);
+    let screen = render(&alice, 100, 30);
+    assert!(screen.contains("local network, announced"), "{screen}");
+    assert!(
+        state(&alice)
+            .p2p
+            .as_deref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_some(),
+        "the beacon mode listens like the network mode"
+    );
     press(&mut alice, KeyCode::Char('l'));
     wait(&mut alice);
     let screen = render(&alice, 100, 30);

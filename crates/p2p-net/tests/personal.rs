@@ -412,3 +412,142 @@ fn a_revision_one_identity_upgrades_in_place_keeps_its_device_and_then_serves() 
     assert_eq!(fetched.announce.vault_id, *session.vault_id());
     drop(provider);
 }
+
+/// A second device holding the vault as it was: its node runs, but until
+/// `unlock` it does not serve the personal vault, as when it is locked.
+struct Sleeper {
+    session: Session,
+    file: VaultFile,
+    path: PathBuf,
+    provider: Arc<SharedProvider>,
+    node: Service,
+    address: String,
+}
+
+impl Sleeper {
+    fn start(first: &First) -> Self {
+        let base = temp_dir("sleeper");
+        let path = base.join("vault.bin");
+        std::fs::copy(&first.paths.vault_file, &path).unwrap();
+        let file = VaultFile::new(std::fs::read(&path).unwrap());
+        let session = open_fetched(file.as_bytes().to_vec());
+        let provider = Arc::new(SharedProvider::new(base, Arc::new(second_device(&SEED, 7))));
+        provider.allow_loopback_peers();
+        let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
+        let address = node.local_addr().unwrap().to_string();
+        Self {
+            session,
+            file,
+            path,
+            provider,
+            node,
+            address,
+        }
+    }
+
+    fn unlock(&self) {
+        assert!(self
+            .provider
+            .serve_personal(self.path.clone(), self.session.reopen_key()));
+    }
+
+    /// Apply frames as the open vault does, save it, and count the ones it
+    /// took.
+    fn apply(&mut self, frames: &[Vec<u8>]) -> usize {
+        let taken = frames
+            .iter()
+            .filter(|frame| accept_peer_frame(&mut self.session, &mut self.file, frame).is_ok())
+            .count();
+        write_atomic(&self.path, self.file.as_bytes()).unwrap();
+        taken
+    }
+}
+
+fn next_personal_event(service: &Service) -> p2p_net::Event {
+    loop {
+        let event = service
+            .events()
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .unwrap();
+        if matches!(
+            event,
+            p2p_net::Event::PersonalPulled { .. } | p2p_net::Event::FetchFailed { .. }
+        ) {
+            return event;
+        }
+    }
+}
+
+#[test]
+fn a_push_to_a_peer_that_was_locked_lands_on_the_next_check_in() {
+    let mut first = First::start(Limits::default());
+    let mut sleeper = Sleeper::start(&first);
+    first.write("mail");
+    let push = |first: &First, sleeper: &Sleeper| {
+        first.service.pull_personal(
+            personal_conn_view(&sleeper.address, 9),
+            vec![sleeper.address.clone()],
+            frontier(&first.session).unwrap(),
+            first.provider.personal_serve(),
+        );
+        next_personal_event(&first.service)
+    };
+
+    // While the peer is locked the push is turned away, and nothing is kept.
+    assert!(matches!(
+        push(&first, &sleeper),
+        p2p_net::Event::FetchFailed { .. }
+    ));
+    assert!(sleeper.provider.take_pushed().is_empty());
+    assert_ne!(
+        frontier(&sleeper.session).unwrap(),
+        frontier(&first.session).unwrap()
+    );
+
+    // Once it unlocks, the next check-in delivers what it missed.
+    sleeper.unlock();
+    assert!(matches!(
+        push(&first, &sleeper),
+        p2p_net::Event::PersonalPulled { .. }
+    ));
+    let pushed = sleeper.provider.take_pushed();
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(sleeper.apply(&pushed), 1);
+    assert_eq!(
+        frontier(&sleeper.session).unwrap(),
+        frontier(&first.session).unwrap()
+    );
+
+    // A further check-in moves nothing and queues nothing.
+    assert!(matches!(
+        push(&first, &sleeper),
+        p2p_net::Event::PersonalPulled { .. }
+    ));
+    assert!(sleeper.provider.take_pushed().is_empty());
+    drop(sleeper.node);
+}
+
+#[test]
+fn a_peer_that_was_locked_catches_up_by_pulling_when_it_unlocks() {
+    let mut first = First::start(Limits::default());
+    let mut sleeper = Sleeper::start(&first);
+    first.write("mail");
+    first.write("bank2");
+    sleeper.unlock();
+    sleeper.node.pull_personal(
+        personal_conn_view(&first.address, 7),
+        vec![first.address.clone()],
+        frontier(&sleeper.session).unwrap(),
+        sleeper.provider.personal_serve(),
+    );
+    let p2p_net::Event::PersonalPulled { frames, .. } = next_personal_event(&sleeper.node) else {
+        panic!("the pull failed")
+    };
+    assert_eq!(frames.len(), 2);
+    assert_eq!(sleeper.apply(&frames), 2);
+    assert_eq!(
+        frontier(&sleeper.session).unwrap(),
+        frontier(&first.session).unwrap()
+    );
+    assert_eq!(sleeper.apply(&frames), 0, "the same frames again are stale");
+}

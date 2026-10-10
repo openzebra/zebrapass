@@ -6,13 +6,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use local::{Listen, Offer, SyncIdentity};
-use p2p_net::{reachable_hints, Service, SharedProvider};
+use p2p_net::{reachable_hints, BeaconConfig, BeaconIdentity, Service, SharedProvider};
 use session::MAX_HINTS;
 
 /// The port a node tries first, so an invitation stays valid across runs.
 const PORT: u16 = 7447;
 
 /// How long an open shared vault goes without trading revisions.
+/// Announced addresses kept.
+const MAX_DISCOVERED: usize = 8;
+
 const CHECK_EVERY: Duration = Duration::from_secs(15);
 
 /// The running node and what it signs with. Dropping it stops the node and
@@ -34,6 +37,8 @@ pub struct P2p {
     pub reachable: Box<[String]>,
     /// What the last member to answer said it sees this device at.
     pub observed: Option<Offer>,
+    /// Addresses other devices of the account announced on the network.
+    pub discovered: Vec<String>,
     checked: Instant,
 }
 
@@ -67,7 +72,7 @@ impl P2p {
         let bind = |port: u16| match listen {
             Listen::Off => None,
             Listen::Local => Some(format!("127.0.0.1:{port}")),
-            Listen::Lan => Some(format!("0.0.0.0:{port}")),
+            Listen::Lan | Listen::Beacon => Some(format!("0.0.0.0:{port}")),
         };
         let service = Service::start(bind(PORT).as_deref(), Arc::clone(&provider))
             .or_else(|_| Service::start(bind(0).as_deref(), Arc::clone(&provider)))
@@ -80,12 +85,43 @@ impl P2p {
             advertise,
             reachable: Box::default(),
             observed: None,
+            discovered: Vec::new(),
             checked: Instant::now(),
         });
         let hints = node.hints();
         node.provider.set_hints(hints.clone());
         node.reachable = hints.into_boxed_slice();
+        if matches!(listen, Listen::Beacon) {
+            node.start_beacon();
+        }
         Some(node)
+    }
+
+    /// Announce this node on the local network, to the account's other
+    /// devices only. A device without the account gate, or a network that
+    /// will not carry multicast, simply has no beacon.
+    fn start_beacon(&self) {
+        let (Some(gate), Some(device)) = (self.identity.account_gate(), self.identity.device_id())
+        else {
+            return;
+        };
+        if let Ok(identity) = BeaconIdentity::new(gate, device) {
+            let _ = self.service.start_beacon(
+                Arc::clone(&self.provider),
+                identity,
+                BeaconConfig::lan(),
+            );
+        }
+    }
+
+    /// Remember an address another device announced; the newest few stay.
+    pub fn discover(&mut self, address: std::net::SocketAddr) {
+        let address = address.to_string();
+        self.discovered.retain(|known| known != &address);
+        self.discovered.push(address);
+        if self.discovered.len() > MAX_DISCOVERED {
+            self.discovered.remove(0);
+        }
     }
 
     /// Serve `vault`, the personal vault, to the other devices of this
@@ -116,7 +152,7 @@ impl P2p {
         match self.listen {
             Listen::Off => Vec::new(),
             Listen::Local => vec![format!("127.0.0.1:{port}")],
-            Listen::Lan => {
+            Listen::Lan | Listen::Beacon => {
                 let mut hints = reachable_hints(port);
                 if let Some(address) = self.advertise.as_deref() {
                     hints.retain(|hint| hint != address);

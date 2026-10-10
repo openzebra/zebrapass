@@ -30,4 +30,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(peers) = syncwire::decode_peers(data) {
         assert_eq!(syncwire::encode_peers(&peers).ok().as_deref(), Some(data));
     }
+    if let Ok(beacon) = syncwire::decode_beacon(data) {
+        assert_eq!(syncwire::encode_beacon(&beacon).ok().as_deref(), Some(data));
+    }
 });

@@ -81,11 +81,14 @@ pub enum Listen {
     /// On the local network (`0.0.0.0`).
     #[default]
     Lan,
+    /// On the local network, and announced there by a sealed beacon that
+    /// only the account's other devices can read.
+    Beacon,
 }
 
 impl Listen {
     /// Every mode, in the order a toggle cycles through them.
-    pub const ALL: [Self; 3] = [Self::Lan, Self::Local, Self::Off];
+    pub const ALL: [Self; 4] = [Self::Lan, Self::Beacon, Self::Local, Self::Off];
 
     /// The next mode.
     #[must_use]
@@ -104,6 +107,7 @@ impl From<Listen> for u8 {
             Listen::Off => 0,
             Listen::Local => 1,
             Listen::Lan => 2,
+            Listen::Beacon => 3,
         }
     }
 }

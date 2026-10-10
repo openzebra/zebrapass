@@ -319,6 +319,12 @@ impl Unlocked {
                 Event::PersonalPulled { frames, .. } => self.apply_pulled(&frames, ctx),
                 Event::PeerConnected { .. } | Event::PeerGone { .. } => ctx.redraw(),
                 Event::Observed(seen) => self.observe(seen),
+                Event::Discovered { address, .. } => {
+                    if let Some(p2p) = self.p2p.as_deref_mut() {
+                        p2p.discover(address);
+                    }
+                    ctx.redraw();
+                }
                 Event::Listening(_) => {}
             }
         }

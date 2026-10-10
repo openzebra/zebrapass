@@ -24,15 +24,25 @@ pub const fn wants_node(has_gate: bool, shared: usize, listen: Listen) -> bool {
 /// lacks. Does nothing when no address is remembered.
 pub fn pull_personal(p2p: &P2p, vault: &Vault) {
     let loopback = matches!(p2p.listen, Listen::Local);
-    let Some(addresses) = vault
+    let remembered = vault
         .session
         .personal_peers_key()
         .ok()
         .and_then(|key| load_personal_peers(&vault.paths.peers_store(), &key, loopback).ok())
-        .filter(|addresses| !addresses.is_empty())
-    else {
+        .unwrap_or_default();
+    let addresses: Vec<_> = remembered
+        .iter()
+        .map(ToString::to_string)
+        .chain(
+            p2p.discovered
+                .iter()
+                .filter(|found| !remembered.iter().any(|known| &known.to_string() == *found))
+                .cloned(),
+        )
+        .collect();
+    if addresses.is_empty() {
         return;
-    };
+    }
     let dialing = Dialing {
         policy: Policy { loopback },
         trusted: addresses.iter().filter_map(|a| a.parse().ok()).collect(),
@@ -43,7 +53,6 @@ pub fn pull_personal(p2p: &P2p, vault: &Vault) {
     ) else {
         return;
     };
-    let addresses = addresses.iter().map(ToString::to_string).collect();
     p2p.service
         .pull_personal(view, addresses, mine, p2p.provider.personal_serve());
 }

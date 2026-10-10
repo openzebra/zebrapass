@@ -40,6 +40,9 @@ pub const INFO_P2P_ACCOUNT_GATE: &[u8] = b"brby/v2/p2p-account-gate";
 /// vault id is known to the dialing device.
 pub const INFO_P2P_ACCOUNT_ROUTE: &[u8] = b"brby/v2/p2p-account-route";
 
+/// HKDF info of the key that seals a LAN beacon.
+pub const INFO_P2P_BEACON: &[u8] = b"brby/v2/p2p-beacon";
+
 /// HKDF info of the key that seals a personal vault's stored peer addresses.
 pub const INFO_PERSONAL_PEERS: &[u8] = b"brby/v2/personal-peers";
 
@@ -52,6 +55,16 @@ pub const INFO_PERSONAL_PEERS: &[u8] = b"brby/v2/personal-peers";
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn account_gate_secret(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; 32]>> {
     hkdf_sha512(seed, &[0u8; 16], INFO_P2P_ACCOUNT_GATE)
+}
+
+/// The key that seals the LAN beacons of one account, from its gate secret.
+/// Only a device that holds the account's phrase can open or make one.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn p2p_beacon_key(gate_secret: &Secret<[u8; 32]>) -> anyhow::Result<Secret<[u8; 32]>> {
+    hkdf_sha512(gate_secret.expose(), &[0u8; 16], INFO_P2P_BEACON)
 }
 
 /// The id a personal vault is addressed by in the handshake.
@@ -182,6 +195,25 @@ mod tests {
         assert_ne!(&route[..], &gate.expose()[..16]);
         let peers = super::personal_peers_key(gate.expose(), &route).unwrap();
         assert_ne!(peers.expose(), gate.expose());
+    }
+
+    #[test]
+    fn the_beacon_key_follows_the_gate_and_is_its_own() {
+        let gate = super::account_gate_secret(&[1; 64]).unwrap();
+        let other = super::account_gate_secret(&[2; 64]).unwrap();
+        let key = super::p2p_beacon_key(&gate).unwrap();
+        assert_eq!(key.expose(), super::p2p_beacon_key(&gate).unwrap().expose());
+        assert_ne!(
+            key.expose(),
+            super::p2p_beacon_key(&other).unwrap().expose()
+        );
+        assert_ne!(key.expose(), gate.expose());
+        let route = super::account_route_id(&gate).unwrap();
+        assert_ne!(
+            key.expose(),
+            super::p2p_gate_key(gate.expose(), &route).unwrap().expose(),
+            "not the key of the hello gate"
+        );
     }
 
     #[test]

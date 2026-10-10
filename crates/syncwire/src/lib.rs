@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod attestation;
+mod beacon;
 mod cert;
 pub mod limits;
 pub mod mux;
@@ -23,6 +24,10 @@ pub use attestation::{
     decode_attestation, decode_bundle, decode_frontier, encode_attestation, encode_bundle,
     encode_frontier, ATTESTATION_MAGIC, ATTESTATION_WIRE_LEN, ATTESTATION_WIRE_VERSION,
     MAX_FRONTIER,
+};
+pub use beacon::{
+    decode_beacon, encode_beacon, Beacon, BEACON_MAGIC, BEACON_WIRE_MAX, BEACON_WIRE_VERSION,
+    MAX_BEACON_VAULTS,
 };
 pub use cert::{decode_cert, encode_cert, CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION};
 pub use mux::{Direction, Header, MsgType};

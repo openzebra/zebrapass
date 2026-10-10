@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod beacon;
 mod blob;
 mod client;
 mod client_calls;
@@ -24,6 +25,7 @@ mod shared_join;
 mod sync;
 mod view;
 
+pub use beacon::{BeaconConfig, BeaconIdentity};
 pub use client::{Conn, FetchError, Fetched};
 pub use client_calls::{fetch, Push};
 pub use dialable::{Dialing, Policy};

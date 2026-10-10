@@ -1,9 +1,9 @@
 //! Restore with the phrase alone: another device of the same account sends
 //! the vault file over the peer-to-peer transport.
 //!
-//! TODO(seed-beacon): the address is typed in. A LAN beacon (UDP multicast,
-//! sealed under a key derived from the account's gate secret, a reply with no
-//! secrets) would find it without typing; it is not built.
+//! TODO(seed-beacon): the address is typed in. Devices in the LAN beacon mode
+//! announce themselves (see `p2p_net::BeaconConfig`), sealed under a key from
+//! the account's gate secret, but this screen does not listen for them yet.
 //!
 //! The phrase never leaves this device. It derives this device's identity and
 //! the gate key that lets the first message through; what crosses the network

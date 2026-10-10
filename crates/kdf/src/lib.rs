@@ -17,9 +17,9 @@ pub use derive::{
 };
 pub use hkdf::{derive_vault_keys, hkdf_sha512, INFO_CHIP_WRAP, INFO_PRF_WRAP};
 pub use p2p::{
-    account_gate_secret, account_route_id, p2p_gate_key, p2p_key, personal_peers_key,
-    share_grant_key, INFO_P2P_ACCOUNT_GATE, INFO_P2P_ACCOUNT_ROUTE, INFO_P2P_APP_I2R,
-    INFO_P2P_APP_R2I, INFO_P2P_GATE, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I, INFO_PERSONAL_PEERS,
-    INFO_SHARE_GRANT,
+    account_gate_secret, account_route_id, p2p_beacon_key, p2p_gate_key, p2p_key,
+    personal_peers_key, share_grant_key, INFO_P2P_ACCOUNT_GATE, INFO_P2P_ACCOUNT_ROUTE,
+    INFO_P2P_APP_I2R, INFO_P2P_APP_R2I, INFO_P2P_BEACON, INFO_P2P_GATE, INFO_P2P_HS_I2R,
+    INFO_P2P_HS_R2I, INFO_PERSONAL_PEERS, INFO_SHARE_GRANT,
 };
 pub use profile::KdfProfile;

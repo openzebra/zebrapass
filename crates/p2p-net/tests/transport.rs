@@ -583,69 +583,212 @@ fn one_address_cannot_hold_every_handshake_slot() {
     });
 }
 
-fn resident_kib() -> u64 {
+fn resident_kib(pid: u32) -> u64 {
     let out = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .args(["-o", "rss=", "-p", &pid.to_string()])
         .output()
         .unwrap();
     String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
 }
 
-/// How much memory held connections cost a node, idle and while every one
-/// fetches an 8 MiB vault file at once, under a cap on
-/// concurrent snapshots (`ZP_MEM_CAP`, default 2). Run once per setting, as
-/// the process keeps freed memory: `ZP_MEM_CAP=32 cargo test --release -p p2p-net
-/// --test transport -- --ignored --nocapture memory`.
+/// The node of the memory measurement, run as a process of its own so that
+/// its memory is not mixed with that of the clients. It is started by
+/// `memory_of_the_serving_process` and does nothing when run by itself.
+#[test]
+#[ignore = "child of the memory measurement"]
+fn memory_server_child() {
+    use std::io::{BufRead, Write};
+    if std::env::var("ZP_MEM_CHILD").is_err() {
+        return;
+    }
+    let max_snapshots: usize = std::env::var("ZP_MEM_CAP")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(2);
+    let provider = served(vec![7u8; file_mib() * 1024 * 1024]);
+    block_on(async {
+        let limits = Limits {
+            per_address_peers: 64,
+            per_address_handshakes: 64,
+            max_snapshots,
+            // Opening 32 connections takes a debug build minutes; they must
+            // not be closed as idle before the measurement starts.
+            idle: std::time::Duration::from_secs(3600),
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        println!("ZP-ADDR {addr}");
+        std::io::stdout().flush().unwrap();
+        tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            while std::io::stdin()
+                .lock()
+                .read_line(&mut line)
+                .is_ok_and(|n| n > 0)
+            {
+                line.clear();
+            }
+        })
+        .await
+        .unwrap();
+    });
+}
+
+/// Size of the vault file the measurement moves, in MiB (`ZP_MEM_FILE_MIB`,
+/// default 2): a debug build seals 64 KiB chunks slowly enough that 32
+/// concurrent copies of a larger file outlast the client's request timeout.
+fn file_mib() -> usize {
+    std::env::var("ZP_MEM_FILE_MIB")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(2)
+}
+
+struct ServerProcess {
+    child: std::process::Child,
+    addr: String,
+}
+
+impl ServerProcess {
+    fn start(max_snapshots: usize) -> Self {
+        use std::io::BufRead;
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "memory_server_child",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("ZP_MEM_CHILD", "1")
+            .env("ZP_MEM_CAP", max_snapshots.to_string())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = child.stdout.take().unwrap();
+        let addr = std::io::BufReader::new(out)
+            .lines()
+            .map_while(Result::ok)
+            .find_map(|line| line.split_once("ZP-ADDR ").map(|(_, addr)| addr.to_owned()))
+            .unwrap();
+        Self { child, addr }
+    }
+
+    fn rss(&self) -> u64 {
+        resident_kib(self.child.id())
+    }
+}
+
+impl Drop for ServerProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Resident memory of the server process while `work` runs: its peak over
+/// what it held when `work` began.
+async fn peak_over<F: std::future::Future>(server: &ServerProcess, work: F) -> (u64, F::Output) {
+    let pid = server.child.id();
+    let start = resident_kib(pid);
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sampler = {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut peak = 0;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                peak = peak.max(resident_kib(pid));
+            }
+            peak.max(resident_kib(pid))
+        })
+    };
+    let out = work.await;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    (sampler.join().unwrap().saturating_sub(start), out)
+}
+
+/// What the serving process alone costs: per idle connection, for one
+/// transfer of the file, and for every held connection fetching at once under the cap on
+/// concurrent snapshots (`ZP_MEM_CAP`, default 2). The node runs as a child
+/// process and each phase gets a fresh one, because a process keeps memory it
+/// has freed. Clients live in this process and are not counted.
+/// `ZP_MEM_CAP=32 cargo test -p p2p-net --test transport -- --ignored --nocapture memory_of`.
 #[test]
 #[ignore = "measurement: run on request"]
-fn memory_per_connection_idle_and_while_serving() {
-    const HELD: u64 = 32;
-    let provider = served(vec![7u8; 8 * 1024 * 1024]);
+fn memory_of_the_serving_process() {
+    let held_count: u64 = std::env::var("ZP_MEM_HELD")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(12);
+    let max_snapshots: usize = std::env::var("ZP_MEM_CAP")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(2);
     block_on(async {
-        let max_snapshots: usize = std::env::var("ZP_MEM_CAP")
-            .ok()
-            .and_then(|text| text.parse().ok())
-            .unwrap_or(2);
-        {
-            let label = format!("cap {max_snapshots}");
-            let limits = Limits {
-                per_address_peers: 64,
-                per_address_handshakes: 64,
-                max_snapshots,
-                ..Limits::default()
-            };
-            let addr = start_limited(Arc::clone(&provider), Load::default(), limits).await;
-            let mut warm = Conn::connect(&member_view(), &addr).await.unwrap();
+        let open_many = |server: &ServerProcess| {
+            let addr = server.addr.clone();
+            async move {
+                let mut held = Vec::new();
+                for _ in 0..held_count {
+                    let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+                    conn.log().await.unwrap();
+                    held.push(conn);
+                }
+                held
+            }
+        };
+
+        let (per_connection, one) = if std::env::var("ZP_MEM_ONLY_STORM").is_ok() {
+            (0, 0)
+        } else {
+            let server = ServerProcess::start(max_snapshots);
+            let mut warm = Conn::connect(&member_view(), &server.addr).await.unwrap();
             warm.log().await.unwrap();
             drop(warm);
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let base = resident_kib();
-            let mut held = Vec::new();
-            for _ in 0..HELD {
-                let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
-                conn.log().await.unwrap();
-                held.push(conn);
-            }
+            let base = server.rss();
+            let (_, opened) = peak_over(&server, open_many(&server)).await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let idle = resident_kib();
+            let per_connection = server.rss().saturating_sub(base) / held_count;
+            drop(opened);
+            drop(server);
+
+            let server = ServerProcess::start(max_snapshots);
+            let mut conn = Conn::connect(&member_view(), &server.addr).await.unwrap();
+            conn.log().await.unwrap();
+            let (one, snapshot) =
+                peak_over(&server, async { conn.snapshot().await.unwrap() }).await;
+            assert_eq!(snapshot.len(), file_mib() * 1024 * 1024);
+            drop(conn);
+            drop(server);
+
+            (per_connection, one)
+        };
+        let server = ServerProcess::start(max_snapshots);
+        let held = open_many(&server).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let (storm, served_ok) = peak_over(&server, async {
             let downloads: Vec<_> = held
                 .into_iter()
                 .map(|mut conn| {
-                    tokio::spawn(async move { conn.snapshot().await.map(|body| body.len()) })
+                    tokio::spawn(async move { conn.snapshot().await.map(|file| file.len()) })
                 })
                 .collect();
-            let (mut peak, mut served_ok) = (idle, 0);
+            let mut ok = 0;
             for download in downloads {
-                peak = peak.max(resident_kib());
-                served_ok += usize::from(download.await.unwrap().is_ok());
+                match download.await.unwrap() {
+                    Ok(_) => ok += 1,
+                    Err(error) => eprintln!("a fetch failed: {error}"),
+                }
             }
-            peak = peak.max(resident_kib());
-            println!(
-                "memory ({label}): {} KiB per idle connection; peak {} KiB over idle with {HELD} concurrent 8 MiB fetches, {served_ok} served at once",
-                idle.saturating_sub(base) / HELD,
-                peak.saturating_sub(idle),
-            );
-        }
+            ok
+        })
+        .await;
+        println!(
+            "server process (cap {max_snapshots}): {per_connection} KiB per idle connection; one {} MiB transfer +{one} KiB; {held_count} concurrent fetches +{storm} KiB, {served_ok} served at once",
+            file_mib()
+        );
     });
 }
 
@@ -825,5 +968,29 @@ fn replies_arrive_in_request_order_whatever_order_they_finish_in() {
         let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
         assert_eq!(conn.snapshot().await.unwrap(), vec![3; 5 * CHUNK_LEN + 17]);
         assert_eq!(conn.log().await.unwrap(), vec![0x4C; 700]);
+    });
+}
+
+#[test]
+fn several_connections_can_each_fetch_a_snapshot_at_once_under_a_big_enough_cap() {
+    const FETCHERS: usize = 4;
+    let provider = served(vec![9; 4 * CHUNK_LEN]);
+    block_on(async {
+        let limits = Limits {
+            max_snapshots: FETCHERS,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut conns = Vec::new();
+        for _ in 0..FETCHERS {
+            conns.push(Conn::connect(&member_view(), &addr).await.unwrap());
+        }
+        let downloads: Vec<_> = conns
+            .into_iter()
+            .map(|mut conn| tokio::spawn(async move { conn.snapshot().await }))
+            .collect();
+        for download in downloads {
+            assert_eq!(download.await.unwrap().unwrap(), vec![9; 4 * CHUNK_LEN]);
+        }
     });
 }

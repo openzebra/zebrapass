@@ -530,3 +530,72 @@ fn a_personal_frame_round_trips_and_is_strict() {
     assert!(syncwire::decode_personal_frame(&over).is_err());
     assert!(syncwire::encode_personal_frame(&[0u8; 8]).is_err());
 }
+
+mod beacon {
+    use syncwire::{decode_beacon, encode_beacon, Beacon, BEACON_WIRE_MAX, MAX_BEACON_VAULTS};
+
+    fn sample() -> Beacon {
+        Beacon {
+            vaults: vec![[0xA1; 16], [0xB2; 16]],
+            port: 0x1D17,
+        }
+    }
+
+    #[test]
+    fn golden_layout() {
+        let bytes = encode_beacon(&sample()).unwrap();
+        assert_eq!(&bytes[..6], b"ZPBC\x00\x01");
+        assert_eq!(&bytes[6..8], &[0x1D, 0x17], "port, big-endian");
+        assert_eq!(bytes[8], 2, "vault count");
+        assert_eq!(&bytes[9..25], &[0xA1; 16]);
+        assert_eq!(&bytes[25..41], &[0xB2; 16]);
+        assert_eq!(bytes.len(), 41);
+        assert_eq!(decode_beacon(&bytes).unwrap(), sample());
+        let most = Beacon {
+            vaults: vec![[1; 16]; MAX_BEACON_VAULTS],
+            port: 1,
+        };
+        assert_eq!(encode_beacon(&most).unwrap().len(), BEACON_WIRE_MAX);
+    }
+
+    #[test]
+    fn strict_decode() {
+        let bytes = encode_beacon(&sample()).unwrap();
+        for len in 0..bytes.len() {
+            assert!(decode_beacon(&bytes[..len]).is_err(), "cut at {len}");
+        }
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(decode_beacon(&trailing).is_err());
+        let mut bad = bytes.clone();
+        bad[0] ^= 1;
+        assert!(decode_beacon(&bad).is_err(), "magic");
+        let mut bad = bytes.clone();
+        bad[5] = 2;
+        assert!(decode_beacon(&bad).is_err(), "version");
+        let mut bad = bytes.clone();
+        bad[6..8].copy_from_slice(&[0, 0]);
+        assert!(decode_beacon(&bad).is_err(), "no port");
+        let mut bad = bytes.clone();
+        bad[8] = 0;
+        assert!(decode_beacon(&bad).is_err(), "no vaults");
+        let mut bad = bytes;
+        bad[8] = 255;
+        assert!(decode_beacon(&bad).is_err(), "a count over the bound");
+        assert!(encode_beacon(&Beacon {
+            vaults: vec![],
+            port: 1
+        })
+        .is_err());
+        assert!(encode_beacon(&Beacon {
+            vaults: vec![[0; 16]],
+            port: 0
+        })
+        .is_err());
+        assert!(encode_beacon(&Beacon {
+            vaults: vec![[0; 16]; MAX_BEACON_VAULTS + 1],
+            port: 1
+        })
+        .is_err());
+    }
+}

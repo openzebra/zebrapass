@@ -291,11 +291,11 @@ fn shared_vaults_live_apart_from_personal_vaults() {
 }
 
 #[test]
-fn the_listening_choice_survives_a_round_trip_and_cycles_through_all_three() {
+fn the_listening_choice_survives_a_round_trip_and_cycles_through_all_four() {
     use local::{Listen, Prefs};
     let mut seen = vec![Listen::Lan];
     let mut mode = Listen::Lan;
-    for _ in 0..2 {
+    for _ in 0..3 {
         mode = mode.next();
         seen.push(mode);
     }
@@ -306,8 +306,8 @@ fn the_listening_choice_survives_a_round_trip_and_cycles_through_all_three() {
     );
     seen.sort_by_key(|listen| u8::from(*listen));
     seen.dedup();
-    assert_eq!(seen.len(), 3);
-    for listen in [Listen::Off, Listen::Local, Listen::Lan] {
+    assert_eq!(seen.len(), 4);
+    for listen in [Listen::Off, Listen::Local, Listen::Lan, Listen::Beacon] {
         let prefs = Prefs {
             p2p_listen: listen,
             ..Prefs::default()
