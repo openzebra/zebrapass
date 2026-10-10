@@ -19,18 +19,19 @@ fn invalid() -> anyhow::Error {
     anyhow!("invalid sync object")
 }
 
-/// Encode `file` after its `attestations`.
+/// Encode what comes before the vault file in a snapshot: the header and
+/// the `attestations`.
 ///
 /// # Errors
 ///
 /// More than [`MAX_SNAPSHOT_ATTESTATIONS`] attestations, or one that does
 /// not encode.
-pub fn encode_snapshot(file: &[u8], attestations: &[Attestation]) -> Result<Vec<u8>> {
+pub fn encode_snapshot_prefix(attestations: &[Attestation]) -> Result<Vec<u8>> {
     if attestations.len() > MAX_SNAPSHOT_ATTESTATIONS {
         return Err(invalid());
     }
     let mut out = Vec::with_capacity(
-        SNAPSHOT_MAGIC.len() + 2 + 2 + attestations.len() * ATTESTATION_WIRE_LEN + file.len(),
+        SNAPSHOT_MAGIC.len() + 2 + 2 + attestations.len() * ATTESTATION_WIRE_LEN,
     );
     out.extend_from_slice(&SNAPSHOT_MAGIC);
     out.extend_from_slice(&SNAPSHOT_WIRE_VERSION.to_be_bytes());
@@ -38,6 +39,18 @@ pub fn encode_snapshot(file: &[u8], attestations: &[Attestation]) -> Result<Vec<
     for attestation in attestations {
         out.extend_from_slice(&encode_attestation(attestation)?);
     }
+    Ok(out)
+}
+
+/// Encode `file` after its `attestations`.
+///
+/// # Errors
+///
+/// More than [`MAX_SNAPSHOT_ATTESTATIONS`] attestations, or one that does
+/// not encode.
+pub fn encode_snapshot(file: &[u8], attestations: &[Attestation]) -> Result<Vec<u8>> {
+    let mut out = encode_snapshot_prefix(attestations)?;
+    out.reserve_exact(file.len());
     out.extend_from_slice(file);
     Ok(out)
 }

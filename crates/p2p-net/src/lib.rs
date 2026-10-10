@@ -1,12 +1,14 @@
-//! HTTP/2 over the post-quantum channel.
+//! A binary peer protocol over the post-quantum channel.
 //!
 //! A node serves the vaults it holds to authenticated members and fetches
-//! from peers. TCP carries only sealed frames; the HTTP/2 inside is plain
-//! `h2` over an in-memory pipe that the channel seals and opens.
+//! from, and pushes to, peers. TCP carries only sealed frames; inside them
+//! run typed request and reply messages, several in flight at once.
 
 #![forbid(unsafe_code)]
 
+mod blob;
 mod client;
+mod client_calls;
 mod dialable;
 mod io;
 mod limits;
@@ -14,6 +16,7 @@ mod peers;
 mod personal;
 mod personal_client;
 mod personal_pull;
+mod serve;
 mod server;
 mod service;
 mod shared;
@@ -21,7 +24,8 @@ mod shared_join;
 mod sync;
 mod view;
 
-pub use client::{fetch, fetch_paths, Conn, FetchError, Fetched};
+pub use client::{Conn, FetchError, Fetched};
+pub use client_calls::{fetch, Push};
 pub use dialable::{Dialing, Policy};
 pub use io::{now_ms, HANDSHAKE_TIMEOUT};
 pub use limits::{Limits, Tickets};
@@ -34,4 +38,4 @@ pub use shared::SharedProvider;
 pub use shared_join::{finish_join, Joined, Known};
 pub use sync::Moved;
 pub use syncwire::Announce;
-pub use view::{Provider, VaultView};
+pub use view::{Provider, SnapshotSource, VaultView};

@@ -16,7 +16,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use zeroize::Zeroizing;
 
-use crate::client::{fetch_paths, FetchError};
+use crate::client::FetchError;
+use crate::client_calls::fetch;
 use crate::io::now_ms;
 use crate::limits::{HandshakeSlot, Limits, Tickets};
 use crate::server::{authenticate, first_message, serve_requests_with};
@@ -38,9 +39,6 @@ const REPLAY_WINDOW: Duration = Duration::from_secs(120);
 
 /// How long a whole handshake may take, however it is paced.
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(30);
-
-/// Largest vault file or log a fetch accepts.
-const MAX_FETCH: usize = 512 << 20;
 
 /// How often and how long a fetch retries.
 const FETCH_RETRY: Duration = Duration::from_secs(3);
@@ -271,33 +269,15 @@ impl Service {
                     tokio::time::sleep(retry).await;
                 }
                 for hint in &hints {
-                    let got = fetch_paths(
-                        &view,
-                        hint,
-                        &["/v1/log", "/v1/snapshot"],
-                        &["/v1/rekey"],
-                        MAX_FETCH,
-                    )
-                    .await;
-                    match got {
+                    match fetch(&view, hint).await {
                         Ok(fetched) => {
-                            let mut bodies = fetched.bodies.into_iter();
-                            if let (Some(log), Some(snapshot)) = (bodies.next(), bodies.next()) {
-                                let rekey = fetched
-                                    .extras
-                                    .into_iter()
-                                    .next()
-                                    .flatten()
-                                    .map(Zeroizing::new);
-                                outcome = Some(Event::Fetched {
-                                    vault_id,
-                                    log,
-                                    snapshot,
-                                    rekey,
-                                });
-                                break 'attempts;
-                            }
-                            reason = FetchError::Failed;
+                            outcome = Some(Event::Fetched {
+                                vault_id,
+                                log: fetched.log,
+                                snapshot: fetched.snapshot,
+                                rekey: fetched.rekey,
+                            });
+                            break 'attempts;
                         }
                         Err(error) => reason = error,
                     }

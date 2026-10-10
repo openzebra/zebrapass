@@ -55,6 +55,13 @@ bench = false
 path = "../crates/syncwire"
 
 [[bin]]
+name = "mux"
+path = "fuzz_targets/mux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "sync_wire"
 path = "fuzz_targets/sync_wire.rs"
 test = false

@@ -159,16 +159,13 @@ fn the_frontier_and_a_revision_let_a_device_catch_up_one_record_at_a_time() {
         .unwrap()
         .block_on(async {
             let mut conn = Conn::connect(&view, &address).await.unwrap();
-            let theirs = conn
-                .get("/v1/frontier", 1 << 20, false)
-                .await
-                .unwrap()
-                .unwrap();
+            let theirs = conn.frontier().await.unwrap();
             let newest = decode_frontier(&theirs).unwrap().last().unwrap().record_id;
             let revision = conn
-                .get(&format!("/v1/revision/{newest}"), 1 << 20, false)
+                .revisions(&[(newest, 1)])
                 .await
                 .unwrap()
+                .remove(0)
                 .unwrap();
             (theirs, decode_personal_frame(&revision).unwrap())
         });
@@ -263,4 +260,77 @@ fn a_node_that_does_not_serve_the_personal_vault_does_not_answer_for_it() {
         FetchError::Refused,
         "no view for the personal vault: the hello is not routed"
     );
+}
+
+fn personal_conn_view(address: &str, device: u8) -> p2p_net::VaultView {
+    personal_view(
+        &second_device(&SEED, device),
+        Dialing {
+            policy: Policy { loopback: true },
+            trusted: vec![address.parse().unwrap()],
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_device_of_the_account_can_push_a_frame_and_the_owner_takes_it_once() {
+    let first = First::start(Limits::default());
+    let newest = frontier(&first.session).unwrap().last().unwrap().record_id;
+    let frame = latest_frame(&first.session, newest).unwrap();
+    let pushed = syncwire::encode_personal_frame(&frame).unwrap();
+    let view = personal_conn_view(&first.address, 9);
+    let verdicts = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut conn = Conn::connect(&view, &first.address).await.unwrap();
+            let good = conn.push(vec![pushed.clone()]).await.unwrap();
+            let bad = conn.push(vec![vec![1, 2, 3]]).await.unwrap();
+            (good, bad)
+        });
+    assert_eq!(verdicts.0, [p2p_net::Push::Applied]);
+    assert_eq!(verdicts.1, [p2p_net::Push::Refused]);
+    assert_eq!(first.provider.take_pushed(), [frame]);
+    assert!(first.provider.take_pushed().is_empty());
+}
+
+#[test]
+fn a_pull_also_sends_the_frames_the_other_device_lacks() {
+    let mut first = First::start(Limits::default());
+    let base = temp_dir("second");
+    let copy = base.join("vault.bin");
+    std::fs::copy(&first.paths.vault_file, &copy).unwrap();
+    let identity = Arc::new(second_device(&SEED, 7));
+    let provider = Arc::new(SharedProvider::new(base, identity));
+    provider.allow_loopback_peers();
+    assert!(provider.serve_personal(copy, first.session.reopen_key()));
+    let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
+    let address = node.local_addr().unwrap().to_string();
+
+    first.write("mail");
+    let newest = frontier(&first.session).unwrap().last().unwrap().record_id;
+    let wanted = latest_frame(&first.session, newest).unwrap();
+    first.service.pull_personal(
+        personal_conn_view(&address, 9),
+        vec![address.clone()],
+        frontier(&first.session).unwrap(),
+        first.provider.personal_serve(),
+    );
+    let started = std::time::Instant::now();
+    let mut pulled = None;
+    while pulled.is_none() && started.elapsed() < std::time::Duration::from_secs(10) {
+        pulled = first
+            .service
+            .events()
+            .try_iter()
+            .find_map(|event| match event {
+                p2p_net::Event::PersonalPulled { frames, .. } => Some(frames),
+                _ => None,
+            });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(pulled.unwrap(), Vec::<Vec<u8>>::new(), "nothing to pull");
+    assert_eq!(provider.take_pushed(), [wanted]);
 }

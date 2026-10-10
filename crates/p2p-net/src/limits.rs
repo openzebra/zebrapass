@@ -27,14 +27,19 @@ pub struct Limits {
     /// How long one request may take to answer, however slowly the peer
     /// reads.
     pub request: Duration,
-    /// Whole vault files being sent at once, over every connection. The file
-    /// is held in memory while it goes out, so this bounds the worst case; a
-    /// peer asking while all are busy is told to come back.
+    /// How long one snapshot transfer may hold its place among
+    /// `max_snapshots`.
+    pub transfer: Duration,
+    /// Vault files being sent at once, over every connection. A file goes
+    /// out one chunk at a time, so this bounds the chunks in flight; a peer
+    /// asking while all are busy is told to come back.
     pub max_snapshots: usize,
     /// Requests refused or malformed before the connection is closed.
     pub max_failed: u32,
-    /// Requests one connection may make in all.
+    /// Requests one connection may make in all, chunk requests apart.
     pub max_requests: u32,
+    /// Chunk requests one connection may make in all.
+    pub max_chunks: u32,
 }
 
 impl Default for Limits {
@@ -44,10 +49,12 @@ impl Default for Limits {
             per_address_handshakes: 4,
             per_address_peers: 8,
             idle: Duration::from_secs(120),
-            request: Duration::from_secs(15 * 60),
+            request: Duration::from_secs(60),
+            transfer: Duration::from_secs(15 * 60),
             max_snapshots: 2,
             max_failed: 32,
             max_requests: 16_384,
+            max_chunks: 32_768,
         }
     }
 }

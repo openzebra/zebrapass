@@ -253,6 +253,10 @@ impl Unlocked {
             return;
         };
         let events: Vec<Event> = p2p.service.events().try_iter().collect();
+        let pushed = p2p.provider.take_pushed();
+        if !pushed.is_empty() {
+            self.apply_pulled(&pushed, ctx);
+        }
         for event in events {
             match event {
                 Event::Fetched {

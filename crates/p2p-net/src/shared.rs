@@ -11,12 +11,12 @@ use local::{
 use memberlog::{Entry, ENTRY_WIRE_LEN, MAX_ENTRIES};
 use p2p_core::Account;
 use secret::Secret;
-use syncwire::{encode_peers, encode_snapshot};
+use syncwire::{encode_peers, encode_snapshot_prefix};
 use zeroize::Zeroizing;
 
 use crate::personal::{personal_view, PersonalServe};
 use crate::shared_join::parse_rekey;
-use crate::view::{Provider, VaultView};
+use crate::view::{Provider, SnapshotSource, VaultView};
 
 pub fn unavailable() -> anyhow::Error {
     anyhow!("shared vault unavailable")
@@ -68,6 +68,19 @@ impl SharedProvider {
             .lock()
             .map(|mut slot| *slot = Some(serve))
             .is_ok()
+    }
+
+    /// The personal vault this node serves, if any.
+    pub fn personal_serve(&self) -> Option<Arc<PersonalServe>> {
+        self.personal.lock().ok()?.clone()
+    }
+
+    /// The frames other devices of this account pushed since the last call,
+    /// for the open vault to apply.
+    pub fn take_pushed(&self) -> Vec<Vec<u8>> {
+        self.personal_serve()
+            .map(|serve| serve.take_inbox())
+            .unwrap_or_default()
     }
 
     fn personal_for(&self, vault_id: &[u8; 16]) -> Option<Arc<PersonalServe>> {
@@ -302,13 +315,19 @@ impl Provider for SharedProvider {
         self.personal_for(vault_id)?.announce()
     }
 
-    fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
+    fn snapshot_source(&self, vault_id: &[u8; 16]) -> Option<SnapshotSource> {
         if let Some(serve) = self.personal_for(vault_id) {
-            return serve.snapshot();
+            return serve.snapshot_source();
         }
         self.with_vault(vault_id, |vault, reference, identity| {
             let attestations = vault.attestations(reference, identity)?;
-            encode_snapshot(vault.file.as_bytes(), &attestations)
+            let file = std::fs::File::open(&vault.paths.vault_file)?;
+            let file_len = u64::try_from(vault.file.as_bytes().len())?;
+            Ok(SnapshotSource {
+                prefix: encode_snapshot_prefix(&attestations)?,
+                file,
+                file_len,
+            })
         })
         .ok()
     }
@@ -332,6 +351,9 @@ impl Provider for SharedProvider {
     }
 
     fn accept_revision(&self, vault_id: &[u8; 16], account: &[u8; 64], bundle: &[u8]) -> Verdict {
+        if let Some(serve) = self.personal_for(vault_id) {
+            return serve.accept(bundle);
+        }
         self.with_vault(vault_id, |vault, reference, _| {
             if vault.log.role_of(account).is_none() {
                 return Ok(Verdict::Refused);

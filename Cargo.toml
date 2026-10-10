@@ -51,12 +51,9 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
-# HTTP/2 transport of device sync (crates/p2p-net only). The channel inside is our own
-# post-quantum one; these crates only move bytes and frame requests.
+# Async runtime of the device-sync transport (crates/p2p-net only). The channel
+# inside is our own post-quantum one.
 tokio = { version = "=1.53.1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "sync"] }
-h2 = "=0.4.19"
-http = "=1.5.0"
-bytes = "=1.12.1"
 # Terminal UI only (crates/tui). ratatui 0.29 is the last line on the 1.85 MSRV;
 # Cargo.lock pins its `instability` proc-macro to 0.3.7 for the same reason.
 ratatui = "=0.29.0"

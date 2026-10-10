@@ -1,42 +1,27 @@
-//! Serving one incoming connection: handshake, then HTTP/2 requests.
+//! Serving one incoming connection: handshake, then mux requests.
 //!
 //! Only authenticated devices of an account the vault trusts ever reach the
-//! request stage, so a request needs no further check here. A request is
-//! `GET /v1/log` (the member log) or `GET /v1/snapshot` (the vault file), or
-//! one of the per-record and personal-vault endpoints below; anything else is
-//! refused.
+//! request stage. Requests are answered concurrently, at most
+//! [`PIPELINE_DEPTH`] at a time; a peer that breaks the protocol, asks too
+//! much, or is refused too often is disconnected.
 
-use std::future::poll_fn;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
-use h2::server::SendResponse;
-use http::{Method, Response, StatusCode};
 use p2p_core::suite::MAX_HANDSHAKE_MSG;
-use p2p_core::{Accept, CookieSecret, Load, Responder};
+use p2p_core::{Accept, CookieSecret, Inbound, Load, Message, Outcome, Responder};
 use session::DeviceCert;
+use syncwire::limits::PIPELINE_DEPTH;
+use syncwire::{Direction, Header};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
+use zeroize::Zeroizing;
 
-use crate::io::{bridge, now_ms, read_msg, write_msg};
+use crate::io::{mux, now_ms, read_msg, write_msg};
 use crate::limits::{Limits, Tickets};
+use crate::serve::{Answer, Serve};
 use crate::view::Provider;
-use local::Verdict;
-
-/// Concurrent requests one peer may have open.
-const MAX_STREAMS: u32 = 8;
-
-/// Flow-control windows: large enough that a vault file does not crawl.
-const STREAM_WINDOW: u32 = 1 << 20;
-const CONNECTION_WINDOW: u32 = 4 << 20;
-
-/// Largest header block a request may carry.
-const MAX_HEADERS: u32 = 16 * 1024;
-
-/// Largest piece sent at once.
-const SEND_CHUNK: usize = 64 * 1024;
 
 fn refused() -> anyhow::Error {
     anyhow!("connection refused")
@@ -86,127 +71,13 @@ pub async fn authenticate(
     Err(refused())
 }
 
-async fn send_body(respond: &mut SendResponse<Bytes>, body: Vec<u8>) -> Result<StatusCode> {
-    let response = Response::builder().status(StatusCode::OK).body(())?;
-    let mut data = Bytes::from(body);
-    if data.is_empty() {
-        let mut stream = respond.send_response(response, false)?;
-        stream.send_data(Bytes::new(), true)?;
-        return Ok(StatusCode::OK);
-    }
-    let mut stream = respond.send_response(response, false)?;
-    while !data.is_empty() {
-        stream.reserve_capacity(data.len().min(SEND_CHUNK));
-        let granted = poll_fn(|cx| stream.poll_capacity(cx))
-            .await
-            .ok_or_else(refused)??;
-        let take = granted.min(data.len());
-        let piece = data.split_to(take);
-        stream.send_data(piece, data.is_empty())?;
-    }
-    Ok(StatusCode::OK)
-}
-
-fn status_only(respond: &mut SendResponse<Bytes>, status: StatusCode) -> Result<StatusCode> {
-    let response = Response::builder().status(status).body(())?;
-    respond.send_response(response, true)?;
-    Ok(status)
-}
-
-/// Largest revision a peer may push: an attestation and a sealed frame.
-pub const MAX_BUNDLE: usize = syncwire::ATTESTATION_WIRE_LEN + syncwire::limits::MAX_FRAME;
-
-/// Largest list of peer records a member may send.
-pub const MAX_PEERS_BODY: usize = 8 + syncwire::MAX_PEERS
-    * (16 + 8 + 1 + 4 * 65 + syncwire::CERT_WIRE_LEN + session::SYNC_SIG_LEN);
-
-async fn read_body(mut stream: h2::RecvStream, max: usize) -> Result<Vec<u8>> {
-    let mut body = Vec::new();
-    while let Some(chunk) = stream.data().await {
-        let chunk = chunk?;
-        stream.flow_control().release_capacity(chunk.len())?;
-        if body.len().saturating_add(chunk.len()) > max {
-            return Err(refused());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-const fn verdict_status(verdict: Verdict) -> StatusCode {
-    match verdict {
-        Verdict::Applied => StatusCode::OK,
-        Verdict::Stale => StatusCode::CONFLICT,
-        Verdict::Refused => StatusCode::FORBIDDEN,
-        Verdict::Invalid => StatusCode::BAD_REQUEST,
-    }
-}
-
-async fn answer<P: Provider>(
-    provider: Arc<P>,
-    vault_id: [u8; 16],
-    account: [u8; 64],
-    request: http::Request<h2::RecvStream>,
-    mut respond: SendResponse<Bytes>,
-) -> Result<StatusCode> {
-    let (parts, incoming) = request.into_parts();
-    let path = parts.uri.path().to_owned();
-    if parts.method == Method::POST && path == "/v1/revision" {
-        let Ok(bundle) = read_body(incoming, MAX_BUNDLE).await else {
-            return status_only(&mut respond, StatusCode::PAYLOAD_TOO_LARGE);
-        };
-        let verdict = tokio::task::spawn_blocking(move || {
-            provider.accept_revision(&vault_id, &account, &bundle)
-        })
-        .await?;
-        return status_only(&mut respond, verdict_status(verdict));
-    }
-    if parts.method == Method::POST && path == "/v1/peers" {
-        let Ok(list) = read_body(incoming, MAX_PEERS_BODY).await else {
-            return status_only(&mut respond, StatusCode::PAYLOAD_TOO_LARGE);
-        };
-        tokio::task::spawn_blocking(move || provider.accept_peers(&vault_id, &list)).await?;
-        return status_only(&mut respond, StatusCode::OK);
-    }
-    if parts.method != Method::GET {
-        return status_only(&mut respond, StatusCode::METHOD_NOT_ALLOWED);
-    }
-    let body = tokio::task::spawn_blocking(move || match path.as_str() {
-        "/v1/log" => {
-            let log = provider.log(&vault_id);
-            if log.is_some() {
-                provider.log_served(&vault_id, &account);
-            }
-            Some(log)
-        }
-        "/v1/snapshot" => Some(provider.snapshot(&vault_id)),
-        "/v1/announce" => Some(provider.announce(&vault_id)),
-        "/v1/peers" => Some(provider.peers(&vault_id)),
-        "/v1/frontier" => Some(provider.frontier(&vault_id)),
-        "/v1/rekey" => Some(
-            provider
-                .rekey(&vault_id, &account)
-                .map(|seed| seed.to_vec()),
-        ),
-        other => other
-            .strip_prefix("/v1/revision/")
-            .and_then(|id| id.parse::<u32>().ok())
-            .map(|id| provider.revision(&vault_id, id)),
-    })
-    .await?;
-    match body {
-        Some(Some(bytes)) => send_body(&mut respond, bytes).await,
-        Some(None) | None => status_only(&mut respond, StatusCode::NOT_FOUND),
-    }
-}
-
-/// Serve HTTP/2 requests for `vault_id` over an established channel until the
-/// peer closes it, with the default [`Limits`]. `account` is the peer's
+/// Serve requests for `vault_id` over an established channel until the peer
+/// closes it, with the default [`Limits`]. `account` is the peer's
 /// authenticated account.
 ///
 /// # Errors
 ///
-/// An HTTP/2 error on the connection.
+/// The connection could not be set up.
 pub async fn serve_requests<P: Provider>(
     tcp: TcpStream,
     channel: p2p_core::Channel,
@@ -218,20 +89,55 @@ pub async fn serve_requests<P: Provider>(
     serve_requests_with(tcp, channel, provider, vault_id, account, &tickets).await
 }
 
-/// Whether a response says the peer asked for something it should not have:
-/// a refusal or a malformed request, not an ordinary "newer revision held".
-fn is_failure(status: StatusCode) -> bool {
-    !status.is_success()
-        && status != StatusCode::CONFLICT
-        && status != StatusCode::SERVICE_UNAVAILABLE
+enum Event {
+    Request(Message),
+    Done(u32, Outcome),
+    Closed,
 }
 
-/// [`serve_requests`] under `limits`: the connection is closed when it sits
-/// idle, when too many of its requests fail, or when it makes too many.
+struct Reply {
+    body: Zeroizing<Vec<u8>>,
+    header: Header,
+}
+
+async fn deliver<P: Provider>(
+    serve: &Serve<P>,
+    message: Message,
+    out: &mpsc::Sender<Reply>,
+) -> Outcome {
+    let Message { header, payload } = message;
+    let mut answer = serve.answer(header.ty, payload.expose()).await;
+    let header = Header::new(
+        answer.ty,
+        header.req_id,
+        answer.body.len(),
+        Direction::Response,
+    )
+    .or_else(|_| {
+        answer = Answer::refused();
+        Header::new(answer.ty, header.req_id, 0, Direction::Response)
+    });
+    let Ok(header) = header else {
+        return Outcome::Refused;
+    };
+    let outcome = answer.outcome;
+    let reply = Reply {
+        body: answer.body,
+        header,
+    };
+    if out.send(reply).await.is_err() {
+        return Outcome::Refused;
+    }
+    outcome
+}
+
+/// [`serve_requests`] under the limits of `tickets`: the connection is closed
+/// when it sits idle, when too many of its requests fail, or when it makes
+/// too many.
 ///
 /// # Errors
 ///
-/// An HTTP/2 error on the connection.
+/// The connection could not be set up.
 pub async fn serve_requests_with<P: Provider>(
     tcp: TcpStream,
     channel: p2p_core::Channel,
@@ -240,53 +146,70 @@ pub async fn serve_requests_with<P: Provider>(
     account: [u8; 64],
     tickets: &Arc<Tickets>,
 ) -> Result<()> {
-    let limits = tickets.limits();
-    let io = bridge(tcp, channel);
-    let mut connection = h2::server::Builder::new()
-        .max_concurrent_streams(MAX_STREAMS)
-        .max_header_list_size(MAX_HEADERS)
-        .initial_window_size(STREAM_WINDOW)
-        .initial_connection_window_size(CONNECTION_WINDOW)
-        .handshake::<_, Bytes>(io)
-        .await?;
-    let failed = Arc::new(AtomicU32::new(0));
-    let active = Arc::new(AtomicU32::new(0));
-    let mut requests = 0u32;
+    let limits = *tickets.limits();
+    let peer = tcp.peer_addr()?;
+    let (mut reader, mut writer) = mux(tcp, channel, Direction::Request)?;
+    let (events, mut inbox) = mpsc::channel::<Event>(PIPELINE_DEPTH * 2);
+    let (out, mut outbox) = mpsc::channel::<Reply>(PIPELINE_DEPTH);
+    let read_task = tokio::spawn({
+        let events = events.clone();
+        async move {
+            while let Ok(message) = reader.next().await {
+                if events.send(Event::Request(message)).await.is_err() {
+                    return;
+                }
+            }
+            let _ = events.send(Event::Closed).await;
+        }
+    });
+    let write_task = tokio::spawn({
+        let events = events.clone();
+        async move {
+            while let Some(reply) = outbox.recv().await {
+                let sent = timeout(limits.request, writer.send(&reply.header, &reply.body)).await;
+                if !matches!(sent, Ok(Ok(()))) {
+                    break;
+                }
+            }
+            let _ = events.send(Event::Closed).await;
+        }
+    });
+    let serve = Arc::new(Serve::new(
+        provider,
+        Arc::clone(tickets),
+        peer,
+        account,
+        vault_id,
+    ));
+    let mut inbound = Inbound::new(limits.max_requests, limits.max_chunks, limits.max_failed);
     loop {
-        let next = match timeout(limits.idle, connection.accept()).await {
-            Ok(next) => next,
-            Err(_) if active.load(Ordering::Relaxed) > 0 => continue,
-            Err(_) => break,
+        let event = match timeout(limits.idle, inbox.recv()).await {
+            Ok(Some(event)) => event,
+            Err(_) if inbound.in_flight() > 0 => continue,
+            Ok(None) | Err(_) => break,
         };
-        let Some(accepted) = next else { break };
-        let (request, respond) = accepted?;
-        requests = requests.saturating_add(1);
-        if requests > limits.max_requests || failed.load(Ordering::Relaxed) >= limits.max_failed {
+        let proceed = match event {
+            Event::Closed => false,
+            Event::Done(req_id, outcome) => inbound.finish(req_id, outcome).is_ok(),
+            Event::Request(message) => {
+                inbound.admit(&message.header).is_ok() && {
+                    let (serve, out, events) = (Arc::clone(&serve), out.clone(), events.clone());
+                    let req_id = message.header.req_id;
+                    tokio::spawn(async move {
+                        let outcome = timeout(limits.request, deliver(&serve, message, &out))
+                            .await
+                            .unwrap_or(Outcome::Refused);
+                        let _ = events.send(Event::Done(req_id, outcome)).await;
+                    });
+                    true
+                }
+            }
+        };
+        if !proceed {
             break;
         }
-        let provider = Arc::clone(&provider);
-        let (failed, active) = (Arc::clone(&failed), Arc::clone(&active));
-        let request_limit = limits.request;
-        let wants_snapshot = request.uri().path() == "/v1/snapshot";
-        let permit = wants_snapshot.then(|| tickets.try_snapshot());
-        active.fetch_add(1, Ordering::Relaxed);
-        tokio::spawn(async move {
-            let done = if matches!(permit, Some(None)) {
-                let mut respond = respond;
-                Ok(status_only(&mut respond, StatusCode::SERVICE_UNAVAILABLE))
-            } else {
-                timeout(
-                    request_limit,
-                    answer(provider, vault_id, account, request, respond),
-                )
-                .await
-            };
-            drop(permit);
-            if !matches!(done, Ok(Ok(status)) if !is_failure(status)) {
-                failed.fetch_add(1, Ordering::Relaxed);
-            }
-            active.fetch_sub(1, Ordering::Relaxed);
-        });
     }
+    read_task.abort();
+    write_task.abort();
     Ok(())
 }

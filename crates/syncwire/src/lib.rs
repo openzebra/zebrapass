@@ -10,6 +10,8 @@
 mod attestation;
 mod cert;
 pub mod limits;
+pub mod mux;
+mod mux_body;
 mod peer;
 mod personal;
 pub mod reader;
@@ -23,6 +25,8 @@ pub use attestation::{
     MAX_FRONTIER,
 };
 pub use cert::{decode_cert, encode_cert, CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION};
+pub use mux::{Direction, Header, MsgType};
+pub use mux_body::{Chunk, ChunkRequest, Extent, Ping, Want, WhoAmI};
 pub use peer::{decode_peers, encode_peers, MAX_PEERS, PEER_MAGIC, PEER_WIRE_VERSION};
 pub use personal::{
     decode_announce, decode_personal_frame, encode_announce, encode_personal_frame, Announce,
@@ -35,6 +39,6 @@ pub use revocation::{
     REVOCATION_WIRE_VERSION,
 };
 pub use snapshot::{
-    decode_snapshot, encode_snapshot, MAX_SNAPSHOT_ATTESTATIONS, SNAPSHOT_MAGIC,
-    SNAPSHOT_WIRE_VERSION,
+    decode_snapshot, encode_snapshot, encode_snapshot_prefix, MAX_SNAPSHOT_ATTESTATIONS,
+    SNAPSHOT_MAGIC, SNAPSHOT_WIRE_VERSION,
 };

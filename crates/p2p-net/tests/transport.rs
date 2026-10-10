@@ -10,12 +10,14 @@
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-use p2p_core::{Account, CookieSecret, Load};
+use p2p_core::{Account, Channel, CookieSecret, Initiator, Load, Message, Reassembler};
 use p2p_net::{
-    authenticate, fetch, first_message, serve_requests_with, Conn, Dialing, Limits, Policy,
-    Provider, Service, Tickets, VaultView,
+    authenticate, fetch, first_message, now_ms, serve_requests_with, Conn, Dialing, FetchError,
+    Limits, Policy, Provider, Service, SnapshotSource, Tickets, VaultView,
 };
 use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
+use syncwire::limits::CHUNK_LEN;
+use syncwire::{ChunkRequest, Direction, Header, MsgType};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -76,7 +78,13 @@ struct Served {
     gate: u8,
     revoked: Mutex<Vec<Revocation>>,
     log: Vec<u8>,
-    snapshot: Vec<u8>,
+    snapshot: std::path::PathBuf,
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.snapshot);
+    }
 }
 
 impl Provider for Served {
@@ -92,12 +100,25 @@ impl Provider for Served {
         (vault_id == &VAULT).then(|| self.log.clone())
     }
 
-    fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
-        (vault_id == &VAULT).then(|| self.snapshot.clone())
+    fn snapshot_source(&self, vault_id: &[u8; 16]) -> Option<SnapshotSource> {
+        let file = std::fs::File::open(&self.snapshot).ok()?;
+        let file_len = file.metadata().ok()?.len();
+        (vault_id == &VAULT).then_some(SnapshotSource {
+            prefix: Vec::new(),
+            file,
+            file_len,
+        })
     }
 }
 
 fn served(snapshot: Vec<u8>) -> Arc<Served> {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "zebrapass-transport-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&path, snapshot).unwrap();
     Arc::new(Served {
         server: Dev {
             root: [1; 32],
@@ -108,7 +129,7 @@ fn served(snapshot: Vec<u8>) -> Arc<Served> {
         gate: 5,
         revoked: Mutex::new(Vec::new()),
         log: vec![0x4C; 700],
-        snapshot,
+        snapshot: path,
     })
 }
 
@@ -160,6 +181,77 @@ async fn start_limited(provider: Arc<Served>, load: Load, limits: Limits) -> Str
     addr
 }
 
+struct Raw {
+    tcp: TcpStream,
+    channel: Channel,
+    reassembler: Reassembler,
+    next_id: u32,
+}
+
+async fn send_framed(tcp: &mut TcpStream, bytes: &[u8]) {
+    tcp.write_all(&u32::try_from(bytes.len()).unwrap().to_be_bytes())
+        .await
+        .unwrap();
+    tcp.write_all(bytes).await.unwrap();
+}
+
+async fn read_framed(tcp: &mut TcpStream) -> Option<Vec<u8>> {
+    let mut len = [0u8; 4];
+    tcp.read_exact(&mut len).await.ok()?;
+    let mut body = vec![0u8; usize::try_from(u32::from_be_bytes(len)).ok()?];
+    tcp.read_exact(&mut body).await.ok()?;
+    Some(body)
+}
+
+/// A connection that has done the handshake and nothing else, so a test can
+/// say exactly what goes over the channel.
+async fn raw(view: &VaultView, addr: &str) -> Raw {
+    let mut tcp = TcpStream::connect(addr).await.unwrap();
+    let (initiator, hello) = Initiator::start(view.gate_keys.first().unwrap(), now_ms()).unwrap();
+    send_framed(&mut tcp, &hello).await;
+    let reply = read_framed(&mut tcp).await.unwrap();
+    let (finish, established) = initiator.finish(&view.local(), &reply, now_ms()).unwrap();
+    send_framed(&mut tcp, &finish).await;
+    Raw {
+        tcp,
+        channel: established.channel,
+        reassembler: Reassembler::new(Direction::Response),
+        next_id: 1,
+    }
+}
+
+impl Raw {
+    async fn send_bytes(&mut self, plain: &[u8]) {
+        let sealed = self.channel.seal(plain).unwrap();
+        send_framed(&mut self.tcp, &sealed).await;
+    }
+
+    async fn request(&mut self, ty: MsgType, payload: &[u8]) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let header = Header::new(ty, id, payload.len(), Direction::Request).unwrap();
+        self.send_bytes(&[&header.encode()[..], payload].concat())
+            .await;
+        id
+    }
+
+    /// The next reply, or `None` once the server has closed the connection.
+    async fn reply(&mut self) -> Option<Message> {
+        let mut out = Vec::new();
+        while out.is_empty() {
+            let sealed = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                read_framed(&mut self.tcp),
+            )
+            .await
+            .ok()??;
+            let plain = self.channel.open(&sealed).ok()?;
+            self.reassembler.feed(plain.expose(), &mut out).ok()?;
+        }
+        Some(out.remove(0))
+    }
+}
+
 fn big_snapshot() -> Vec<u8> {
     (0..3 * 1024 * 1024u32)
         .map(|n| u8::try_from(n.wrapping_mul(2_654_435_761) >> 24).unwrap())
@@ -173,12 +265,11 @@ fn a_member_fetches_the_log_and_a_multi_megabyte_vault_file() {
     block_on(async {
         let addr = start(Arc::clone(&provider), Load::default()).await;
         let view = client_dev().view(&[(1, [1; 32])], 5, Vec::new());
-        let fetched = fetch(&view, &addr, &["/v1/log", "/v1/snapshot"], 16 << 20)
-            .await
-            .unwrap();
+        let fetched = fetch(&view, &addr).await.unwrap();
         assert_eq!(fetched.peer.device_id, [0xA1; 16]);
-        assert_eq!(fetched.bodies[0], provider.log);
-        assert_eq!(fetched.bodies[1], snapshot);
+        assert_eq!(fetched.log, provider.log);
+        assert_eq!(fetched.snapshot, snapshot);
+        assert!(fetched.rekey.is_none());
     });
 }
 
@@ -188,24 +279,43 @@ fn a_busy_server_makes_the_client_solve_a_puzzle_transparently() {
     block_on(async {
         let addr = start(provider, Load { difficulty: 10 }).await;
         let view = client_dev().view(&[(1, [1; 32])], 5, Vec::new());
-        let fetched = fetch(&view, &addr, &["/v1/snapshot"], 1 << 20)
-            .await
-            .unwrap();
-        assert_eq!(fetched.bodies[0], vec![9; 1000]);
+        let fetched = fetch(&view, &addr).await.unwrap();
+        assert_eq!(fetched.snapshot, vec![9; 1000]);
     });
 }
 
 #[test]
-fn unknown_paths_and_oversized_bodies_fail() {
+fn a_message_that_breaks_the_protocol_closes_the_connection() {
     let provider = served(vec![1; 50_000]);
     block_on(async {
         let addr = start(provider, Load::default()).await;
-        let view = client_dev().view(&[(1, [1; 32])], 5, Vec::new());
-        assert!(fetch(&view, &addr, &["/v1/other"], 1 << 20).await.is_err());
-        assert!(fetch(&view, &addr, &["/v1/snapshot"], 49_999)
-            .await
-            .is_err());
-        assert!(fetch(&view, &addr, &["/v1/snapshot"], 50_000).await.is_ok());
+        let view = member_view();
+        let header =
+            |ty: u8, id: u32, len: u32| [&[ty][..], &id.to_be_bytes(), &len.to_be_bytes()].concat();
+        let cases = [
+            ("an unknown type", header(99, 1, 0)),
+            ("type zero", header(0, 1, 0)),
+            ("a reply type sent as a request", header(13, 1, 8)),
+            ("a status type sent as a request", header(15, 1, 0)),
+            ("a length over the limit of its type", header(12, 1, 9)),
+            ("a huge length", header(6, 1, u32::MAX)),
+            (
+                "a payload on a type that carries none",
+                [header(4, 1, 1), vec![0]].concat(),
+            ),
+        ];
+        for (name, bytes) in cases {
+            let mut raw = raw(&view, &addr).await;
+            raw.send_bytes(&bytes).await;
+            assert!(raw.reply().await.is_none(), "{name}");
+        }
+        let mut raw = raw(&view, &addr).await;
+        raw.request(MsgType::Ping, &7u64.to_be_bytes()).await;
+        let pong = raw.reply().await.unwrap();
+        assert_eq!(pong.header.ty, MsgType::Pong);
+        assert_eq!(pong.payload.expose(), &7u64.to_be_bytes());
+        raw.request(MsgType::Ping, &8u64.to_be_bytes()).await;
+        assert_eq!(raw.reply().await.unwrap().header.req_id, 2);
     });
 }
 
@@ -217,9 +327,7 @@ fn a_stranger_a_foreign_root_and_a_revoked_device_never_get_a_byte() {
 
         // Wrong gate key: dropped before any asymmetric work.
         let stranger = client_dev().view(&[(1, [1; 32])], 6, Vec::new());
-        assert!(fetch(&stranger, &addr, &["/v1/snapshot"], 1 << 20)
-            .await
-            .is_err());
+        assert!(fetch(&stranger, &addr).await.is_err());
 
         // Right gate key but a certificate from another root.
         let intruder = Dev {
@@ -228,9 +336,7 @@ fn a_stranger_a_foreign_root_and_a_revoked_device_never_get_a_byte() {
             client: 1,
         }
         .view(&[(1, [1; 32])], 5, Vec::new());
-        assert!(fetch(&intruder, &addr, &["/v1/snapshot"], 1 << 20)
-            .await
-            .is_err());
+        assert!(fetch(&intruder, &addr).await.is_err());
 
         // Right root, but revoked by the server's list.
         let member = Dev {
@@ -243,12 +349,8 @@ fn a_stranger_a_foreign_root_and_a_revoked_device_never_get_a_byte() {
         let revocation =
             session::issue_revocation(&honest.sign, &honest.cert, &revoked_view.cert, 1).unwrap();
         provider.revoked.lock().unwrap().push(revocation);
-        assert!(fetch(&revoked_view, &addr, &["/v1/snapshot"], 1 << 20)
-            .await
-            .is_err());
-        assert!(fetch(&honest, &addr, &["/v1/snapshot"], 1 << 20)
-            .await
-            .is_ok());
+        assert!(fetch(&revoked_view, &addr).await.is_err());
+        assert!(fetch(&honest, &addr).await.is_ok());
     });
 }
 
@@ -294,23 +396,28 @@ fn the_wire_carries_no_plaintext() {
             let _ = up.await;
         });
         let view = client_dev().view(&[(1, [1; 32])], 5, Vec::new());
-        let fetched = fetch(&view, &proxy_addr, &["/v1/snapshot"], 1 << 20)
-            .await
-            .unwrap();
-        assert_eq!(fetched.bodies[0].len(), MARKER.len() * 2000);
+        let fetched = fetch(&view, &proxy_addr).await.unwrap();
+        assert_eq!(fetched.snapshot.len(), MARKER.len() * 2000);
         let wire = seen.lock().unwrap().clone();
         assert!(
             wire.len() > MARKER.len() * 2000,
             "the whole body crossed the wire"
         );
         assert!(!wire.windows(MARKER.len()).any(|window| window == MARKER));
-        assert!(!wire.windows(12).any(|window| window == b"GET /v1/snap"));
+        let log_run = vec![0x4C; 64];
+        assert!(
+            !wire.windows(log_run.len()).any(|window| window == log_run),
+            "the member log does not cross in the clear"
+        );
+        assert!(
+            !wire.windows(MARKER.len()).any(|window| window == MARKER),
+            "no snapshot byte crosses in the clear"
+        );
     });
 }
 
 #[test]
 fn a_failed_fetch_says_why() {
-    use p2p_net::FetchError;
     let provider = served(vec![1; 100]);
     block_on(async {
         let addr = start(provider, Load::default()).await;
@@ -321,17 +428,13 @@ fn a_failed_fetch_says_why() {
             probe.local_addr().unwrap().to_string()
         };
         assert_eq!(
-            fetch(&honest, &closed, &["/v1/snapshot"], 1 << 20)
-                .await
-                .unwrap_err(),
+            fetch(&honest, &closed).await.unwrap_err(),
             FetchError::Unreachable
         );
 
         let stranger = client_dev().view(&[(1, [1; 32])], 6, Vec::new());
         assert_eq!(
-            fetch(&stranger, &addr, &["/v1/snapshot"], 1 << 20)
-                .await
-                .unwrap_err(),
+            fetch(&stranger, &addr).await.unwrap_err(),
             FetchError::Refused
         );
 
@@ -342,17 +445,15 @@ fn a_failed_fetch_says_why() {
         }
         .view(&[(1, [1; 32])], 5, Vec::new());
         assert_eq!(
-            fetch(&intruder, &addr, &["/v1/snapshot"], 1 << 20)
-                .await
-                .unwrap_err(),
+            fetch(&intruder, &addr).await.unwrap_err(),
             FetchError::Refused
         );
 
+        let mut conn = Conn::connect(&honest, &addr).await.unwrap();
         assert_eq!(
-            fetch(&honest, &addr, &["/v1/missing"], 1 << 20)
-                .await
-                .unwrap_err(),
-            FetchError::Failed
+            conn.announce().await.unwrap_err(),
+            FetchError::Failed,
+            "a peer that does not hold the vault file says no"
         );
     });
 }
@@ -363,7 +464,6 @@ fn member_view() -> VaultView {
 
 #[test]
 fn an_address_the_policy_forbids_is_never_dialed() {
-    use p2p_net::FetchError;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let own = listener.local_addr().unwrap().to_string();
@@ -401,18 +501,14 @@ fn a_connection_that_keeps_asking_for_what_it_may_not_have_is_closed() {
         let addr = start_limited(provider, Load::default(), limits).await;
         let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
         for _ in 0..3 {
-            assert!(conn.get("/v1/other", 1 << 20, false).await.is_err());
+            assert!(conn.announce().await.is_err());
         }
         assert!(
-            conn.get("/v1/log", 1 << 20, false).await.is_err(),
+            conn.log().await.is_err(),
             "the connection is gone, not merely refused"
         );
         let mut again = Conn::connect(&member_view(), &addr).await.unwrap();
-        assert!(again
-            .get("/v1/log", 1 << 20, false)
-            .await
-            .unwrap()
-            .is_some());
+        assert!(again.log().await.is_ok());
     });
 }
 
@@ -426,10 +522,10 @@ fn a_connection_may_only_make_so_many_requests() {
         };
         let addr = start_limited(provider, Load::default(), limits).await;
         let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
-        for _ in 0..3 {
-            assert!(conn.get("/v1/log", 1 << 20, false).await.unwrap().is_some());
+        for token in 0..3 {
+            conn.ping(token).await.unwrap();
         }
-        assert!(conn.get("/v1/log", 1 << 20, false).await.is_err());
+        assert!(conn.ping(3).await.is_err());
     });
 }
 
@@ -446,9 +542,9 @@ fn an_idle_connection_is_closed_and_a_busy_one_is_not() {
         let mut busy = Conn::connect(&member_view(), &addr).await.unwrap();
         for _ in 0..5 {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            assert!(busy.get("/v1/log", 1 << 20, false).await.is_ok());
+            assert!(busy.ping(1).await.is_ok());
         }
-        assert!(idle.get("/v1/log", 1 << 20, false).await.is_err());
+        assert!(idle.ping(1).await.is_err());
     });
 }
 
@@ -477,9 +573,7 @@ fn one_address_cannot_hold_every_handshake_slot() {
         let view = member_view();
         let mut fetched = None;
         for _ in 0..50 {
-            fetched = fetch(&view, &addr.to_string(), &["/v1/log"], 1 << 20)
-                .await
-                .ok();
+            fetched = fetch(&view, &addr.to_string()).await.ok();
             if fetched.is_some() {
                 break;
             }
@@ -522,14 +616,14 @@ fn memory_per_connection_idle_and_while_serving() {
             };
             let addr = start_limited(Arc::clone(&provider), Load::default(), limits).await;
             let mut warm = Conn::connect(&member_view(), &addr).await.unwrap();
-            warm.get("/v1/log", 1 << 20, false).await.unwrap();
+            warm.log().await.unwrap();
             drop(warm);
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let base = resident_kib();
             let mut held = Vec::new();
             for _ in 0..HELD {
                 let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
-                conn.get("/v1/log", 1 << 20, false).await.unwrap();
+                conn.log().await.unwrap();
                 held.push(conn);
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -537,17 +631,13 @@ fn memory_per_connection_idle_and_while_serving() {
             let downloads: Vec<_> = held
                 .into_iter()
                 .map(|mut conn| {
-                    tokio::spawn(async move {
-                        conn.get("/v1/snapshot", 16 << 20, false)
-                            .await
-                            .map(|body| body.map(|bytes| bytes.len()))
-                    })
+                    tokio::spawn(async move { conn.snapshot().await.map(|body| body.len()) })
                 })
                 .collect();
             let (mut peak, mut served_ok) = (idle, 0);
             for download in downloads {
                 peak = peak.max(resident_kib());
-                served_ok += usize::from(matches!(download.await.unwrap(), Ok(Some(_))));
+                served_ok += usize::from(download.await.unwrap().is_ok());
             }
             peak = peak.max(resident_kib());
             println!(
@@ -556,5 +646,188 @@ fn memory_per_connection_idle_and_while_serving() {
                 peak.saturating_sub(idle),
             );
         }
+    });
+}
+
+#[test]
+fn a_busy_node_says_so_and_that_does_not_count_against_the_peer() {
+    let provider = served(vec![1; 100]);
+    block_on(async {
+        let limits = Limits {
+            max_snapshots: 0,
+            max_failed: 2,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        for _ in 0..6 {
+            assert_eq!(conn.snapshot().await.unwrap_err(), FetchError::Failed);
+        }
+        conn.ping(1).await.unwrap();
+        let mut raw = raw(&member_view(), &addr).await;
+        raw.request(MsgType::SnapReq, &first_chunk()).await;
+        assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Busy);
+    });
+}
+
+fn first_chunk() -> Vec<u8> {
+    ChunkRequest {
+        id: [0; 32],
+        offset: 0,
+    }
+    .encode()
+}
+
+#[test]
+fn the_node_serves_only_so_many_snapshots_at_once_and_frees_the_place() {
+    let provider = served(vec![5; 3 * CHUNK_LEN]);
+    block_on(async {
+        let limits = Limits {
+            max_snapshots: 1,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut holder = raw(&member_view(), &addr).await;
+        holder.request(MsgType::SnapReq, &first_chunk()).await;
+        let first = holder.reply().await.unwrap();
+        assert_eq!(first.header.ty, MsgType::SnapChunk);
+
+        let mut other = Conn::connect(&member_view(), &addr).await.unwrap();
+        assert!(other.snapshot().await.is_err(), "the only place is taken");
+
+        drop(holder);
+        let mut got = None;
+        for _ in 0..50 {
+            got = other.snapshot().await.ok();
+            if got.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(got.unwrap(), vec![5; 3 * CHUNK_LEN]);
+    });
+}
+
+#[test]
+fn a_transfer_is_released_when_its_last_byte_has_gone_out() {
+    let provider = served(vec![5; CHUNK_LEN + 10]);
+    block_on(async {
+        let limits = Limits {
+            max_snapshots: 1,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut one = Conn::connect(&member_view(), &addr).await.unwrap();
+        let mut two = Conn::connect(&member_view(), &addr).await.unwrap();
+        for _ in 0..3 {
+            assert_eq!(one.snapshot().await.unwrap().len(), CHUNK_LEN + 10);
+            assert_eq!(two.snapshot().await.unwrap().len(), CHUNK_LEN + 10);
+        }
+    });
+}
+
+#[test]
+fn a_chunk_of_another_transfer_or_out_of_range_is_not_served() {
+    let provider = served(vec![5; 2 * CHUNK_LEN]);
+    block_on(async {
+        let addr = start(provider, Load::default()).await;
+        let mut raw = raw(&member_view(), &addr).await;
+        raw.request(MsgType::SnapReq, &first_chunk()).await;
+        let first = raw.reply().await.unwrap();
+        let id: [u8; 32] = first.payload.expose()[..32].try_into().unwrap();
+
+        raw.request(
+            MsgType::SnapReq,
+            &ChunkRequest {
+                id: [7; 32],
+                offset: 0,
+            }
+            .encode(),
+        )
+        .await;
+        assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Stale);
+
+        raw.request(
+            MsgType::SnapReq,
+            &ChunkRequest {
+                id,
+                offset: u64::MAX,
+            }
+            .encode(),
+        )
+        .await;
+        assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Refused);
+
+        raw.request(
+            MsgType::SnapReq,
+            &ChunkRequest {
+                id: [0; 32],
+                offset: 5,
+            }
+            .encode(),
+        )
+        .await;
+        assert_eq!(raw.reply().await.unwrap().header.ty, MsgType::Refused);
+
+        let at = u64::try_from(CHUNK_LEN).unwrap();
+        raw.request(MsgType::SnapReq, &ChunkRequest { id, offset: at }.encode())
+            .await;
+        let second = raw.reply().await.unwrap();
+        assert_eq!(second.header.ty, MsgType::SnapChunk);
+        assert_eq!(second.header.len as usize, 32 + 8 + 8 + 4 + CHUNK_LEN);
+    });
+}
+
+#[test]
+fn chunk_requests_have_a_budget_of_their_own() {
+    let provider = served(vec![1; 3 * CHUNK_LEN]);
+    block_on(async {
+        let limits = Limits {
+            max_chunks: 2,
+            ..Limits::default()
+        };
+        let addr = start_limited(provider, Load::default(), limits).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        assert!(conn.snapshot().await.is_err());
+        let mut again = Conn::connect(&member_view(), &addr).await.unwrap();
+        again.ping(1).await.unwrap();
+        again.log().await.unwrap();
+    });
+}
+
+#[test]
+fn the_node_tells_a_peer_the_address_it_sees() {
+    let provider = served(vec![1; 10]);
+    block_on(async {
+        let addr = start(provider, Load::default()).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        let seen = conn.whoami().await.unwrap();
+        assert!(seen.ip().is_loopback());
+        assert_ne!(seen.port(), 0);
+    });
+}
+
+#[test]
+fn a_pipeline_holds_at_most_four_requests() {
+    let provider = served(vec![1; 10]);
+    block_on(async {
+        let addr = start(provider, Load::default()).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        let wanted: Vec<(u32, u64)> = (1..=5).map(|id| (id, 1)).collect();
+        assert!(conn.revisions(&wanted).await.is_err());
+        let found = conn.revisions(&wanted[..4]).await.unwrap();
+        assert_eq!(found, vec![None; 4], "the provider holds no records");
+        conn.ping(1).await.unwrap();
+    });
+}
+
+#[test]
+fn replies_arrive_in_request_order_whatever_order_they_finish_in() {
+    let provider = served(vec![3; 5 * CHUNK_LEN + 17]);
+    block_on(async {
+        let addr = start(provider, Load::default()).await;
+        let mut conn = Conn::connect(&member_view(), &addr).await.unwrap();
+        assert_eq!(conn.snapshot().await.unwrap(), vec![3; 5 * CHUNK_LEN + 17]);
+        assert_eq!(conn.log().await.unwrap(), vec![0x4C; 700]);
     });
 }

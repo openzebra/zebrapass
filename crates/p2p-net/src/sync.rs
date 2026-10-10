@@ -5,13 +5,12 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use http::StatusCode;
-use memberlog::{ENTRY_WIRE_LEN, MAX_ENTRIES};
 use session::{reconcile, FrontierEntry};
 use syncwire::decode_frontier;
+use syncwire::limits::PIPELINE_DEPTH;
 
 use crate::client::{Conn, FetchError};
-use crate::server::{MAX_BUNDLE, MAX_PEERS_BODY};
+use crate::client_calls::Push;
 use crate::service::{Event, Service};
 use crate::view::{Provider, VaultView};
 
@@ -21,10 +20,6 @@ pub const MAX_MOVED: usize = 512;
 
 /// Addresses one check-in dials at most, however many it learns on the way.
 pub const MAX_DIALED: usize = 8;
-
-const MAX_LOG: usize = ENTRY_WIRE_LEN * MAX_ENTRIES;
-pub const MAX_FRONTIER_BODY: usize = syncwire::MAX_FRONTIER * 32 + 8;
-const MAX_SNAPSHOT: usize = 512 << 20;
 
 /// What one check-in did.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -65,14 +60,63 @@ async fn blocking<T: Send + 'static>(
 /// Swap address lists with a member. A failure here never fails the sync:
 /// the addresses are a convenience on top of it.
 async fn exchange_peers<P: Provider>(provider: &Arc<P>, conn: &mut Conn, vault_id: [u8; 16]) {
-    if let Ok(Some(list)) = conn.get("/v1/peers", MAX_PEERS_BODY, true).await {
+    let own = {
+        let provider = Arc::clone(provider);
+        blocking(move || provider.peers(&vault_id))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
+    if let Ok(list) = conn.peers(own).await {
         let provider = Arc::clone(provider);
         let _ = blocking(move || provider.accept_peers(&vault_id, &list)).await;
     }
-    let provider = Arc::clone(provider);
-    if let Ok(Some(own)) = blocking(move || provider.peers(&vault_id)).await {
-        let _ = conn.post("/v1/peers", own).await;
+}
+
+async fn pull<P: Provider>(
+    provider: &Arc<P>,
+    conn: &mut Conn,
+    vault_id: [u8; 16],
+    wanted: &[(u32, u64)],
+    moved: &mut Moved,
+) -> Result<(), FetchError> {
+    let account = conn.peer.client_id;
+    for batch in wanted.chunks(PIPELINE_DEPTH) {
+        for bundle in conn.revisions(batch).await?.into_iter().flatten() {
+            let provider = Arc::clone(provider);
+            match blocking(move || provider.accept_revision(&vault_id, &account, &bundle)).await? {
+                local::Verdict::Applied => moved.pulled += 1,
+                local::Verdict::Stale => {}
+                local::Verdict::Refused | local::Verdict::Invalid => moved.refused += 1,
+            }
+        }
     }
+    Ok(())
+}
+
+async fn push<P: Provider>(
+    provider: &Arc<P>,
+    conn: &mut Conn,
+    vault_id: [u8; 16],
+    ids: &[u32],
+    moved: &mut Moved,
+) -> Result<(), FetchError> {
+    for batch in ids.chunks(PIPELINE_DEPTH) {
+        let mut bundles = Vec::with_capacity(batch.len());
+        for id in batch.iter().copied() {
+            let provider = Arc::clone(provider);
+            bundles.extend(blocking(move || provider.revision(&vault_id, id)).await?);
+        }
+        for verdict in conn.push(bundles).await? {
+            match verdict {
+                Push::Applied => moved.pushed += 1,
+                Push::Stale => {}
+                Push::Refused => moved.refused += 1,
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn talk<P: Provider>(
@@ -82,10 +126,7 @@ async fn talk<P: Provider>(
 ) -> Result<Step, FetchError> {
     let vault_id = view.vault_id;
     let mut conn = Conn::connect(view, hint).await?;
-    let log = conn
-        .get("/v1/log", MAX_LOG, false)
-        .await?
-        .ok_or(FetchError::Failed)?;
+    let log = conn.log().await?;
     let merged = {
         let (provider, log) = (Arc::clone(provider), log.clone());
         blocking(move || provider.merge_log(&vault_id, &log)).await?
@@ -94,29 +135,22 @@ async fn talk<P: Provider>(
         return Err(FetchError::Failed);
     }
     exchange_peers(provider, &mut conn, vault_id).await;
-    let rekey = conn.get("/v1/rekey", 128, true).await?;
+    let rekey = conn.rekey().await?;
     let needs = {
         let (provider, rekey) = (Arc::clone(provider), rekey.clone());
-        blocking(move || provider.needs_snapshot(&vault_id, rekey.as_deref())).await?
+        blocking(move || provider.needs_snapshot(&vault_id, rekey.as_deref().map(Vec::as_slice)))
+            .await?
     };
     if needs {
-        let snapshot = conn
-            .get("/v1/snapshot", MAX_SNAPSHOT, false)
-            .await?
-            .ok_or(FetchError::Failed)?;
+        let snapshot = conn.snapshot().await?;
         return Ok(Step::Snapshot(Event::Fetched {
             vault_id,
             log,
             snapshot,
-            rekey: rekey.map(zeroize::Zeroizing::new),
+            rekey,
         }));
     }
-    let theirs = frontier_of(
-        &conn
-            .get("/v1/frontier", MAX_FRONTIER_BODY, false)
-            .await?
-            .ok_or(FetchError::Failed)?,
-    )?;
+    let theirs = frontier_of(&conn.frontier().await?)?;
     let mine = {
         let provider = Arc::clone(provider);
         blocking(move || provider.frontier(&vault_id))
@@ -124,33 +158,22 @@ async fn talk<P: Provider>(
             .ok_or(FetchError::Failed)?
     };
     let plan = reconcile(&frontier_of(&mine)?, &theirs);
+    let wanted: Vec<(u32, u64)> = plan
+        .pull
+        .into_iter()
+        .take(MAX_MOVED)
+        .map(|id| {
+            let revision = theirs
+                .iter()
+                .find(|entry| entry.record_id == id)
+                .map_or(0, |entry| entry.revision);
+            (id, revision)
+        })
+        .collect();
     let mut moved = Moved::default();
-    let account = conn.peer.client_id;
-    for id in plan.pull.into_iter().take(MAX_MOVED) {
-        let Some(bundle) = conn
-            .get(&format!("/v1/revision/{id}"), MAX_BUNDLE, true)
-            .await?
-        else {
-            continue;
-        };
-        let provider = Arc::clone(provider);
-        match blocking(move || provider.accept_revision(&vault_id, &account, &bundle)).await? {
-            local::Verdict::Applied => moved.pulled += 1,
-            local::Verdict::Stale => {}
-            local::Verdict::Refused | local::Verdict::Invalid => moved.refused += 1,
-        }
-    }
-    for id in plan.push.into_iter().take(MAX_MOVED) {
-        let provider = Arc::clone(provider);
-        let Some(bundle) = blocking(move || provider.revision(&vault_id, id)).await? else {
-            continue;
-        };
-        match conn.post("/v1/revision", bundle).await? {
-            StatusCode::OK => moved.pushed += 1,
-            StatusCode::CONFLICT => {}
-            _ => moved.refused += 1,
-        }
-    }
+    pull(provider, &mut conn, vault_id, &wanted, &mut moved).await?;
+    let ids: Vec<u32> = plan.push.into_iter().take(MAX_MOVED).collect();
+    push(provider, &mut conn, vault_id, &ids, &mut moved).await?;
     Ok(Step::Synced(moved))
 }
 

@@ -11,6 +11,7 @@ mod admission;
 mod auth;
 mod channel;
 mod handshake;
+mod mux;
 pub mod suite;
 mod wire;
 
@@ -18,6 +19,7 @@ pub use admission::{CookieSecret, Load, COOKIE_WINDOW_MS, GATE_WINDOW_MS, MAX_DI
 pub use auth::{Account, Local, Role};
 pub use channel::{Channel, RecvHalf, SendHalf, Side, MAX_MESSAGES, MAX_PLAINTEXT, OVERHEAD};
 pub use handshake::{Accept, Established, Initiator, Responder};
+pub use mux::{Dispatcher, Done, Inbound, Message, Outcome, Reassembler, Reply};
 
 /// Offset of the kind byte in every handshake message.
 pub use suite::KIND_OFFSET;

@@ -1,16 +1,18 @@
-//! Bytes on the wire: length-prefixed handshake messages, and the bridge that
-//! carries an HTTP/2 connection through the encrypted channel.
+//! Bytes on the wire: length-prefixed handshake messages, and the halves
+//! that carry protocol messages through the encrypted channel.
 //!
-//! After the handshake, plaintext written by `h2` into one end of an
-//! in-memory pipe is sealed message by message and sent over TCP; messages
-//! read from TCP are opened and written into the pipe. `h2` never sees
-//! anything but plaintext, and TCP never sees anything but sealed frames.
+//! After the handshake, every protocol message is cut into pieces of at most
+//! one channel message, sealed, and sent over TCP with a `u32` length in
+//! front; the reader opens each piece and rebuilds messages from the plain
+//! bytes. TCP never sees anything but sealed frames.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use p2p_core::{Channel, MAX_PLAINTEXT, OVERHEAD};
-use tokio::io::{duplex, split, AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
+use p2p_core::{Channel, Message, Reassembler, RecvHalf, SendHalf, MAX_PLAINTEXT, OVERHEAD};
+use syncwire::{Direction, Header};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -18,12 +20,6 @@ use zeroize::Zeroizing;
 
 /// How long one handshake message may take to arrive.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Plaintext sealed per message.
-const CHUNK: usize = 16 * 1024;
-
-/// Buffer between `h2` and the sealer.
-const PIPE: usize = 256 * 1024;
 
 fn wire_error() -> anyhow::Error {
     anyhow!("connection error")
@@ -70,68 +66,111 @@ pub async fn read_msg(tcp: &mut TcpStream, max: usize) -> Result<Vec<u8>> {
     .map_err(|_| wire_error())?
 }
 
-async fn seal_outbound(
-    mut pipe: ReadHalf<DuplexStream>,
-    mut tcp: OwnedWriteHalf,
-    mut send: p2p_core::SendHalf,
-) {
-    let mut buf = Zeroizing::new(vec![0u8; CHUNK]);
-    loop {
-        let n = match pipe.read(&mut buf).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        let Some(plain) = buf.get(..n) else { break };
-        let Ok(wire) = send.seal(plain) else { break };
-        let Ok(len) = u32::try_from(wire.len()) else {
-            break;
-        };
-        if tcp.write_all(&len.to_be_bytes()).await.is_err() || tcp.write_all(&wire).await.is_err() {
-            break;
-        }
-    }
-    let _ = tcp.shutdown().await;
+/// Reads sealed messages from the peer and rebuilds protocol messages.
+pub struct MuxReader {
+    tcp: OwnedReadHalf,
+    recv: RecvHalf,
+    reassembler: Reassembler,
+    ready: VecDeque<Message>,
 }
 
-async fn open_inbound(
-    mut tcp: OwnedReadHalf,
-    mut pipe: WriteHalf<DuplexStream>,
-    mut recv: p2p_core::RecvHalf,
-) {
-    loop {
-        let mut header = [0u8; 4];
-        if tcp.read_exact(&mut header).await.is_err() {
-            break;
-        }
-        let Ok(len) = usize::try_from(u32::from_be_bytes(header)) else {
-            break;
-        };
-        if len > MAX_PLAINTEXT + OVERHEAD {
-            break;
-        }
-        let mut body = vec![0u8; len];
-        if tcp.read_exact(&mut body).await.is_err() {
-            break;
-        }
-        let Ok(plain) = recv.open(&body) else { break };
-        if pipe.write_all(plain.expose()).await.is_err() {
-            break;
-        }
-    }
-    let _ = pipe.shutdown().await;
+/// Seals protocol messages and writes them to the peer.
+pub struct MuxWriter {
+    tcp: OwnedWriteHalf,
+    send: SendHalf,
 }
 
-/// Carry an HTTP/2 connection over `channel`: the returned stream is what
-/// `h2` reads and writes. Dropping it ends both directions.
-#[must_use]
-pub fn bridge(tcp: TcpStream, channel: Channel) -> DuplexStream {
-    let (app, net) = duplex(PIPE);
-    let (net_read, net_write) = split(net);
+/// Split an established connection into its two message halves. `incoming`
+/// is the direction of the messages the peer sends.
+///
+/// # Errors
+///
+/// `connection error` when the socket refuses its options.
+pub fn mux(
+    tcp: TcpStream,
+    channel: Channel,
+    incoming: Direction,
+) -> Result<(MuxReader, MuxWriter)> {
+    tcp.set_nodelay(true).map_err(|_| wire_error())?;
     let (tcp_read, tcp_write) = tcp.into_split();
     let (send, recv) = channel.into_halves();
-    tokio::spawn(seal_outbound(net_read, tcp_write, send));
-    tokio::spawn(open_inbound(tcp_read, net_write, recv));
-    app
+    Ok((
+        MuxReader {
+            tcp: tcp_read,
+            recv,
+            reassembler: Reassembler::new(incoming),
+            ready: VecDeque::new(),
+        },
+        MuxWriter {
+            tcp: tcp_write,
+            send,
+        },
+    ))
+}
+
+impl MuxReader {
+    /// The next complete message.
+    ///
+    /// # Errors
+    ///
+    /// `connection error` when the peer closes, a sealed message does not
+    /// open, or a header breaks the protocol.
+    pub async fn next(&mut self) -> Result<Message> {
+        loop {
+            if let Some(message) = self.ready.pop_front() {
+                return Ok(message);
+            }
+            let mut header = [0u8; 4];
+            self.tcp
+                .read_exact(&mut header)
+                .await
+                .map_err(|_| wire_error())?;
+            let len = usize::try_from(u32::from_be_bytes(header)).map_err(|_| wire_error())?;
+            if len > MAX_PLAINTEXT + OVERHEAD {
+                return Err(wire_error());
+            }
+            let mut body = vec![0u8; len];
+            self.tcp
+                .read_exact(&mut body)
+                .await
+                .map_err(|_| wire_error())?;
+            let plain = self.recv.open(&body).map_err(|_| wire_error())?;
+            let mut out = Vec::new();
+            self.reassembler.feed(plain.expose(), &mut out)?;
+            self.ready.extend(out);
+        }
+    }
+}
+
+impl MuxWriter {
+    /// Send one message, sealed in pieces of at most [`MAX_PLAINTEXT`].
+    ///
+    /// # Errors
+    ///
+    /// `connection error` for a write failure or an exhausted channel.
+    pub async fn send(&mut self, header: &Header, payload: &[u8]) -> Result<()> {
+        let head = header.encode();
+        let lead_len = payload.len().min(MAX_PLAINTEXT - head.len());
+        let (lead, rest) = payload.split_at_checked(lead_len).ok_or_else(wire_error)?;
+        let mut first = Zeroizing::new(Vec::with_capacity(head.len() + lead.len()));
+        first.extend_from_slice(&head);
+        first.extend_from_slice(lead);
+        self.write_sealed(&first).await?;
+        for piece in rest.chunks(MAX_PLAINTEXT) {
+            self.write_sealed(piece).await?;
+        }
+        self.tcp.flush().await.map_err(|_| wire_error())
+    }
+
+    async fn write_sealed(&mut self, plain: &[u8]) -> Result<()> {
+        let wire = self.send.seal(plain).map_err(|_| wire_error())?;
+        let len = u32::try_from(wire.len()).map_err(|_| wire_error())?;
+        self.tcp
+            .write_all(&len.to_be_bytes())
+            .await
+            .map_err(|_| wire_error())?;
+        self.tcp.write_all(&wire).await.map_err(|_| wire_error())
+    }
 }
 
 /// Unix time in milliseconds.

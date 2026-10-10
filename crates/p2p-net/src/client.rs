@@ -2,19 +2,23 @@
 
 use std::fmt;
 
-use bytes::Bytes;
-use http::{Method, Request, StatusCode};
+use std::collections::VecDeque;
+use std::time::Duration;
+
 use p2p_core::suite::{KIND_CHALLENGE, MAX_HANDSHAKE_MSG};
-use p2p_core::{Initiator, KIND_OFFSET};
+use p2p_core::{Dispatcher, Initiator, Reply, KIND_OFFSET};
 use session::DeviceCert;
+use syncwire::limits::PIPELINE_DEPTH;
+use syncwire::{Direction, MsgType};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+use zeroize::Zeroizing;
 
-use crate::io::{bridge, now_ms, read_msg, write_msg, HANDSHAKE_TIMEOUT};
+use crate::io::{mux, now_ms, read_msg, write_msg, MuxReader, MuxWriter, HANDSHAKE_TIMEOUT};
 use crate::view::VaultView;
 
-const STREAM_WINDOW: u32 = 1 << 20;
-const CONNECTION_WINDOW: u32 = 4 << 20;
+/// How long a peer may take to answer one request.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Why a request did not work, as far as the client can tell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,11 +51,12 @@ type Outcome<T> = Result<T, FetchError>;
 pub struct Fetched {
     /// The peer's verified certificate.
     pub peer: DeviceCert,
-    /// One body per required path, in order.
-    pub bodies: Vec<Vec<u8>>,
-    /// One entry per optional path: its body, or `None` when the peer does
-    /// not have it.
-    pub extras: Vec<Option<Vec<u8>>>,
+    /// The member log, each entry's wire bytes concatenated.
+    pub log: Vec<u8>,
+    /// The vault file with its attestations.
+    pub snapshot: Vec<u8>,
+    /// The peer's seed and epoch, when it offers them.
+    pub rekey: Option<Zeroizing<Vec<u8>>>,
 }
 
 async fn handshake(
@@ -76,9 +81,11 @@ async fn handshake(
         .map_err(refused)
 }
 
-/// An open, authenticated HTTP/2 connection to one peer.
+/// An open, authenticated connection to one peer.
 pub struct Conn {
-    sender: h2::client::SendRequest<Bytes>,
+    reader: MuxReader,
+    writer: MuxWriter,
+    dispatcher: Dispatcher,
     first: bool,
     /// The peer's verified certificate.
     pub peer: DeviceCert,
@@ -103,29 +110,31 @@ impl Conn {
         write_msg(&mut tcp, &finish)
             .await
             .map_err(|_| FetchError::Refused)?;
-        let io = bridge(tcp, established.channel);
-        let (sender, connection) = h2::client::Builder::new()
-            .initial_window_size(STREAM_WINDOW)
-            .initial_connection_window_size(CONNECTION_WINDOW)
-            .handshake::<_, Bytes>(io)
-            .await
-            .map_err(|_| FetchError::Refused)?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
+        let (reader, writer) =
+            mux(tcp, established.channel, Direction::Response).map_err(|_| FetchError::Failed)?;
         Ok(Self {
-            sender,
+            reader,
+            writer,
+            dispatcher: Dispatcher::new(
+                u64::try_from(REQUEST_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
+            ),
             first: true,
             peer: established.peer,
         })
     }
 
-    async fn request(
+    /// Send `requests`, keeping up to [`PIPELINE_DEPTH`] open, and hand each
+    /// reply to `sink` in the order the requests were made.
+    ///
+    /// # Errors
+    ///
+    /// [`FetchError::Failed`] for a broken connection or protocol, a peer
+    /// that is too slow, or whatever `sink` returns.
+    pub async fn pipeline(
         &mut self,
-        method: Method,
-        path: &str,
-        body: Option<Vec<u8>>,
-    ) -> Outcome<http::Response<h2::RecvStream>> {
+        mut requests: impl Iterator<Item = (MsgType, Vec<u8>)> + Send,
+        mut sink: impl FnMut(Reply) -> Outcome<()> + Send,
+    ) -> Outcome<()> {
         // A transport error on the first request of a connection means the
         // server closed on us right after the handshake: a refusal.
         let transport = if self.first {
@@ -134,116 +143,64 @@ impl Conn {
             FetchError::Failed
         };
         self.first = false;
-        let sender = self.sender.clone().ready().await.map_err(|_| transport)?;
-        self.sender = sender;
-        let request = Request::builder()
-            .method(method)
-            .uri(path)
-            .body(())
-            .map_err(|_| FetchError::Failed)?;
-        let end = body.is_none();
-        let (response, mut upload) = self
-            .sender
-            .send_request(request, end)
-            .map_err(|_| transport)?;
-        if let Some(data) = body {
-            upload
-                .send_data(Bytes::from(data), true)
+        let mut order = VecDeque::with_capacity(PIPELINE_DEPTH);
+        let mut arrived = Vec::with_capacity(PIPELINE_DEPTH);
+        let mut next = requests.next();
+        loop {
+            while let Some((ty, payload)) = next.take() {
+                let sent = self
+                    .dispatcher
+                    .request(ty, payload.len(), now_ms())
+                    .map_err(|_| FetchError::Failed)?;
+                let Some(header) = sent else {
+                    next = Some((ty, payload));
+                    break;
+                };
+                self.writer
+                    .send(&header, &payload)
+                    .await
+                    .map_err(|_| transport)?;
+                order.push_back(header.req_id);
+                next = requests.next();
+            }
+            if order.is_empty() {
+                return Ok(());
+            }
+            let message = timeout(REQUEST_TIMEOUT, self.reader.next())
+                .await
+                .map_err(|_| FetchError::Failed)?
+                .map_err(|_| transport)?;
+            let done = self
+                .dispatcher
+                .on_message(message)
                 .map_err(|_| FetchError::Failed)?;
-        }
-        response.await.map_err(|_| transport)
-    }
-
-    /// `GET path`. An `optional` path a peer does not have is `Ok(None)`.
-    /// No body may exceed `max_body` bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`FetchError::Failed`] for a non-200 answer (other than a missing
-    /// optional path), an oversized body or a broken connection.
-    pub async fn get(
-        &mut self,
-        path: &str,
-        max_body: usize,
-        optional: bool,
-    ) -> Outcome<Option<Vec<u8>>> {
-        let response = self.request(Method::GET, path, None).await?;
-        if optional && response.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if response.status() != StatusCode::OK {
-            return Err(FetchError::Failed);
-        }
-        let mut stream = response.into_body();
-        let mut body = Vec::new();
-        while let Some(chunk) = stream.data().await {
-            let chunk = chunk.map_err(|_| FetchError::Failed)?;
-            stream
-                .flow_control()
-                .release_capacity(chunk.len())
-                .map_err(|_| FetchError::Failed)?;
-            if body.len().saturating_add(chunk.len()) > max_body {
+            arrived.push((done.req_id, done.reply));
+            while let Some(front) = order.front().copied() {
+                let Some(at) = arrived.iter().position(|(id, _)| *id == front) else {
+                    break;
+                };
+                let (_, reply) = arrived.swap_remove(at);
+                order.pop_front();
+                sink(reply)?;
+            }
+            if self.dispatcher.expired(now_ms()).is_some() {
                 return Err(FetchError::Failed);
             }
-            body.extend_from_slice(&chunk);
         }
-        Ok(Some(body))
     }
 
-    /// `POST path` with `body`; returns the status the peer answered.
+    /// One request and its reply.
     ///
     /// # Errors
     ///
-    /// [`FetchError::Failed`] for a broken connection.
-    pub async fn post(&mut self, path: &str, body: Vec<u8>) -> Outcome<StatusCode> {
-        let response = self.request(Method::POST, path, Some(body)).await?;
-        Ok(response.status())
+    /// As [`Conn::pipeline`].
+    pub async fn call(&mut self, ty: MsgType, payload: Vec<u8>) -> Outcome<Reply> {
+        let mut answer = None;
+        self.pipeline(std::iter::once((ty, payload)), |reply| {
+            answer = Some(reply);
+            Ok(())
+        })
+        .await?;
+        answer.ok_or(FetchError::Failed)
     }
-}
-
-/// Connect to `addr`, authenticate for `view`'s vault, and `GET` each path.
-/// No body may exceed `max_body` bytes.
-///
-/// # Errors
-///
-/// As [`Conn::connect`] and [`Conn::get`].
-pub async fn fetch(
-    view: &VaultView,
-    addr: &str,
-    paths: &[&str],
-    max_body: usize,
-) -> Outcome<Fetched> {
-    fetch_paths(view, addr, paths, &[], max_body).await
-}
-
-/// As [`fetch`], plus `optional` paths a peer may answer with not found.
-///
-/// # Errors
-///
-/// As [`fetch`]; a missing optional path is not an error.
-pub async fn fetch_paths(
-    view: &VaultView,
-    addr: &str,
-    paths: &[&str],
-    optional: &[&str],
-    max_body: usize,
-) -> Outcome<Fetched> {
-    let mut conn = Conn::connect(view, addr).await?;
-    let mut bodies = Vec::with_capacity(paths.len());
-    for path in paths {
-        bodies.push(
-            conn.get(path, max_body, false)
-                .await?
-                .ok_or(FetchError::Failed)?,
-        );
-    }
-    let mut extras = Vec::with_capacity(optional.len());
-    for path in optional {
-        extras.push(conn.get(path, max_body, true).await?);
-    }
-    Ok(Fetched {
-        peer: conn.peer,
-        bodies,
-        extras,
-    })
 }

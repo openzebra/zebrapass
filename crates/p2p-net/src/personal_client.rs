@@ -12,16 +12,13 @@ use std::time::Duration;
 
 use local::SyncIdentity;
 use session::DeviceCert;
-use syncwire::{decode_announce, decode_snapshot, Announce, ANNOUNCE_WIRE_LEN};
+use syncwire::{decode_announce, decode_snapshot, Announce};
 use tokio::runtime::Builder;
 use tokio::time::timeout;
 
 use crate::client::{Conn, FetchError};
 use crate::dialable::{Dialing, Policy};
 use crate::personal::personal_view;
-
-/// Largest vault file a fetch accepts.
-const MAX_FILE: usize = 512 << 20;
 
 /// How long the whole exchange may take, however the peer paces it.
 const DEADLINE: Duration = Duration::from_secs(120);
@@ -68,15 +65,9 @@ pub fn fetch_personal(
     runtime.block_on(async {
         timeout(DEADLINE, async {
             let mut conn = Conn::connect(&view, address).await?;
-            let announce = conn
-                .get("/v1/announce", ANNOUNCE_WIRE_LEN, false)
-                .await?
-                .ok_or(FetchError::Failed)?;
-            let announce = decode_announce(&announce).map_err(|_| FetchError::Failed)?;
-            let snapshot = conn
-                .get("/v1/snapshot", MAX_FILE, false)
-                .await?
-                .ok_or(FetchError::Failed)?;
+            let announce =
+                decode_announce(&conn.announce().await?).map_err(|_| FetchError::Failed)?;
+            let snapshot = conn.snapshot().await?;
             let (file, attestations) = decode_snapshot(snapshot).map_err(|_| FetchError::Failed)?;
             if !attestations.is_empty() {
                 return Err(FetchError::Failed);

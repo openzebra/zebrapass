@@ -43,6 +43,20 @@ impl VaultView {
     }
 }
 
+/// A snapshot to send: its prefix, then `file_len` bytes of `file`.
+///
+/// The file is a handle opened under the same lock as the prefix was made,
+/// so the two belong together even if the vault file is replaced afterwards.
+#[derive(Debug)]
+pub struct SnapshotSource {
+    /// What comes before the vault file.
+    pub prefix: Vec<u8>,
+    /// The vault file, read from its start.
+    pub file: std::fs::File,
+    /// Its length when it was opened.
+    pub file_len: u64,
+}
+
 /// The vaults a node serves and their contents. Called for every incoming
 /// connection, so a change to a vault shows at once.
 pub trait Provider: Send + Sync + 'static {
@@ -55,8 +69,8 @@ pub trait Provider: Send + Sync + 'static {
     /// A member's device was just handed the vault's member log.
     fn log_served(&self, _vault_id: &[u8; 16], _account: &[u8; 64]) {}
 
-    /// The vault file.
-    fn snapshot(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>>;
+    /// The vault file with what goes in front of it, opened for reading.
+    fn snapshot_source(&self, vault_id: &[u8; 16]) -> Option<SnapshotSource>;
 
     /// Which vault file this device holds for a personal vault: its number,
     /// generation and commit tag. Only a personal vault has one.

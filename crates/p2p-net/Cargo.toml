@@ -1,7 +1,7 @@
 [package]
 name = "p2p-net"
 version = "0.1.0"
-description = "HTTP/2 transport over the post-quantum channel: serve and fetch shared vaults."
+description = "Binary peer protocol over the post-quantum channel: serve, fetch and push shared vaults."
 publish = false
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-bytes.workspace = true
-h2.workspace = true
-http.workspace = true
 kdf = { path = "../kdf" }
 local = { path = "../local" }
 memberlog = { path = "../memberlog" }

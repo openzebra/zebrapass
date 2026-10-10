@@ -10,21 +10,26 @@
 //! owner, so these reads take no node lock.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::{anyhow, Result};
-use local::SyncIdentity;
+use local::{SyncIdentity, Verdict};
 use p2p_core::Account;
 use secret::Secret;
 use session::{frontier, latest_frame, unlock_with_key, VaultFile};
 use syncwire::{
-    encode_announce, encode_frontier, encode_personal_frame, encode_snapshot, Announce,
+    decode_personal_frame, encode_announce, encode_frontier, encode_personal_frame,
+    encode_snapshot_prefix, Announce,
 };
 
 use crate::dialable::Dialing;
-use crate::view::VaultView;
+use crate::view::{SnapshotSource, VaultView};
 
 /// Largest vault file the node reads to serve.
 const MAX_VAULT_BYTES: u64 = 512 << 20;
+
+/// Frames pushed by other devices that wait for the open vault to take them.
+const MAX_INBOX: usize = 512;
 
 /// The handshake view of the personal vault of `identity`'s account.
 ///
@@ -57,6 +62,7 @@ pub struct PersonalServe {
     route: [u8; 16],
     file: PathBuf,
     key: Secret<[u8; 32]>,
+    inbox: Mutex<Vec<Vec<u8>>>,
     device_id: [u8; 16],
 }
 
@@ -74,8 +80,33 @@ impl PersonalServe {
             route,
             file,
             key,
+            inbox: Mutex::new(Vec::new()),
             device_id,
         }
+    }
+
+    /// Hold a frame another device of the account pushed. It is not applied
+    /// here: the device that owns the open vault applies it, so the vault is
+    /// only ever written by one party.
+    pub fn accept(&self, bundle: &[u8]) -> Verdict {
+        let Ok(frame) = decode_personal_frame(bundle) else {
+            return Verdict::Invalid;
+        };
+        match self.inbox.lock() {
+            Ok(mut inbox) if inbox.len() < MAX_INBOX => {
+                inbox.push(frame);
+                Verdict::Applied
+            }
+            Ok(_) | Err(_) => Verdict::Refused,
+        }
+    }
+
+    /// The frames pushed since the last call.
+    pub fn take_inbox(&self) -> Vec<Vec<u8>> {
+        self.inbox
+            .lock()
+            .map(|mut inbox| std::mem::take(&mut *inbox))
+            .unwrap_or_default()
     }
 
     /// The id the handshake addresses this vault by.
@@ -105,12 +136,21 @@ impl PersonalServe {
         }))
     }
 
-    /// The vault file, in a snapshot that carries no attestations: personal
+    /// The vault file, as a snapshot that carries no attestations: personal
     /// records have none, and the receiver trusts the file by its commitment
     /// and the channel it came over.
     #[must_use]
-    pub fn snapshot(&self) -> Option<Vec<u8>> {
-        encode_snapshot(self.read().ok()?.as_bytes(), &[]).ok()
+    pub fn snapshot_source(&self) -> Option<SnapshotSource> {
+        let file = std::fs::File::open(&self.file).ok()?;
+        let file_len = file.metadata().ok()?.len();
+        if file_len > MAX_VAULT_BYTES {
+            return None;
+        }
+        Some(SnapshotSource {
+            prefix: encode_snapshot_prefix(&[]).ok()?,
+            file,
+            file_len,
+        })
     }
 
     /// The winning revision of every record of the vault on disk.
