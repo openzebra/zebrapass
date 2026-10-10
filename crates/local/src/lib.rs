@@ -60,7 +60,7 @@ pub use shared_rotate::{
     Attested, RekeyPlan, Replace,
 };
 pub use shared_sync::{verdict_of, Edit, Verdict};
-pub use sync_identity::SyncIdentity;
+pub use sync_identity::{upgrade_sync_identity, SyncIdentity};
 pub use usage::{Usage, UsageEntry};
 
 /// Locations of one vault on this device.

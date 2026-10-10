@@ -21,6 +21,7 @@ tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+frame = { path = "../frame" }
 getrandom.workspace = true
 record = { path = "../record" }
 sharing = { path = "../sharing" }

@@ -133,6 +133,29 @@ impl SyncIdentity {
         self.account_gate.as_ref()
     }
 
+    /// Give an identity written before the gate secret existed its gate
+    /// secret, in place: the same signing key, certificates and invitation
+    /// keys. Only the account's phrase can do it, and it is checked first:
+    /// the root key derived from `master_seed` must be the one this identity
+    /// chains to. Returns `false` when there was nothing to add.
+    ///
+    /// # Errors
+    ///
+    /// `sync identity rejected` for a phrase of another account; key
+    /// derivation failure.
+    pub fn upgrade(&mut self, master_seed: &[u8; 64]) -> anyhow::Result<bool> {
+        let root_seed = kdf::sync_seed(master_seed)?;
+        let root_vk = sync_verifying_key(root_seed.expose())?;
+        if !secret::ct_eq(&root_vk, &*self.root_vk) {
+            anyhow::bail!("sync identity rejected");
+        }
+        if self.account_gate.is_some() {
+            return Ok(false);
+        }
+        self.account_gate = Some(kdf::account_gate_secret(master_seed)?);
+        Ok(true)
+    }
+
     /// The public halves of this device's invitation keys, for a contact
     /// card.
     ///
@@ -360,6 +383,27 @@ impl SyncIdentity {
     }
 }
 
+/// Bring the identity file at `path` up to the current revision with the
+/// account's phrase, keeping everything else in it. Returns whether the file
+/// changed.
+///
+/// # Errors
+///
+/// The file cannot be read or opened, the phrase is not the account's, or the
+/// new file cannot be written.
+pub fn upgrade_sync_identity(
+    path: &Path,
+    key: &Secret<[u8; 32]>,
+    master_seed: &[u8; 64],
+) -> anyhow::Result<bool> {
+    let mut identity = SyncIdentity::load(path, key)?;
+    let changed = identity.upgrade(master_seed)?;
+    if changed {
+        identity.save(path, key)?;
+    }
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
@@ -386,6 +430,23 @@ mod tests {
             expected.expose(),
             "another phrase has another gate"
         );
+    }
+
+    #[test]
+    fn upgrading_adds_the_gate_only_for_the_accounts_own_phrase() {
+        let mut identity = SyncIdentity::enroll(&[7; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
+        identity.account_gate = None;
+        let before = identity.devices().to_vec();
+        let vk = identity.sign_key().verifying_key().unwrap();
+        assert!(identity.upgrade(&[8; 64]).is_err(), "another phrase");
+        assert!(identity.account_gate().is_none());
+        assert!(identity.upgrade(&[7; 64]).unwrap());
+        let expected = kdf::account_gate_secret(&[7; 64]).unwrap();
+        assert_eq!(identity.account_gate().unwrap().expose(), expected.expose());
+        assert_eq!(identity.devices(), before.as_slice());
+        assert_eq!(identity.sign_key().verifying_key().unwrap(), vk);
+        assert!(!identity.upgrade(&[7; 64]).unwrap(), "nothing left to add");
+        assert!(identity.upgrade(&[8; 64]).is_err(), "still checked");
     }
 
     #[test]

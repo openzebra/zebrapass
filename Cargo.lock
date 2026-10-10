@@ -1050,6 +1050,7 @@ name = "p2p-net"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "frame",
  "getrandom",
  "kdf",
  "local",

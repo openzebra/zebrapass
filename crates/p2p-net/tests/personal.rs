@@ -334,3 +334,81 @@ fn a_pull_also_sends_the_frames_the_other_device_lacks() {
     assert_eq!(pulled.unwrap(), Vec::<Vec<u8>>::new(), "nothing to pull");
     assert_eq!(provider.take_pushed(), [wanted]);
 }
+
+/// Rewrite the identity file at `path` as an older revision wrote it: the
+/// same plaintext without the account gate secret, sealed as revision 1.
+fn make_revision_one(path: &std::path::Path, key: &secret::Secret<[u8; 32]>) {
+    let bytes = std::fs::read(path).unwrap();
+    let header = frame::parse(&bytes).unwrap();
+    assert_eq!(header.revision, 2);
+    let plain = frame::open(key, &bytes).unwrap();
+    let (seed, rest) = plain.expose().split_at(32);
+    let legacy = [seed, &rest[32..]].concat();
+    let meta = frame::FrameMeta {
+        kind: header.kind,
+        record_id: header.record_id,
+        revision: 1,
+        origin_device: header.origin_device,
+        timestamp_ms: header.timestamp_ms,
+        alg: header.alg,
+    };
+    write_atomic(path, &frame::seal(key, &meta, &legacy).unwrap()).unwrap();
+}
+
+#[test]
+fn a_revision_one_identity_upgrades_in_place_keeps_its_device_and_then_serves() {
+    let base = temp_dir("legacy");
+    let (paths, session, _file, meta) =
+        create_vault(&base, &SEED, KdfProfile::Fast, BodyAlg::Frames).unwrap();
+    let enrolled =
+        SyncIdentity::enroll(&SEED, &meta.client_id, session.origin_device(), u64::MAX).unwrap();
+    let key = secret::Secret::new([9u8; 32]);
+    let file = base.join("sync.id");
+    enrolled.save(&file, &key).unwrap();
+    make_revision_one(&file, &key);
+
+    let legacy = SyncIdentity::load(&file, &key).unwrap();
+    assert!(legacy.account_gate().is_none(), "revision 1 has no gate");
+    let (device, certs, vk) = (
+        legacy.device_id().unwrap(),
+        legacy.devices().to_vec(),
+        legacy.sign_key().verifying_key().unwrap(),
+    );
+    let provider = Arc::new(SharedProvider::new(base.clone(), Arc::new(legacy)));
+    assert!(
+        !provider.serve_personal(paths.vault_file.clone(), session.reopen_key()),
+        "without the gate it cannot serve"
+    );
+
+    assert!(
+        local::upgrade_sync_identity(&file, &key, &[4; 64]).is_err(),
+        "another account's phrase changes nothing"
+    );
+    assert!(SyncIdentity::load(&file, &key)
+        .unwrap()
+        .account_gate()
+        .is_none());
+    assert!(local::upgrade_sync_identity(&file, &key, &SEED).unwrap());
+    assert!(!local::upgrade_sync_identity(&file, &key, &SEED).unwrap());
+    assert_eq!(
+        frame::parse(&std::fs::read(&file).unwrap())
+            .unwrap()
+            .revision,
+        2
+    );
+
+    let upgraded = SyncIdentity::load(&file, &key).unwrap();
+    assert_eq!(upgraded.device_id().unwrap(), device);
+    assert_eq!(upgraded.devices(), certs.as_slice());
+    assert_eq!(upgraded.sign_key().verifying_key().unwrap(), vk);
+
+    let provider2 = Arc::new(SharedProvider::new(base, Arc::new(upgraded)));
+    provider2.allow_loopback_peers();
+    assert!(provider2.serve_personal(paths.vault_file, session.reopen_key()));
+    let service = Service::start(Some("127.0.0.1:0"), provider2).unwrap();
+    let address = service.local_addr().unwrap().to_string();
+    let me = second_device(&SEED, 9);
+    let fetched = fetch_personal(&me, &address, true).unwrap();
+    assert_eq!(fetched.announce.vault_id, *session.vault_id());
+    drop(provider);
+}
