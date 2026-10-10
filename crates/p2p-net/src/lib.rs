@@ -25,7 +25,7 @@ mod shared_join;
 mod sync;
 mod view;
 
-pub use beacon::{BeaconConfig, BeaconIdentity};
+pub use beacon::{BeaconConfig, BeaconIdentity, BeaconListener};
 pub use client::{Conn, FetchError, Fetched};
 pub use client_calls::{fetch, Push};
 pub use dialable::{Dialing, Policy};

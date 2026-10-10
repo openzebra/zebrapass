@@ -345,7 +345,7 @@ impl App {
             }
             Screen::Restore(state) => {
                 let after = self.ctx.reveal_after;
-                if state.reveal.tick(now, after) || state.enroll.reveal.tick(now, after) {
+                if state.tick(now, after) {
                     self.ctx.redraw();
                 }
                 Nav::Stay
@@ -396,8 +396,9 @@ impl App {
                         self.ctx.apply_prefs(prefs);
                     }
                     let vaults = std::mem::take(&mut state.vaults);
-                    let current = state.current;
-                    self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current)));
+                    let (current, beacon) = (state.current, self.ctx.beacon);
+                    self.screen =
+                        Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current, beacon)));
                     self.ctx.idle.touch(self.ctx.now);
                     self.ctx.redraw();
                 }
@@ -464,7 +465,8 @@ impl App {
         if let Some(prefs) = vault.meta.prefs.as_ref() {
             self.ctx.apply_prefs(prefs);
         }
-        self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current)));
+        let beacon = self.ctx.beacon;
+        self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current, beacon)));
         self.ctx.idle.touch(self.ctx.now);
         self.ctx.toast(Tone::Success, message.to_owned());
         self.ctx.redraw();

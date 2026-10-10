@@ -1,3 +1,7 @@
+//! Ongoing sync between three nodes on one machine. Each check-in waits up to
+//! a minute for its answer, and the crypto of a debug build is slow: on a
+//! loaded machine run these with `--test-threads=4`.
+
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

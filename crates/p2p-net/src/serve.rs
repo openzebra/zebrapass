@@ -188,6 +188,10 @@ impl<P: Provider> Serve<P> {
         }
     }
 
+    // A frame replaces its record whole: there is no base chain to fetch, so
+    // a newer frame lands in one step. STALE here is settled by the pull
+    // phase of the same check-in; BUSY means wait; REFUSED spends the
+    // peer's failure budget.
     async fn push(&self, bundle: &[u8]) -> Answer {
         let (account, bundle) = (self.account, bundle.to_vec());
         match self

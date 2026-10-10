@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use local::{Listen, SyncIdentity};
-use p2p_net::{finish_join, Event, FetchError, Joined};
+use p2p_net::{finish_join, BeaconConfig, Event, FetchError, Joined};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::home::Filter;
@@ -43,7 +43,7 @@ pub fn load_identity(vault: &Vault) -> Option<Arc<SyncIdentity>> {
 /// without a sync identity runs no node; without shared vaults it runs one
 /// only to serve itself to the account's other devices.
 #[must_use]
-pub fn setup(vault: &Vault) -> Setup {
+pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
     let identity = load_identity(vault);
     let Some(identity) = identity else {
         return Setup {
@@ -72,7 +72,7 @@ pub fn setup(vault: &Vault) -> Setup {
             .prefs
             .as_ref()
             .and_then(|prefs| prefs.p2p_advertise.clone());
-        P2p::start(base, Arc::clone(&identity), listen, advertise)
+        P2p::start(base, Arc::clone(&identity), listen, advertise, beacon)
     } else {
         None
     };
@@ -159,6 +159,7 @@ impl Unlocked {
             identity,
             self.listen_mode(),
             self.advertised().map(Box::from),
+            self.beacon,
         );
         if let Some(p2p) = self.p2p.as_deref() {
             if let Some(vault) = self.vault.as_deref() {

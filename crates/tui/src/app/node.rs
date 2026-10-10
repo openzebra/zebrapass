@@ -61,6 +61,7 @@ impl P2p {
         identity: Arc<SyncIdentity>,
         listen: Listen,
         advertise: Option<Box<str>>,
+        beacon: Option<BeaconConfig>,
     ) -> Option<Box<Self>> {
         let provider = Arc::new(SharedProvider::new(
             base.to_path_buf(),
@@ -92,7 +93,7 @@ impl P2p {
         node.provider.set_hints(hints.clone());
         node.reachable = hints.into_boxed_slice();
         if matches!(listen, Listen::Beacon) {
-            node.start_beacon();
+            node.start_beacon(beacon.unwrap_or_else(BeaconConfig::lan));
         }
         Some(node)
     }
@@ -100,17 +101,15 @@ impl P2p {
     /// Announce this node on the local network, to the account's other
     /// devices only. A device without the account gate, or a network that
     /// will not carry multicast, simply has no beacon.
-    fn start_beacon(&self) {
+    fn start_beacon(&self, config: BeaconConfig) {
         let (Some(gate), Some(device)) = (self.identity.account_gate(), self.identity.device_id())
         else {
             return;
         };
         if let Ok(identity) = BeaconIdentity::new(gate, device) {
-            let _ = self.service.start_beacon(
-                Arc::clone(&self.provider),
-                identity,
-                BeaconConfig::lan(),
-            );
+            let _ = self
+                .service
+                .start_beacon(Arc::clone(&self.provider), identity, config);
         }
     }
 

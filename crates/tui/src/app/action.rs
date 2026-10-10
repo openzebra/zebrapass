@@ -180,6 +180,8 @@ actions! {
     RestoreVault,
     /// Restore from a file or from another device.
     RestoreSource,
+    /// Use the next device found on this network.
+    RestoreFound,
     /// Change how CSV columns are read.
     EditColumns,
     /// Include or exclude the selected item.

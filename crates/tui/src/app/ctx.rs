@@ -117,6 +117,8 @@ pub struct Ctx {
     pub full_redraw: bool,
     /// Terminal size `(columns, rows)`.
     pub size: (u16, u16),
+    /// Where LAN beacons go and are heard; see [`crate::cli::Config::beacon`].
+    pub beacon: Option<p2p_net::BeaconConfig>,
 }
 
 impl Ctx {
@@ -148,6 +150,7 @@ impl Ctx {
             kdf_fast: None,
             full_redraw: false,
             size: (120, 40),
+            beacon: config.beacon,
         })
     }
 

@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
+use p2p_net::{BeaconConfig, BeaconListener};
 use seed::SeedPhrase;
 use session::KdfProfile;
 
@@ -27,6 +28,9 @@ use crate::vault::open::read_directory;
 
 /// Longest address typed in: a bracketed IPv6 address with a port.
 const MAX_ADDRESS_INPUT: usize = 64;
+
+/// Devices found on the network that are kept as candidates.
+pub const MAX_FOUND: usize = 16;
 
 /// Reveal key of the last finished word.
 pub const REVEAL_LAST: RevealKey = RevealKey(20);
@@ -105,6 +109,16 @@ pub struct RestoreState {
     pub source_factors: Option<usize>,
     /// Last problem.
     pub error: Option<&'static str>,
+    /// Addresses of other devices of the account found on this network, by
+    /// their beacons. Only candidates: nothing is dialed until the person
+    /// continues.
+    pub found: Vec<Box<str>>,
+    /// Listens for those beacons while the phrase in the form is valid.
+    listener: Option<BeaconListener>,
+    /// Where beacons are heard; `None` when the command line did not ask.
+    beacon: Option<BeaconConfig>,
+    /// The candidate last put in the address field.
+    picked: usize,
 }
 
 impl RestoreState {
@@ -136,6 +150,10 @@ impl RestoreState {
             enroll: EnrollState::new(false),
             source_factors: None,
             error: None,
+            found: Vec::new(),
+            listener: None,
+            beacon: ctx.beacon,
+            picked: 0,
         };
         state.check_source();
         state
@@ -149,6 +167,77 @@ impl RestoreState {
     /// A short reason to show as is.
     pub fn peer_address(&self) -> Result<Box<str>, &'static str> {
         local::parse_peer_address(self.address.value(), true)
+    }
+
+    /// Keep listening for beacons of the account the phrase in the form
+    /// belongs to, while it is a whole, valid phrase and the restore is over
+    /// the network; otherwise stop and forget what was found.
+    fn refresh_listener(&mut self) {
+        let seed = (self.network && self.beacon.is_some() && self.phrase.plausible())
+            .then(|| secret_string(self.passphrase.expose()))
+            .flatten()
+            .and_then(|passphrase| SeedPhrase::parse(&self.phrase.to_secret(), &passphrase).ok());
+        let (Some(seed), Some(config)) = (seed, self.beacon) else {
+            self.listener = None;
+            self.found.clear();
+            return;
+        };
+        if self
+            .listener
+            .as_ref()
+            .is_some_and(|l| l.is_for(seed.seed()))
+        {
+            return;
+        }
+        self.found.clear();
+        self.picked = 0;
+        self.listener = BeaconListener::start(seed.seed(), config).ok();
+    }
+
+    /// Run the timers of the screen and take in the beacons heard; `true`
+    /// when something needs drawing again.
+    pub fn tick(&mut self, now: std::time::Instant, reveal_after: std::time::Duration) -> bool {
+        let revealed = self.reveal.tick(now, reveal_after);
+        let enrolled = self.enroll.reveal.tick(now, reveal_after);
+        let found = self.poll_beacons();
+        revealed || enrolled || found
+    }
+
+    /// Take in the beacons heard since the last call; `true` when the list
+    /// changed. Each address passes the parser the address field uses.
+    pub fn poll_beacons(&mut self) -> bool {
+        let (Some(listener), Some(config)) = (self.listener.as_ref(), self.beacon) else {
+            return false;
+        };
+        let before = self.found.len();
+        for address in listener.poll() {
+            let Ok(address) = local::parse_peer_address(&address.to_string(), config.loopback)
+            else {
+                continue;
+            };
+            if self.found.len() < MAX_FOUND && !self.found.contains(&address) {
+                self.found.push(address);
+            }
+        }
+        self.found.len() != before
+    }
+
+    /// Put the next found device in the address field. It is not used until
+    /// the person continues.
+    fn use_found(&mut self) {
+        if !self.network || self.found.is_empty() {
+            return;
+        }
+        let at = if self.address.value() == self.found.get(self.picked).map_or("", |a| a) {
+            (self.picked + 1) % self.found.len()
+        } else {
+            self.picked.min(self.found.len() - 1)
+        };
+        if let Some(address) = self.found.get(at) {
+            self.address = TextInput::with_value(address, MAX_ADDRESS_INPUT);
+            self.picked = at;
+            self.error = None;
+        }
     }
 
     /// Whether the source looks usable: a vault file, or an address.
@@ -180,6 +269,16 @@ impl RestoreState {
 
     /// Handle a key.
     pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
+        let edits_phrase = self.step == RestoreStep::Phrase
+            && matches!(self.field, RestoreField::Phrase | RestoreField::Passphrase);
+        let nav = self.handle_key(event, ctx);
+        if edits_phrase && self.step == RestoreStep::Phrase {
+            self.refresh_listener();
+        }
+        nav
+    }
+
+    fn handle_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         if self.step == RestoreStep::Enroll {
             return match self.enroll.on_key(event, ctx) {
                 EnrollEvent::Stay => Nav::Stay,
@@ -255,9 +354,11 @@ impl RestoreState {
                     }
                 }
                 self.phrase.space();
+                self.refresh_listener();
             }
             RestoreField::Passphrase => {
                 self.passphrase.insert_str(text);
+                self.refresh_listener();
             }
             RestoreField::Source if self.network => {
                 self.address.insert_str(text);
@@ -303,7 +404,9 @@ impl RestoreState {
             Action::RestoreSource => {
                 self.network = !self.network;
                 self.error = None;
+                self.refresh_listener();
             }
+            Action::RestoreFound => self.use_found(),
             Action::Confirm => self.enter_enroll(ctx),
             Action::Back => return Nav::To(crate::app::flows::gate::initial_screen(ctx)),
             _ => {}
@@ -342,6 +445,7 @@ impl RestoreState {
             presence(&directory, None).password
         };
         self.parsed = Some(Box::new(parsed));
+        self.listener = None;
         self.phrase.clear();
         self.passphrase.clear();
         self.error = None;

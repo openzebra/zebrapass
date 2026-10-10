@@ -4,6 +4,8 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use p2p_net::BeaconConfig;
+
 use crate::ui::theme::ThemeName;
 
 /// Auto-lock after this much inactivity unless `--lock-after` says otherwise.
@@ -29,6 +31,7 @@ usage: zebrapass [options]
   --lock-after <secs>   auto-lock after this much inactivity (30-3600, default 300)
   --clip-clear <secs>   clear the clipboard after this long (5-90, default 20)
   --focus-lock          lock when the terminal loses focus
+  --lan-beacon          the restore screen listens for devices announced on this network
   --trace-events        debug builds: log key kinds (never characters) to stderr
   -h, --help            show this help
   -V, --version         show the version
@@ -49,6 +52,10 @@ pub struct Config {
     pub theme: ThemeName,
     /// Visual and interaction switches.
     pub flags: Flags,
+    /// Where LAN beacons go and are heard. `None`: the restore screen does
+    /// not listen for them, and a node in the beacon mode uses the usual
+    /// multicast group.
+    pub beacon: Option<BeaconConfig>,
 }
 
 /// On/off switches, packed so the config stays small and `Copy`.
@@ -95,6 +102,7 @@ impl Default for Config {
             flags: Flags::default()
                 .with(Flags::ANIM, true)
                 .with(Flags::BENCH, true),
+            beacon: None,
         }
     }
 }
@@ -139,6 +147,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, no_color: bool) -> Result
             "--ascii" => config.flags = config.flags.with(Flags::ASCII, true),
             "--no-anim" => config.flags = config.flags.with(Flags::ANIM, false),
             "--no-bench" => config.flags = config.flags.with(Flags::BENCH, false),
+            "--lan-beacon" => config.beacon = Some(BeaconConfig::lan()),
             "--focus-lock" => config.flags = config.flags.with(Flags::FOCUS_LOCK, true),
             "--trace-events" => {
                 config.flags = config.flags.with(Flags::TRACE, cfg!(debug_assertions));

@@ -219,6 +219,13 @@ fn source_status<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
             state.address.value().trim().is_empty(),
             state.peer_address(),
         ) {
+            (true, _) if !state.found.is_empty() => Span::styled(
+                format!(
+                    "    {} found on this network  ·  ctrl-b puts one in the field",
+                    state.found.len()
+                ),
+                theme.accent(),
+            ),
             (true, _) => Span::styled(
                 "    the phrase and a device that is on and unlocked are enough",
                 theme.muted(),

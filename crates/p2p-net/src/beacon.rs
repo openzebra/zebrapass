@@ -11,7 +11,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,7 @@ use p2p_core::{open_beacon, seal_beacon, MAX_BEACON};
 use secret::Secret;
 use syncwire::{decode_beacon, encode_beacon, Beacon, MAX_BEACON_VAULTS};
 use tokio::net::UdpSocket;
+use tokio::runtime::Runtime;
 use tokio::time::timeout;
 
 use crate::io::now_ms;
@@ -36,7 +37,7 @@ pub const PORT: u16 = 7448;
 const REMEMBERED: usize = 64;
 
 /// Where beacons go, where they are heard, and how often they are sent.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BeaconConfig {
     /// Where beacons are sent.
     pub send_to: SocketAddr,
@@ -127,23 +128,46 @@ async fn announce<P: Provider>(
     }
 }
 
-fn heard(
-    identity: &BeaconIdentity,
-    config: &BeaconConfig,
-    wire: &[u8],
-    from: SocketAddr,
-) -> Option<Event> {
-    let (sender, payload) = open_beacon(&identity.key, wire, now_ms()).ok()?;
-    if sender == identity.device_id {
-        return None;
+/// Opens the beacons that arrive and remembers which addresses it has
+/// already reported lately.
+struct Hearer {
+    config: BeaconConfig,
+    known: HashMap<SocketAddr, Instant>,
+}
+
+impl Hearer {
+    fn new(config: BeaconConfig) -> Self {
+        Self {
+            config,
+            known: HashMap::with_capacity(REMEMBERED),
+        }
     }
-    let beacon = decode_beacon(payload.expose()).ok()?;
-    let address = SocketAddr::new(from.ip().to_canonical(), beacon.port);
-    parse_peer_address(&address.to_string(), config.loopback).ok()?;
-    Some(Event::Discovered {
-        address,
-        vaults: beacon.vaults,
-    })
+
+    /// The event for one datagram, if it is a fresh beacon of another device
+    /// of the account naming an address worth trying that was not just heard.
+    fn hear(&mut self, identity: &BeaconIdentity, wire: &[u8], from: SocketAddr) -> Option<Event> {
+        if wire.len() > MAX_BEACON {
+            return None;
+        }
+        let (sender, payload) = open_beacon(&identity.key, wire, now_ms()).ok()?;
+        if sender == identity.device_id {
+            return None;
+        }
+        let beacon = decode_beacon(payload.expose()).ok()?;
+        let address = SocketAddr::new(from.ip().to_canonical(), beacon.port);
+        parse_peer_address(&address.to_string(), self.config.loopback).ok()?;
+        let now = Instant::now();
+        self.known
+            .retain(|_, at| now.duration_since(*at) < self.config.every);
+        if self.known.contains_key(&address) || self.known.len() >= REMEMBERED {
+            return None;
+        }
+        self.known.insert(address, now);
+        Some(Event::Discovered {
+            address,
+            vaults: beacon.vaults,
+        })
+    }
 }
 
 /// Send a beacon now and every [`BeaconConfig::every`], and report each
@@ -157,7 +181,7 @@ pub async fn run<P: Provider>(
     events: Sender<Event>,
 ) {
     let mut buffer = vec![0u8; MAX_BEACON + 1];
-    let mut known: HashMap<SocketAddr, Instant> = HashMap::with_capacity(REMEMBERED);
+    let mut hearer = Hearer::new(config);
     let mut next = Instant::now();
     loop {
         let now = Instant::now();
@@ -173,23 +197,117 @@ pub async fn run<P: Provider>(
             tokio::time::sleep(Duration::from_millis(50)).await;
             continue;
         };
-        let Some(wire) = buffer.get(..len).filter(|wire| wire.len() <= MAX_BEACON) else {
-            continue;
-        };
-        let Some(Event::Discovered { address, vaults }) = heard(&identity, &config, wire, from)
+        let Some(event) = buffer
+            .get(..len)
+            .and_then(|wire| hearer.hear(&identity, wire, from))
         else {
             continue;
         };
-        let now = Instant::now();
-        known.retain(|_, at| now.duration_since(*at) < config.every);
-        if known.contains_key(&address) || known.len() >= REMEMBERED {
-            continue;
-        }
-        known.insert(address, now);
-        if events.send(Event::Discovered { address, vaults }).is_err() {
+        if events.send(event).is_err() {
             return;
         }
     }
+}
+
+async fn listen(
+    socket: UdpSocket,
+    identity: BeaconIdentity,
+    config: BeaconConfig,
+    events: Sender<Event>,
+) {
+    let mut buffer = vec![0u8; MAX_BEACON + 1];
+    let mut hearer = Hearer::new(config);
+    loop {
+        let Ok((len, from)) = socket.recv_from(&mut buffer).await else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        };
+        let Some(event) = buffer
+            .get(..len)
+            .and_then(|wire| hearer.hear(&identity, wire, from))
+        else {
+            continue;
+        };
+        if events.send(event).is_err() {
+            return;
+        }
+    }
+}
+
+/// Listens for beacons of one account and sends none: for a device that has
+/// only the account's seed, such as one being restored. Dropping it closes
+/// the socket.
+pub struct BeaconListener {
+    key: Secret<[u8; 32]>,
+    events: Receiver<Event>,
+    runtime: Option<Runtime>,
+}
+
+impl std::fmt::Debug for BeaconListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BeaconListener")
+    }
+}
+
+impl BeaconListener {
+    /// Start listening for the account of `seed`.
+    ///
+    /// # Errors
+    ///
+    /// Key derivation failure, or the socket could not be opened.
+    pub fn start(seed: &[u8; 64], config: BeaconConfig) -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()?;
+        let socket = runtime.block_on(open_socket(&config))?;
+        let (sender, events) = channel();
+        runtime.spawn(listen(
+            socket,
+            BeaconIdentity {
+                key: account_beacon_key(seed)?,
+                device_id: [0; 16],
+            },
+            config,
+            sender,
+        ));
+        Ok(Self {
+            key: account_beacon_key(seed)?,
+            events,
+            runtime: Some(runtime),
+        })
+    }
+
+    /// Whether this listener is for the account of `seed`.
+    #[must_use]
+    pub fn is_for(&self, seed: &[u8; 64]) -> bool {
+        account_beacon_key(seed).is_ok_and(|key| secret::ct_eq(key.expose(), self.key.expose()))
+    }
+
+    /// The addresses heard since the last call.
+    #[must_use]
+    pub fn poll(&self) -> Vec<SocketAddr> {
+        self.events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Discovered { address, .. } => Some(address),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl Drop for BeaconListener {
+    fn drop(&mut self) {
+        // Wait for the socket to close, so its port is free when this returns.
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_timeout(Duration::from_millis(500));
+        }
+    }
+}
+
+fn account_beacon_key(seed: &[u8; 64]) -> Result<Secret<[u8; 32]>> {
+    kdf::p2p_beacon_key(&kdf::account_gate_secret(seed)?)
 }
 
 impl Service {

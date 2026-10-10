@@ -72,6 +72,8 @@ pub struct Unlocked {
     pub p2p: Option<Box<P2p>>,
     /// This device's sync identity, when the vault has one.
     pub identity: Option<Arc<SyncIdentity>>,
+    /// Where LAN beacons go and are heard, when the command line says.
+    pub beacon: Option<p2p_net::BeaconConfig>,
     /// Where the vaults live on this device.
     pub base: PathBuf,
     /// Copy usage on this device, for list order.
@@ -95,13 +97,18 @@ pub struct Unlocked {
 impl Unlocked {
     /// Open state for `vault`.
     #[must_use]
-    pub fn new(vault: Box<Vault>, vaults: Vec<VaultRef>, current: usize) -> Self {
+    pub fn new(
+        vault: Box<Vault>,
+        vaults: Vec<VaultRef>,
+        current: usize,
+        beacon: Option<p2p_net::BeaconConfig>,
+    ) -> Self {
         let cache = build_cache(&vault.session).unwrap_or_default();
         let crate::app::p2p::Setup {
             identity,
             p2p,
             shared,
-        } = crate::app::p2p::setup(&vault);
+        } = crate::app::p2p::setup(&vault, beacon);
         let base = vault.paths.base.clone();
         let info = VaultInfo::from(&*vault);
         let usage = vault.meta.usage.clone();
@@ -114,6 +121,7 @@ impl Unlocked {
             shared,
             p2p,
             identity,
+            beacon,
             base,
             usage,
             view: View::Home,
