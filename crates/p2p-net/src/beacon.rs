@@ -18,13 +18,13 @@ use std::time::{Duration, Instant};
 use local::parse_peer_address;
 use p2p_core::{open_beacon, seal_beacon, MAX_BEACON};
 use secret::Secret;
-use syncwire::{decode_beacon, encode_beacon, Beacon, MAX_BEACON_VAULTS};
+use syncwire::{decode_beacon, encode_beacon, Beacon, MAX_BEACON_RELAYS, MAX_BEACON_VAULTS};
 use tokio::net::UdpSocket;
 use tokio::runtime::Runtime;
 use tokio::time::timeout;
 
 use crate::io::now_ms;
-use crate::service::{Event, Service};
+use crate::service::{Event, Service, Shared};
 use crate::view::Provider;
 
 /// The multicast group beacons go to on a local network.
@@ -106,6 +106,7 @@ pub async fn open_socket(config: &BeaconConfig) -> std::io::Result<UdpSocket> {
 async fn announce<P: Provider>(
     socket: &UdpSocket,
     provider: &Arc<P>,
+    shared: &Shared,
     identity: &BeaconIdentity,
     port: u16,
     config: &BeaconConfig,
@@ -121,8 +122,17 @@ async fn announce<P: Provider>(
     })
     .await
     .unwrap_or_default();
-    let sealed = encode_beacon(&Beacon { vaults, port })
-        .and_then(|bytes| seal_beacon(&identity.key, identity.device_id, now_ms(), &bytes));
+    let relays = shared
+        .relay_hints
+        .lock()
+        .map(|held| held.iter().take(MAX_BEACON_RELAYS).copied().collect())
+        .unwrap_or_default();
+    let sealed = encode_beacon(&Beacon {
+        vaults,
+        relays,
+        port,
+    })
+    .and_then(|bytes| seal_beacon(&identity.key, identity.device_id, now_ms(), &bytes));
     if let Ok(wire) = sealed {
         let _ = socket.send_to(&wire, config.send_to).await;
     }
@@ -163,9 +173,17 @@ impl Hearer {
             return None;
         }
         self.known.insert(address, now);
+        let relays = beacon
+            .relays
+            .into_iter()
+            .filter(|hint| {
+                parse_peer_address(&hint.relay.to_string(), self.config.loopback).is_ok()
+            })
+            .collect();
         Some(Event::Discovered {
             address,
             vaults: beacon.vaults,
+            relays,
         })
     }
 }
@@ -175,6 +193,7 @@ impl Hearer {
 pub async fn run<P: Provider>(
     socket: UdpSocket,
     provider: Arc<P>,
+    shared: Arc<Shared>,
     identity: BeaconIdentity,
     port: u16,
     config: BeaconConfig,
@@ -186,7 +205,7 @@ pub async fn run<P: Provider>(
     loop {
         let now = Instant::now();
         if now >= next {
-            announce(&socket, &provider, &identity, port, &config).await;
+            announce(&socket, &provider, &shared, &identity, port, &config).await;
             next = now + config.every;
         }
         let wait = next.saturating_duration_since(Instant::now());
@@ -330,6 +349,7 @@ impl Service {
         runtime.spawn(run(
             socket,
             provider,
+            Arc::clone(&self.shared),
             identity,
             local.port(),
             config,

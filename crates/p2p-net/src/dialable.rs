@@ -96,11 +96,118 @@ impl Dialing {
         }
     }
 
+    /// The next hint of `queue` to try that is not in `done`: every hint that
+    /// does not lead through a relay comes before any that does, so a member
+    /// that can be dialed directly never costs a relay's bandwidth.
+    #[must_use]
+    pub fn next_hint<'a>(&self, queue: &'a [String], done: &[String]) -> Option<&'a String> {
+        let mut untried = queue.iter().filter(|hint| !done.contains(hint));
+        let relayed = |hint: &&String| matches!(self.target(hint), Some(Target::Relayed(_)));
+        untried
+            .clone()
+            .find(|hint| !relayed(hint))
+            .or_else(|| untried.next())
+    }
+
     /// `hint` as an address this device may dial. Names are never resolved.
     #[must_use]
     pub fn resolve(&self, hint: &str) -> Option<SocketAddr> {
         hint.parse()
             .ok()
             .filter(|address| self.policy.allows(address, &self.trusted))
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    reason = "tests may unwrap and index"
+)]
+mod tests {
+    use super::*;
+
+    fn dialing() -> Dialing {
+        Dialing {
+            policy: Policy { loopback: false },
+            trusted: Vec::new(),
+        }
+    }
+
+    fn relayed(text: &str) -> String {
+        format!("{text}/{}", "ab".repeat(16))
+    }
+
+    #[test]
+    fn a_hint_is_a_direct_address_or_a_relay_and_a_slot_and_nothing_else() {
+        let dialing = dialing();
+        assert_eq!(
+            dialing.target("93.184.216.34:7447"),
+            Some(Target::Direct("93.184.216.34:7447".parse().unwrap()))
+        );
+        let Some(Target::Relayed(hint)) = dialing.target(&relayed("93.184.216.34:7447")) else {
+            panic!("not a relay hint")
+        };
+        assert_eq!(hint.slot, [0xAB; 16]);
+        for refused in [
+            "169.254.169.254:80".to_owned(),
+            relayed("169.254.169.254:80"),
+            relayed("127.0.0.1:7447"),
+            relayed("10.0.0.8:7447"),
+            "93.184.216.34:7447/abcd".to_owned(),
+            "example.com:7447".to_owned(),
+        ] {
+            assert_eq!(dialing.target(&refused), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn every_direct_address_comes_before_any_relay_whatever_the_order_it_was_learned_in() {
+        let dialing = dialing();
+        let relay = relayed("93.184.216.40:7447");
+        let queue = vec![
+            relay.clone(),
+            "93.184.216.34:7447".to_owned(),
+            relayed("93.184.216.41:7447"),
+            "169.254.169.254:80".to_owned(),
+            "93.184.216.35:7447".to_owned(),
+        ];
+        let mut done = Vec::new();
+        let mut order = Vec::new();
+        while let Some(next) = dialing.next_hint(&queue, &done) {
+            order.push(next.clone());
+            done.push(next.clone());
+        }
+        assert_eq!(
+            order,
+            [
+                "93.184.216.34:7447",
+                "169.254.169.254:80",
+                "93.184.216.35:7447",
+                relay.as_str(),
+                queue[2].as_str(),
+            ],
+            "direct ones in their order (a forbidden one fails at once), then the relays"
+        );
+        assert_eq!(dialing.next_hint(&[], &[]), None);
+    }
+
+    #[test]
+    fn a_relayed_member_that_is_also_a_direct_peer_is_dialed_directly() {
+        let dialing = dialing();
+        let queue = vec![
+            relayed("93.184.216.40:7447"),
+            "93.184.216.34:7447".to_owned(),
+        ];
+        let first = dialing.next_hint(&queue, &[]).unwrap();
+        assert_eq!(
+            dialing.target(first),
+            Some(Target::Direct("93.184.216.34:7447".parse().unwrap()))
+        );
+        let after = dialing
+            .next_hint(&queue, std::slice::from_ref(first))
+            .unwrap();
+        assert!(matches!(dialing.target(after), Some(Target::Relayed(_))));
     }
 }

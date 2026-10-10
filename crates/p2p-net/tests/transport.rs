@@ -1343,3 +1343,104 @@ fn a_relay_address_the_policy_forbids_is_never_dialed() {
         }
     });
 }
+
+fn bind_again(address: std::net::SocketAddr) -> std::net::TcpListener {
+    (0..100)
+        .find_map(|_| {
+            std::net::TcpListener::bind(address).ok().or_else(|| {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                None
+            })
+        })
+        .expect("the port is free again")
+}
+
+#[test]
+fn a_member_whose_relay_drops_holds_a_new_slot_within_two_retries_and_is_reachable_again() {
+    let relay = Relay::start("127.0.0.1:0", quiet()).unwrap();
+    let address = relay.local_addr();
+    let (node, first) = behind_nat(served(vec![0x33; 200 * 1024]), address);
+    let lost = std::time::Instant::now();
+    drop(relay);
+
+    // While the relay is away something else holds the port and only counts
+    // the attempts to reach it, closing each at once.
+    let outage = bind_again(address);
+    outage.set_nonblocking(true).unwrap();
+    let attempts = {
+        let mut counted = 0;
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(2500);
+        while std::time::Instant::now() < until {
+            if outage.accept().is_ok() {
+                counted += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        counted
+    };
+    drop(outage);
+    assert!(
+        attempts <= 2,
+        "at most two retries during the outage, saw {attempts}"
+    );
+
+    let back = (0..100)
+        .find_map(|_| {
+            Relay::start(&address.to_string(), quiet())
+                .ok()
+                .or_else(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    None
+                })
+        })
+        .expect("the relay comes back");
+    let second = next_relayed(&node);
+    assert_ne!(second.slot, first.slot, "a new reservation, a new slot");
+    assert!(
+        lost.elapsed() < std::time::Duration::from_secs(12),
+        "held again in the normal cadence: {:?}",
+        lost.elapsed()
+    );
+    block_on(async {
+        let fetched = fetch(&member_view(), &second.to_string()).await.unwrap();
+        assert_eq!(fetched.snapshot.len(), 200 * 1024);
+    });
+    assert_eq!(back.stats().reservations, 1);
+}
+
+#[test]
+fn quitting_releases_the_slot_and_the_freed_place_goes_to_the_next_node() {
+    let relay = Relay::start(
+        "127.0.0.1:0",
+        RelayLimits {
+            max_reservations: 1,
+            ..quiet()
+        },
+    )
+    .unwrap();
+    let (first_node, first) = behind_nat(served(vec![1; 1000]), relay.local_addr());
+    assert_eq!(relay.stats().reservations, 1);
+
+    // The relay is full: a second node is turned away, and keeps trying.
+    let provider = served(vec![2; 1000]);
+    let second_node = Service::start(None, Arc::clone(&provider)).unwrap();
+    assert!(second_node.hold_relay(provider, relay.local_addr()));
+    let started = std::time::Instant::now();
+    while relay.stats().busy == 0 && started.elapsed().as_secs() < 30 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(relay.stats().busy >= 1, "the relay said it is full");
+    assert_eq!(relay.stats().reservations, 1);
+
+    // Quitting the first node frees its place, and the relay says so.
+    drop(first_node);
+    let started = std::time::Instant::now();
+    let second = next_relayed(&second_node);
+    assert!(started.elapsed().as_secs() < 30);
+    assert_ne!(second.slot, first.slot);
+    assert_eq!(relay.stats().reservations, 1, "one slot held, the new one");
+    block_on(async {
+        let (_stream, answer) = claim(relay.local_addr(), RelayType::Connect, first.slot).await;
+        assert_eq!(answer, Some(RelayType::Refused), "the old slot is gone");
+    });
+}

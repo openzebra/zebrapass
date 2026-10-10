@@ -72,7 +72,10 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
             .prefs
             .as_ref()
             .and_then(|prefs| prefs.p2p_advertise.clone());
-        P2p::start(base, Arc::clone(&identity), listen, advertise, beacon)
+        P2p::start(base, Arc::clone(&identity), listen, advertise, beacon).map(|mut p2p| {
+            p2p.relays = saved_relays(vault.meta.prefs.as_ref());
+            p2p
+        })
     } else {
         None
     };
@@ -111,11 +114,21 @@ pub fn check_in(p2p: &P2p, item: &SharedItem) {
     if !item.ready() {
         return;
     }
-    p2p.service.check_in(
-        Arc::clone(&p2p.provider),
-        item.reference.vault_id,
-        item.reference.hints.clone(),
-    );
+    let mut hints = item.reference.hints.clone();
+    for relay in &p2p.relays {
+        if !hints.contains(relay) {
+            hints.push(relay.clone());
+        }
+    }
+    p2p.service
+        .check_in(Arc::clone(&p2p.provider), item.reference.vault_id, hints);
+}
+
+/// The relay slots saved in `prefs`, as text.
+fn saved_relays(prefs: Option<&local::Prefs>) -> Vec<String> {
+    prefs.map_or_else(Vec::new, |prefs| {
+        prefs.p2p_relays.iter().map(ToString::to_string).collect()
+    })
 }
 
 const fn reason_text(reason: FetchError) -> &'static str {
@@ -160,7 +173,11 @@ impl Unlocked {
             self.listen_mode(),
             self.advertised().map(Box::from),
             self.beacon,
-        );
+        )
+        .map(|mut p2p| {
+            p2p.relays = saved_relays(self.info.prefs.as_ref());
+            p2p
+        });
         if let Some(p2p) = self.p2p.as_deref() {
             if let Some(vault) = self.vault.as_deref() {
                 p2p.serve_personal(vault);
@@ -320,14 +337,22 @@ impl Unlocked {
                 Event::PersonalPulled { frames, .. } => self.apply_pulled(&frames, ctx),
                 Event::PeerConnected { .. } | Event::PeerGone { .. } => ctx.redraw(),
                 Event::Observed(seen) => self.observe(seen),
-                Event::Discovered { address, .. } => {
+                Event::Discovered {
+                    address, relays, ..
+                } => {
                     if let Some(p2p) = self.p2p.as_deref_mut() {
                         p2p.discover(address);
+                        for hint in &relays {
+                            p2p.discover_relay(hint);
+                        }
                     }
                     ctx.redraw();
                 }
-                // TODO(relay-ui): no setting names a relay yet, so none is held.
-                Event::Relayed(_) | Event::Listening(_) => {}
+                Event::Relayed(hint) => {
+                    self.note_relayed(hint);
+                    ctx.redraw();
+                }
+                Event::Listening(_) => {}
             }
         }
     }

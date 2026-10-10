@@ -140,7 +140,15 @@ fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
         Listen::Local => "this device only",
         Listen::Off => "fetch only",
     };
+    let relayed = state
+        .p2p
+        .as_deref()
+        .is_some_and(|p2p| p2p.relayed.is_some());
     let (text, style) = match state.p2p.as_deref().map(|p2p| p2p.service.local_addr()) {
+        Some(Some(addr)) if relayed => (
+            format!("{} listening {addr} · {mode} · via relay", theme.glyphs.on),
+            theme.accent(),
+        ),
         Some(Some(addr)) => (
             format!("{} listening {addr} · {mode}", theme.glyphs.on),
             theme.accent(),
@@ -212,6 +220,17 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
         ]));
     }
     lines.extend(observed_line(state, theme));
+    if let Some(saved) = state
+        .p2p
+        .as_deref()
+        .map(|p2p| p2p.relays.len())
+        .filter(|n| *n > 0)
+    {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{INDENT}{:<14}", "relays"), theme.muted()),
+            Span::styled(format!("{saved} saved  ·  v to add another"), theme.text()),
+        ]));
+    }
     if state.identity_is_old() {
         lines.push(Line::from(vec![
             Span::styled(format!("{INDENT}{:<14}", "identity"), theme.muted()),
@@ -440,6 +459,7 @@ fn step_lines(
         Step::RekeyConfirm => rekey_confirm_lines(&vault_name, theme),
         Step::Advertise(input) => advertise_lines(input, width, theme),
         Step::Upgrade(prompt) => crate::ui::screens::sync_upgrade::upgrade_lines(prompt, theme),
+        Step::Relay(input) => crate::ui::screens::sync_relay::relay_lines(input, width, theme),
         Step::PasteInvite => prompt(
             "join a shared vault",
             "Paste the invitation you were given.",

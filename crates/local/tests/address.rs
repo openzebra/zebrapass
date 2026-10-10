@@ -235,3 +235,42 @@ fn an_observed_address_is_offered_only_when_it_could_be_advertised() {
     );
     assert_eq!(offer_observed(seen("127.0.0.1:5"), 0), Offer::Unusable);
 }
+
+#[test]
+fn a_pasted_relay_slot_is_the_exact_form_of_a_reachable_relay() {
+    use local::parse_relay_hint;
+    let slot = "ab".repeat(16);
+    let ok = |text: &str| parse_relay_hint(text).unwrap().to_string();
+    assert_eq!(
+        ok(&format!("93.184.216.34:7447/{slot}")),
+        format!("93.184.216.34:7447/{slot}")
+    );
+    assert_eq!(
+        ok(&format!("  [2606:2800:220:1::1]:7447/{slot} \n")),
+        format!("[2606:2800:220:1::1]:7447/{slot}"),
+        "surrounding space goes"
+    );
+    assert!(
+        parse_relay_hint(&format!("127.0.0.1:7447/{slot}")).is_ok(),
+        "loopback is the person's choice"
+    );
+    assert!(parse_relay_hint(&format!("192.168.1.5:7447/{slot}")).is_ok());
+    for bad in [
+        String::new(),
+        "93.184.216.34:7447".to_owned(),
+        format!("93.184.216.34/{slot}"),
+        format!("93.184.216.34:0/{slot}"),
+        format!("93.184.216.34:7447/{}", slot.to_uppercase()),
+        format!("93.184.216.34:7447/{}", &slot[..30]),
+        format!("93.184.216.34:7447/{slot}00"),
+        format!("example.com:7447/{slot}"),
+        format!("169.254.169.254:80/{slot}"),
+        format!("0.0.0.0:7447/{slot}"),
+        format!("224.0.0.1:7447/{slot}"),
+        format!("[fe80::1]:7447/{slot}"),
+        format!("203.0.113.9:7447/{slot}"),
+        format!("93.184.216.34:7447/{slot}/{slot}"),
+    ] {
+        assert!(parse_relay_hint(&bad).is_err(), "{bad:?}");
+    }
+}

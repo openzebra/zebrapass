@@ -30,22 +30,27 @@ pub fn pull_personal(p2p: &P2p, vault: &Vault) {
         .ok()
         .and_then(|key| load_personal_peers(&vault.paths.peers_store(), &key, loopback).ok())
         .unwrap_or_default();
-    let addresses: Vec<_> = remembered
-        .iter()
-        .map(ToString::to_string)
-        .chain(
-            p2p.discovered
-                .iter()
-                .filter(|found| !remembered.iter().any(|known| &known.to_string() == *found))
-                .cloned(),
-        )
-        .collect();
+    let mut addresses: Vec<String> = remembered.iter().map(ToString::to_string).collect();
+    for found in p2p.discovered.iter().chain(&p2p.relays) {
+        if !addresses.contains(found) {
+            addresses.push(found.clone());
+        }
+    }
     if addresses.is_empty() {
         return;
     }
     let dialing = Dialing {
         policy: Policy { loopback },
-        trusted: addresses.iter().filter_map(|a| a.parse().ok()).collect(),
+        trusted: addresses
+            .iter()
+            .filter_map(|text| {
+                text.parse().ok().or_else(|| {
+                    text.parse::<p2p_net::RelayHint>()
+                        .ok()
+                        .map(|hint| hint.relay)
+                })
+            })
+            .collect(),
     };
     let (Some(view), Ok(mine)) = (
         personal_view(&p2p.identity, dialing),

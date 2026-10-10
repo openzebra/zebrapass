@@ -31,7 +31,9 @@ use aead::BodyAlg;
 use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
-pub use address::{never_dialable, offer_observed, parse_advertise, parse_peer_address, Offer};
+pub use address::{
+    never_dialable, offer_observed, parse_advertise, parse_peer_address, parse_relay_hint, Offer,
+};
 pub use atomic::write_atomic;
 pub use attest_store::AttestStore;
 pub use device_key::{
@@ -41,7 +43,8 @@ pub use device_key::{
 pub use last_seen::LastSeen;
 pub use limits::{
     CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S, ORIGIN_MAX, PEERS_MAX,
-    PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN, REVEAL_HIDE_S, REVOKED_MAX, SHARED_NAME_MAX,
+    PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX,
+    SHARED_NAME_MAX,
 };
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 pub use peer_store::{load_peers, save_peers};

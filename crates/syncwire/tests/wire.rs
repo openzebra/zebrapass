@@ -594,35 +594,91 @@ fn a_personal_frame_round_trips_and_is_strict() {
 }
 
 mod beacon {
-    use syncwire::{decode_beacon, encode_beacon, Beacon, BEACON_WIRE_MAX, MAX_BEACON_VAULTS};
+    use syncwire::{
+        decode_beacon, encode_beacon, Beacon, RelayHint, BEACON_WIRE_MAX, MAX_BEACON_RELAYS,
+        MAX_BEACON_VAULTS,
+    };
+
+    fn relay(n: u8) -> RelayHint {
+        RelayHint {
+            relay: format!("203.0.113.{n}:7447").parse().unwrap(),
+            slot: [n; 16],
+        }
+    }
 
     fn sample() -> Beacon {
         Beacon {
             vaults: vec![[0xA1; 16], [0xB2; 16]],
+            relays: Vec::new(),
             port: 0x1D17,
         }
     }
 
     #[test]
-    fn golden_layout() {
+    fn golden_layout_of_version_two_without_a_relay() {
         let bytes = encode_beacon(&sample()).unwrap();
-        assert_eq!(&bytes[..6], b"ZPBC\x00\x01");
+        assert_eq!(&bytes[..6], b"ZPBC\x00\x02");
         assert_eq!(&bytes[6..8], &[0x1D, 0x17], "port, big-endian");
         assert_eq!(bytes[8], 2, "vault count");
         assert_eq!(&bytes[9..25], &[0xA1; 16]);
         assert_eq!(&bytes[25..41], &[0xB2; 16]);
-        assert_eq!(bytes.len(), 41);
+        assert_eq!(bytes[41], 0, "relay count");
+        assert_eq!(bytes.len(), 42);
         assert_eq!(decode_beacon(&bytes).unwrap(), sample());
+    }
+
+    #[test]
+    fn golden_layout_with_relay_slots_after_the_vault_ids() {
+        let beacon = Beacon {
+            relays: vec![relay(9), relay(10)],
+            ..sample()
+        };
+        let bytes = encode_beacon(&beacon).unwrap();
+        assert_eq!(bytes[41], 2, "relay count");
+        let first = relay(9).to_string();
+        assert_eq!(
+            usize::from(bytes[42]),
+            first.len(),
+            "length of the first hint"
+        );
+        assert_eq!(&bytes[43..43 + first.len()], first.as_bytes());
+        let second_at = 43 + first.len();
+        let second = relay(10).to_string();
+        assert_eq!(usize::from(bytes[second_at]), second.len());
+        assert_eq!(
+            &bytes[second_at + 1..second_at + 1 + second.len()],
+            second.as_bytes()
+        );
+        assert_eq!(bytes.len(), second_at + 1 + second.len());
+        assert_eq!(decode_beacon(&bytes).unwrap(), beacon);
+    }
+
+    #[test]
+    fn the_longest_beacon_is_the_bound() {
+        let ipv6 = RelayHint {
+            relay: "[2001:4860:4860:1234:5678:9abc:def0:1234]:65535"
+                .parse()
+                .unwrap(),
+            slot: [0xFF; 16],
+        };
+        assert!(ipv6.to_string().len() <= session::MAX_HINT_LEN);
         let most = Beacon {
             vaults: vec![[1; 16]; MAX_BEACON_VAULTS],
+            relays: vec![ipv6; MAX_BEACON_RELAYS],
             port: 1,
         };
-        assert_eq!(encode_beacon(&most).unwrap().len(), BEACON_WIRE_MAX);
+        let bytes = encode_beacon(&most).unwrap();
+        assert!(bytes.len() <= BEACON_WIRE_MAX);
+        assert_eq!(decode_beacon(&bytes).unwrap(), most);
     }
 
     #[test]
     fn strict_decode() {
-        let bytes = encode_beacon(&sample()).unwrap();
+        let beacon = Beacon {
+            relays: vec![relay(9)],
+            ..sample()
+        };
+        let bytes = encode_beacon(&beacon).unwrap();
         for len in 0..bytes.len() {
             assert!(decode_beacon(&bytes[..len]).is_err(), "cut at {len}");
         }
@@ -633,31 +689,53 @@ mod beacon {
         bad[0] ^= 1;
         assert!(decode_beacon(&bad).is_err(), "magic");
         let mut bad = bytes.clone();
-        bad[5] = 2;
-        assert!(decode_beacon(&bad).is_err(), "version");
+        bad[5] = 1;
+        assert!(decode_beacon(&bad).is_err(), "no parser for version one");
         let mut bad = bytes.clone();
         bad[6..8].copy_from_slice(&[0, 0]);
         assert!(decode_beacon(&bad).is_err(), "no port");
         let mut bad = bytes.clone();
         bad[8] = 0;
         assert!(decode_beacon(&bad).is_err(), "no vaults");
-        let mut bad = bytes;
+        let mut bad = bytes.clone();
         bad[8] = 255;
         assert!(decode_beacon(&bad).is_err(), "a count over the bound");
-        assert!(encode_beacon(&Beacon {
-            vaults: vec![],
-            port: 1
-        })
-        .is_err());
-        assert!(encode_beacon(&Beacon {
-            vaults: vec![[0; 16]],
-            port: 0
-        })
-        .is_err());
-        assert!(encode_beacon(&Beacon {
-            vaults: vec![[0; 16]; MAX_BEACON_VAULTS + 1],
-            port: 1
-        })
+        let mut bad = bytes.clone();
+        bad[41] = 3;
+        assert!(decode_beacon(&bad).is_err(), "three relays");
+        let mut bad = bytes.clone();
+        bad[42] = 97;
+        assert!(decode_beacon(&bad).is_err(), "a hint over the bound");
+        let mut bad = bytes.clone();
+        bad[43] = b'x';
+        assert!(
+            decode_beacon(&bad).is_err(),
+            "a hint that is not an address"
+        );
+        let mut upper = bytes;
+        let last = upper.len() - 1;
+        upper[last] = b'A';
+        assert!(
+            decode_beacon(&upper).is_err(),
+            "slot digits are lowercase only"
+        );
+    }
+
+    #[test]
+    fn the_encoder_refuses_what_the_decoder_would() {
+        let bare = |vaults: Vec<[u8; 16]>, port: u16, relays: Vec<RelayHint>| Beacon {
+            vaults,
+            relays,
+            port,
+        };
+        assert!(encode_beacon(&bare(vec![], 1, vec![])).is_err());
+        assert!(encode_beacon(&bare(vec![[0; 16]], 0, vec![])).is_err());
+        assert!(encode_beacon(&bare(vec![[0; 16]; MAX_BEACON_VAULTS + 1], 1, vec![])).is_err());
+        assert!(encode_beacon(&bare(
+            vec![[0; 16]],
+            1,
+            vec![relay(1); MAX_BEACON_RELAYS + 1]
+        ))
         .is_err());
     }
 }

@@ -90,6 +90,8 @@ pub enum Event {
     Discovered {
         address: SocketAddr,
         vaults: Vec<[u8; 16]>,
+        /// Relay slots it holds, each already past the address rules.
+        relays: Vec<syncwire::RelayHint>,
     },
     /// This node holds a slot on a relay: members can reach it at `hint`.
     /// Publish it with the node's other addresses.
@@ -119,6 +121,8 @@ pub struct Shared {
     pub(crate) relayed: AtomicUsize,
     pub(crate) tickets: Arc<Tickets>,
     listening: Mutex<Option<SocketAddr>>,
+    /// The relay slots this node holds now, to announce.
+    pub relay_hints: Mutex<Vec<syncwire::RelayHint>>,
     replay: Mutex<Replay>,
 }
 
@@ -209,6 +213,7 @@ impl Service {
             relayed: AtomicUsize::new(0),
             tickets: Tickets::new(limits),
             listening: Mutex::new(None),
+            relay_hints: Mutex::new(Vec::new()),
             replay: Mutex::new(Replay::default()),
         });
         if let Some(listen) = listen {

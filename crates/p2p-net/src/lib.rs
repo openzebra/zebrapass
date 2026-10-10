@@ -46,5 +46,5 @@ pub use service::{reachable_hints, Event, Service, Status};
 pub use shared::SharedProvider;
 pub use shared_join::{finish_join, Joined, Known};
 pub use sync::Moved;
-pub use syncwire::Announce;
+pub use syncwire::{Announce, RelayHint};
 pub use view::{Provider, SnapshotSource, VaultView};

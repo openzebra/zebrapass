@@ -29,6 +29,7 @@ pub mod share_file;
 pub mod share_leave;
 pub mod share_ops;
 pub mod share_rekey;
+pub mod share_relay;
 pub mod share_remove;
 pub mod share_role;
 pub mod share_upgrade;

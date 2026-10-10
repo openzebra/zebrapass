@@ -7,6 +7,7 @@
     clippy::indexing_slicing,
     clippy::too_many_lines,
     clippy::panic,
+    clippy::significant_drop_tightening,
     reason = "tests may unwrap and index"
 )]
 
@@ -18,10 +19,10 @@ use local::SyncIdentity;
 use p2p_core::seal_beacon;
 use p2p_net::{
     now_ms, personal_view, BeaconConfig, BeaconIdentity, Conn, Dialing, Event, FetchError, Policy,
-    Provider, Service, SnapshotSource, VaultView,
+    Provider, Relay, RelayLimits, Service, SnapshotSource, VaultView,
 };
 use secret::Secret;
-use syncwire::{encode_beacon, Beacon};
+use syncwire::{encode_beacon, Beacon, RelayHint};
 
 const SEED: [u8; 64] = [3; 64];
 
@@ -76,6 +77,7 @@ fn gate(seed: &[u8; 64]) -> Secret<[u8; 32]> {
 
 struct Peer {
     identity: Arc<SyncIdentity>,
+    provider: Arc<Node>,
     service: Service,
     tcp: SocketAddr,
 }
@@ -86,26 +88,44 @@ fn start(seed: &[u8; 64], id: u8, bind: u16, send_to: u16, loopback: bool) -> Pe
     let service = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
     let beacon = BeaconIdentity::new(&gate(seed), [id; 16]).unwrap();
     service
-        .start_beacon(provider, beacon, config(bind, send_to, loopback))
+        .start_beacon(
+            Arc::clone(&provider),
+            beacon,
+            config(bind, send_to, loopback),
+        )
         .unwrap();
     let tcp = service.local_addr().unwrap();
     Peer {
         identity,
+        provider,
         service,
         tcp,
     }
 }
 
-fn discovered(service: &Service, within: Duration) -> Option<(SocketAddr, Vec<[u8; 16]>)> {
+fn discovered_with_relays(
+    service: &Service,
+    within: Duration,
+    wanted: impl Fn(&[RelayHint]) -> bool,
+) -> Option<(SocketAddr, Vec<[u8; 16]>, Vec<RelayHint>)> {
     let until = Instant::now() + within;
     while Instant::now() < until {
-        if let Ok(Event::Discovered { address, vaults }) =
-            service.events().recv_timeout(Duration::from_millis(100))
+        if let Ok(Event::Discovered {
+            address,
+            vaults,
+            relays,
+        }) = service.events().recv_timeout(Duration::from_millis(100))
         {
-            return Some((address, vaults));
+            if wanted(&relays) {
+                return Some((address, vaults, relays));
+            }
         }
     }
     None
+}
+
+fn discovered(service: &Service, within: Duration) -> Option<(SocketAddr, Vec<[u8; 16]>)> {
+    discovered_with_relays(service, within, |_| true).map(|(address, vaults, _)| (address, vaults))
 }
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -159,6 +179,7 @@ fn nothing_but_a_fresh_sealed_beacon_of_another_device_is_heard() {
     let to = SocketAddr::from(([127, 0, 0, 1], pb));
     let good = encode_beacon(&Beacon {
         vaults: vec![[5; 16]],
+        relays: Vec::new(),
         port: 4000,
     })
     .unwrap();
@@ -228,4 +249,71 @@ fn a_node_that_is_not_listening_cannot_announce() {
     assert!(service
         .start_beacon(provider, beacon, config(free_udp_port(), 1, true))
         .is_err());
+}
+
+#[test]
+fn a_node_that_holds_a_relay_slot_announces_it_to_the_account() {
+    let (pa, pb) = (free_udp_port(), free_udp_port());
+    let a = start(&SEED, 1, pa, pb, true);
+    let b = start(&SEED, 2, pb, pa, true);
+    let relay = Relay::start(
+        "127.0.0.1:0",
+        RelayLimits {
+            difficulty_idle: 4,
+            ..RelayLimits::default()
+        },
+    )
+    .unwrap();
+    assert!(a
+        .service
+        .hold_relay(Arc::clone(&a.provider), relay.local_addr()));
+    let hint = loop {
+        if let Ok(Event::Relayed(hint)) = a.service.events().recv_timeout(Duration::from_secs(30)) {
+            break hint;
+        }
+    };
+    let (address, _, relays) =
+        discovered_with_relays(&b.service, Duration::from_secs(20), |held| !held.is_empty())
+            .expect("the beacon names the slot");
+    assert_eq!(address, a.tcp);
+    assert_eq!(relays, [hint]);
+}
+
+#[test]
+fn a_relay_hint_in_a_beacon_passes_the_address_rules_like_any_other_address() {
+    let (pa, pb) = (free_udp_port(), free_udp_port());
+    let b = start(&SEED, 2, pb, pa, false);
+    let key = kdf::p2p_beacon_key(&gate(&SEED)).unwrap();
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let slot = [7u8; 16];
+    let hint = |text: &str| RelayHint {
+        relay: text.parse().unwrap(),
+        slot,
+    };
+    let beacon = encode_beacon(&Beacon {
+        vaults: vec![[5; 16]],
+        relays: vec![hint("93.184.216.34:7447"), hint("169.254.169.254:7447")],
+        port: 4000,
+    })
+    .unwrap();
+    let sealed = seal_beacon(&key, [3; 16], now_ms(), &beacon).unwrap();
+    // The sender is on this machine, so a node that does not opt in to
+    // loopback ignores the whole beacon; one that does keeps only the hints
+    // that could ever be dialed.
+    socket
+        .send_to(&sealed, SocketAddr::from(([127, 0, 0, 1], pb)))
+        .unwrap();
+    assert!(discovered(&b.service, Duration::from_secs(2)).is_none());
+    let (pc, pd) = (free_udp_port(), free_udp_port());
+    let c = start(&SEED, 4, pd, pc, true);
+    socket
+        .send_to(&sealed, SocketAddr::from(([127, 0, 0, 1], pd)))
+        .unwrap();
+    let (_, _, relays) =
+        discovered_with_relays(&c.service, Duration::from_secs(10), |_| true).unwrap();
+    assert_eq!(
+        relays,
+        [hint("93.184.216.34:7447")],
+        "link-local is dropped"
+    );
 }

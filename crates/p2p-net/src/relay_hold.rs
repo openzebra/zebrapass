@@ -61,10 +61,9 @@ async fn hold<P: Provider>(
         };
         if let Ok((stream, granted)) = reserve(relay, slot).await {
             backoff = Duration::from_secs(1);
-            if events
-                .send(Event::Relayed(RelayHint { relay, slot }))
-                .is_err()
-            {
+            let hint = RelayHint { relay, slot };
+            publish(&shared, relay, Some(hint));
+            if events.send(Event::Relayed(hint)).is_err() {
                 return;
             }
             let wait = Duration::from_secs(u64::from(granted.ttl_s / 3).max(1));
@@ -82,9 +81,19 @@ async fn hold<P: Provider>(
             )
             .await;
         }
+        publish(&shared, relay, None);
         let jitter = p2p_core::relay_random().map_or(0, |bytes| u64::from(bytes[0]) * 4);
         sleep(backoff + Duration::from_millis(jitter)).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// Record the slot this node holds on `relay`, or that it holds none: what a
+/// beacon announces.
+fn publish(shared: &Shared, relay: SocketAddr, hint: Option<RelayHint>) {
+    if let Ok(mut held) = shared.relay_hints.lock() {
+        held.retain(|known| known.relay != relay);
+        held.extend(hint);
     }
 }
 

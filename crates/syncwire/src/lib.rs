@@ -28,7 +28,7 @@ pub use attestation::{
 };
 pub use beacon::{
     decode_beacon, encode_beacon, Beacon, BEACON_MAGIC, BEACON_WIRE_MAX, BEACON_WIRE_VERSION,
-    MAX_BEACON_VAULTS,
+    MAX_BEACON_RELAYS, MAX_BEACON_VAULTS,
 };
 pub use cert::{decode_cert, encode_cert, CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION};
 pub use mux::{Direction, Header, MsgType};

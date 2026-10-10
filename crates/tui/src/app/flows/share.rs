@@ -63,6 +63,8 @@ pub enum Step {
     Advertise(TextInput),
     /// The account's phrase, typed to upgrade an old sync identity.
     Upgrade(Box<crate::app::flows::share_upgrade::UpgradePrompt>),
+    /// Writing or pasting a relay slot to dial through.
+    Relay(TextInput),
     /// Waiting for a pasted invitation.
     PasteInvite,
     /// An opened invitation: check who it is from and which vault.
@@ -180,6 +182,10 @@ impl Unlocked {
                 input.insert_str(text);
                 Step::Advertise(input)
             }
+            Step::Relay(mut input) => {
+                input.insert_str(text);
+                Step::Relay(input)
+            }
             other => other,
         };
         if let Some(share) = self.share_mut() {
@@ -266,6 +272,7 @@ impl Unlocked {
             Step::RekeyConfirm => Next::Stay(self.rekey_step(action, ctx)),
             Step::Advertise(input) => Next::Stay(self.advertise_step(input, action, event, ctx)),
             Step::Upgrade(prompt) => Next::Stay(self.upgrade_step(prompt, action, event, ctx)),
+            Step::Relay(input) => Next::Stay(self.relay_step(input, action, event, ctx)),
             Step::RemoveConfirm {
                 target,
                 print,
@@ -307,6 +314,7 @@ impl Unlocked {
             Some(Action::ShareAdvertise) => return Next::Stay(self.begin_advertise()),
             Some(Action::ShareFillObserved) => return Next::Stay(self.begin_fill_observed(ctx)),
             Some(Action::ShareUpgrade) => return Next::Stay(self.begin_upgrade(ctx)),
+            Some(Action::ShareRelay) => return Next::Stay(Self::begin_relay()),
             Some(Action::ShareRetry) => self.retry_selected(ctx),
             Some(Action::ShareListen) => self.cycle_listen(ctx),
             _ => {}

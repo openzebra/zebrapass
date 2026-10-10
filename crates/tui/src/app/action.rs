@@ -212,6 +212,8 @@ actions! {
     ShareFillObserved,
     /// Upgrade this device's sync identity.
     ShareUpgrade,
+    /// Paste a relay address.
+    ShareRelay,
 }
 
 /// Where a palette entry is listed.

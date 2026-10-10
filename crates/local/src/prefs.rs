@@ -8,14 +8,14 @@
 
 use record::{
     Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER,
-    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_LISTEN, TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN,
-    TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE, TAG_PREF_THEME,
+    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_LISTEN, TAG_PREF_P2P_RELAYS, TAG_PREF_REVEAL_HIDE,
+    TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE, TAG_PREF_THEME,
 };
 
-use crate::address::parse_advertise;
-use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
+use crate::address::{parse_advertise, parse_relay_hint};
+use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, RELAYS_MAX, REVEAL_HIDE_S};
 
-const TAGS: [u16; 10] = [
+const TAGS: [u16; 11] = [
     TAG_PREF_LOCK_AFTER,
     TAG_PREF_CLIP_CLEAR,
     TAG_PREF_REVEAL_HIDE,
@@ -26,6 +26,7 @@ const TAGS: [u16; 10] = [
     TAG_PREF_SERVER_PIN,
     TAG_PREF_P2P_LISTEN,
     TAG_PREF_P2P_ADVERTISE,
+    TAG_PREF_P2P_RELAYS,
 ];
 
 const FLAG_ANIM: u8 = 1;
@@ -151,6 +152,9 @@ pub struct Prefs {
     /// The address, as `ip:port`, this device offers other members when it
     /// sits behind a port forward; validated by [`parse_advertise`].
     pub p2p_advertise: Option<Box<str>>,
+    /// Relay slots, as `ip:port/slot`, this device was told about and may
+    /// dial through; each validated by [`parse_relay_hint`], at most four.
+    pub p2p_relays: Vec<Box<str>>,
 }
 
 impl Default for Prefs {
@@ -168,6 +172,7 @@ impl Default for Prefs {
             focus_lock: false,
             p2p_listen: Listen::Lan,
             p2p_advertise: None,
+            p2p_relays: Vec::new(),
         }
     }
 }
@@ -200,6 +205,9 @@ impl Prefs {
         );
         if let Some(address) = self.p2p_advertise.as_deref() {
             doc.set_text(TAG_PREF_P2P_ADVERTISE, address);
+        }
+        if !self.p2p_relays.is_empty() {
+            doc.set_text(TAG_PREF_P2P_RELAYS, &self.p2p_relays.join("\n"));
         }
         if let Some(origin) = self.server_origin.as_deref() {
             doc.set_text(TAG_PREF_SERVER_ORIGIN, origin);
@@ -251,6 +259,19 @@ impl Prefs {
             .text(TAG_PREF_P2P_ADVERTISE)?
             .map(|address| parse_advertise(address).map_err(|_| out_of_range()))
             .transpose()?;
+        let p2p_relays = doc
+            .text(TAG_PREF_P2P_RELAYS)?
+            .map(|lines| {
+                lines
+                    .split('\n')
+                    .map(|line| parse_relay_hint(line).map_err(|_| out_of_range()))
+                    .collect::<anyhow::Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        if p2p_relays.len() > RELAYS_MAX {
+            return Err(out_of_range());
+        }
         Ok(Self {
             server_origin,
             server_key_pin,
@@ -265,6 +286,7 @@ impl Prefs {
             p2p_listen: byte(doc, TAG_PREF_P2P_LISTEN)?
                 .map_or(Ok(defaults.p2p_listen), Listen::try_from)?,
             p2p_advertise,
+            p2p_relays,
         })
     }
 
@@ -365,6 +387,7 @@ mod tests {
             focus_lock: true,
             p2p_listen: Listen::Off,
             p2p_advertise: Some("93.184.216.34:7447".into()),
+            p2p_relays: vec![format!("93.184.216.35:7447/{}", "ab".repeat(16)).into()],
         }
     }
 

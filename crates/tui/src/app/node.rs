@@ -39,6 +39,10 @@ pub struct P2p {
     pub observed: Option<Offer>,
     /// Addresses other devices of the account announced on the network.
     pub discovered: Vec<String>,
+    /// Relay slots the person saved, as `ip:port/slot`.
+    pub relays: Vec<String>,
+    /// The latest relay slot this node holds, when it holds one.
+    pub relayed: Option<p2p_net::RelayHint>,
     checked: Instant,
 }
 
@@ -87,6 +91,8 @@ impl P2p {
             reachable: Box::default(),
             observed: None,
             discovered: Vec::new(),
+            relays: Vec::new(),
+            relayed: None,
             checked: Instant::now(),
         });
         let hints = node.hints();
@@ -115,7 +121,19 @@ impl P2p {
 
     /// Remember an address another device announced; the newest few stay.
     pub fn discover(&mut self, address: std::net::SocketAddr) {
-        let address = address.to_string();
+        self.remember(address.to_string());
+    }
+
+    /// Remember a relay slot another device announced, if it passes the same
+    /// rules a pasted one does.
+    pub fn discover_relay(&mut self, hint: &p2p_net::RelayHint) {
+        let text = hint.to_string();
+        if local::parse_relay_hint(&text).is_ok() {
+            self.remember(text);
+        }
+    }
+
+    fn remember(&mut self, address: String) {
         self.discovered.retain(|known| known != &address);
         self.discovered.push(address);
         if self.discovered.len() > MAX_DISCOVERED {

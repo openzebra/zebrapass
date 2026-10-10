@@ -66,6 +66,27 @@ pub fn parse_peer_address(input: &str, allow_loopback: bool) -> Result<Box<str>,
     Ok(address.to_string().into_boxed_str())
 }
 
+/// Validate a relay slot a person pasted: `ip:port/slot`.
+///
+/// It must be in exactly the form a peer record carries it, with a relay
+/// address that could ever be a peer. Loopback is allowed because the person
+/// chose it. Returns it written canonically.
+///
+/// # Errors
+///
+/// A short reason the interface can show as is.
+pub fn parse_relay_hint(input: &str) -> Result<Box<str>, &'static str> {
+    const SHAPE: &str = "Write it as ip:port/slot, the way another device shows it.";
+    let text = input.trim();
+    let hint: syncwire::RelayHint = text.parse().map_err(|_| SHAPE)?;
+    if hint.to_string() != text {
+        return Err(SHAPE);
+    }
+    parse_peer_address(&hint.relay.to_string(), true)
+        .map_err(|_| "Other devices cannot reach that relay.")?;
+    Ok(text.into())
+}
+
 /// What to do with the address a peer reports having seen this device at.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Offer {
