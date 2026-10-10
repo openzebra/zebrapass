@@ -13,6 +13,7 @@ mod beacon;
 mod channel;
 mod handshake;
 mod mux;
+mod relay_pow;
 pub mod suite;
 mod wire;
 
@@ -22,6 +23,7 @@ pub use beacon::{open_beacon, seal_beacon, BEACON_WINDOW_MS, MAX_BEACON};
 pub use channel::{Channel, RecvHalf, SendHalf, Side, MAX_MESSAGES, MAX_PLAINTEXT, OVERHEAD};
 pub use handshake::{Accept, Established, Initiator, Responder};
 pub use mux::{Dispatcher, Done, Inbound, Message, Outcome, Reassembler, Reply};
+pub use relay_pow::{relay_pow_ok, relay_pow_solve, relay_random, RELAY_POW_DOMAIN};
 
 /// Offset of the kind byte in every handshake message.
 pub use suite::KIND_OFFSET;

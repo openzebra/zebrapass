@@ -91,6 +91,12 @@ fn increment_be(block: &mut [u8; BLOCK_LEN]) {
 }
 
 /// Tag is HMAC-SHA256(`k_bmac`, `IV ‖ ct ‖ AD`). The nonce is not copied into `AD`.
+///
+/// Accepted deviation (owner decision, 2026-10, Round D): the MAC input has no
+/// length framing. It is unambiguous because the IV and the AD are of fixed
+/// length in every caller and the ciphertext is the remainder. Framing it now
+/// would break reading every cascade frame already written, for no security
+/// gain.
 fn mac_tag(k_bmac: &[u8; 32], iv: &[u8], ct: &[u8], ad: &[u8]) -> anyhow::Result<[u8; TAG_LEN]> {
     // A 32-byte key is a legal HMAC key. The constructor still returns `Result`.
     let Ok(mut mac) = HmacSha256::new_from_slice(k_bmac) else {

@@ -8,7 +8,8 @@
     clippy::indexing_slicing,
     clippy::too_many_lines,
     clippy::panic,
-    reason = "tests may unwrap and index"
+    clippy::significant_drop_tightening,
+    reason = "tests may unwrap and index; a relay or a node lives for the whole test"
 )]
 
 use std::fmt::Write as _;
@@ -672,4 +673,42 @@ fn a_member_that_was_away_ends_with_the_same_frontier_through_any_member() {
     assert_eq!(frontier_of(&carol), frontier_of(&alice));
     assert_eq!(frontier_of(&carol), frontier_of(&bob));
     assert_eq!(carol.titles(), ["three", "two", "uno"]);
+}
+
+#[test]
+fn a_check_in_tries_direct_addresses_first_and_then_the_relay_slot() {
+    use p2p_net::{Relay, RelayLimits};
+    let [alice, bob, _] = trio();
+    alice.edit(Edit::Create(titled("wifi"))).unwrap();
+    let relay = Relay::start(
+        "127.0.0.1:0",
+        RelayLimits {
+            difficulty_idle: 4,
+            ..RelayLimits::default()
+        },
+    )
+    .unwrap();
+    // Alice is reachable only through a slot; the direct address in the list
+    // leads nowhere.
+    let behind = Service::start(None, Arc::clone(&alice.provider)).unwrap();
+    assert!(behind.hold_relay(Arc::clone(&alice.provider), relay.local_addr()));
+    let hint = loop {
+        if let Event::Relayed(hint) = behind.events().recv_timeout(WAIT).unwrap() {
+            break hint;
+        }
+    };
+    let hints = vec![hint.to_string(), "127.0.0.1:9".to_owned()];
+    bob.service
+        .check_in(Arc::clone(&bob.provider), bob.reference.vault_id, hints);
+    let pulled = loop {
+        match bob.service.events().recv_timeout(WAIT).unwrap() {
+            Event::Synced { pulled, .. } => break pulled,
+            Event::FetchFailed { reason, .. } => panic!("check-in failed: {reason}"),
+            _ => {}
+        }
+    };
+    assert_eq!(pulled, 1);
+    assert_eq!(bob.titles(), ["wifi"]);
+    assert_eq!(frontier_of(&bob), frontier_of(&alice));
+    assert!(relay.stats().spliced >= 1, "the slot was the way in");
 }

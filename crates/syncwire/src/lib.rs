@@ -17,6 +17,7 @@ mod peer;
 mod personal;
 pub mod reader;
 mod record;
+mod relay;
 mod revocation;
 mod snapshot;
 
@@ -39,6 +40,10 @@ pub use personal::{
     PERSONAL_FRAME_WIRE_VERSION,
 };
 pub use record::{decode_record, encode_record, RECORD_MAGIC, RECORD_WIRE_VERSION};
+pub use relay::{
+    decode_incoming, decode_open, encode_incoming, encode_open, Challenge, Claim, RelayHeader,
+    RelayHint, RelayType, Reserved, Side as RelaySide, RELAY_MAGIC, RELAY_WIRE_VERSION,
+};
 pub use revocation::{
     decode_revocation, encode_revocation, REVOCATION_MAGIC, REVOCATION_WIRE_LEN,
     REVOCATION_WIRE_VERSION,

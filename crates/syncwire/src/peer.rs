@@ -9,7 +9,7 @@ use crate::reader::Reader;
 /// First four bytes of an encoded list.
 pub const PEER_MAGIC: [u8; 4] = *b"ZPRP";
 /// Current wire version.
-pub const PEER_WIRE_VERSION: u16 = 1;
+pub const PEER_WIRE_VERSION: u16 = 2;
 /// Most records in one list.
 pub const MAX_PEERS: usize = 64;
 

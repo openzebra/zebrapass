@@ -33,4 +33,34 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(beacon) = syncwire::decode_beacon(data) {
         assert_eq!(syncwire::encode_beacon(&beacon).ok().as_deref(), Some(data));
     }
+    if let Some(bytes) = data.first_chunk::<{ syncwire::limits::RELAY_HEADER_LEN }>() {
+        for side in [syncwire::RelaySide::Client, syncwire::RelaySide::Relay] {
+            if let Ok(header) = syncwire::RelayHeader::decode(bytes, side) {
+                assert_eq!(header.encode(), *bytes);
+            }
+        }
+    }
+    if let Some(bytes) = data.first_chunk::<{ syncwire::limits::RELAY_OPEN_LEN }>() {
+        if syncwire::decode_open(bytes).is_ok() {
+            assert_eq!(syncwire::encode_open(), *bytes);
+        }
+    }
+    if let Ok(claim) = syncwire::Claim::try_from(data) {
+        assert_eq!(claim.encode(), data);
+    }
+    if let Ok(challenge) = syncwire::Challenge::try_from(data) {
+        assert_eq!(challenge.encode(), data);
+    }
+    if let Ok(granted) = syncwire::Reserved::try_from(data) {
+        assert_eq!(granted.encode(), data);
+    }
+    if let Ok(conn_id) = syncwire::decode_incoming(data) {
+        assert_eq!(syncwire::encode_incoming(&conn_id), data);
+    }
+    if let Some(hint) = std::str::from_utf8(data)
+        .ok()
+        .and_then(|text| text.parse::<syncwire::RelayHint>().ok())
+    {
+        assert_eq!(hint.to_string().parse::<syncwire::RelayHint>().ok(), Some(hint));
+    }
 });

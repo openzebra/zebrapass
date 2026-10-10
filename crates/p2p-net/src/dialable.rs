@@ -12,6 +12,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use local::never_dialable;
+use syncwire::RelayHint;
 
 /// How strictly learned addresses are filtered.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -71,7 +72,30 @@ pub struct Dialing {
     pub trusted: Vec<SocketAddr>,
 }
 
+/// Where a hint leads: straight to a device, or to a relay and a slot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Target {
+    /// An address to dial.
+    Direct(SocketAddr),
+    /// A relay to dial and the slot to ask it for.
+    Relayed(RelayHint),
+}
+
 impl Dialing {
+    /// `hint` as a place this device may go: an address, or `ip:port/slot`
+    /// for a relay (which must pass the same rules as any address).
+    #[must_use]
+    pub fn target(&self, hint: &str) -> Option<Target> {
+        if hint.contains('/') {
+            let relayed: RelayHint = hint.parse().ok()?;
+            self.policy
+                .allows(&relayed.relay, &self.trusted)
+                .then_some(Target::Relayed(relayed))
+        } else {
+            self.resolve(hint).map(Target::Direct)
+        }
+    }
+
     /// `hint` as an address this device may dial. Names are never resolved.
     #[must_use]
     pub fn resolve(&self, hint: &str) -> Option<SocketAddr> {

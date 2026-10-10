@@ -355,6 +355,68 @@ mod peers {
     }
 
     #[test]
+    fn golden_layout_of_version_two() {
+        let one = record(1);
+        let bytes = encode_peers(std::slice::from_ref(&one)).unwrap();
+        assert_eq!(
+            &bytes[..6],
+            b"ZPRP\x00\x02",
+            "the record format is version 2"
+        );
+        assert_eq!(bytes[6], 1, "one record");
+        assert_eq!(&bytes[7..23], &[4; 16], "vault id");
+        assert_eq!(
+            &bytes[23..31],
+            &1_700_000_000_000u64.to_be_bytes(),
+            "issued"
+        );
+        assert_eq!(bytes[31], 2, "two hints");
+        assert_eq!(bytes[32], 13, "first hint length");
+        assert_eq!(&bytes[33..46], b"10.0.0.1:7447");
+        assert_eq!(bytes[46], 10, "second hint length");
+        assert_eq!(&bytes[47..57], b"[::1]:7447");
+        let after = 57 + syncwire::CERT_WIRE_LEN + session::SYNC_SIG_LEN;
+        assert_eq!(bytes.len(), after, "certificate and signature close it");
+    }
+
+    #[test]
+    fn a_hint_may_be_a_relay_address_and_a_slot_up_to_the_limit() {
+        use session::MAX_HINT_LEN;
+        assert_eq!(MAX_HINT_LEN, 96);
+        let relayed = format!("[2001:4860:4860::8888]:7447/{}", "ab".repeat(16));
+        assert!(relayed.len() <= MAX_HINT_LEN);
+        let key = DeviceSignKey::from_seed(&[1; 32]);
+        let cert = issue_device_cert(
+            &[0; 32],
+            &[1; 64],
+            &[1; 16],
+            &key.verifying_key().unwrap(),
+            u64::MAX,
+            1,
+        )
+        .unwrap();
+        let sign = |hint: String| PeerRecord::sign(&key, &cert, [4; 16], vec![hint], 1);
+        let list = vec![
+            sign(relayed).unwrap(),
+            sign("x".repeat(MAX_HINT_LEN)).unwrap(),
+        ];
+        assert_eq!(decode_peers(&encode_peers(&list).unwrap()).unwrap(), list);
+        assert!(sign("x".repeat(MAX_HINT_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn version_one_is_not_read_and_a_hint_over_the_limit_is_refused() {
+        let mut bytes = encode_peers(&[record(1)]).unwrap();
+        bytes[5] = 1;
+        assert!(decode_peers(&bytes).is_err(), "no parser for version one");
+        let mut bytes = encode_peers(&[record(1)]).unwrap();
+        bytes[32] = 97;
+        assert!(decode_peers(&bytes).is_err());
+        bytes[32] = 0;
+        assert!(decode_peers(&bytes).is_err());
+    }
+
+    #[test]
     fn every_truncation_and_trailing_byte_is_refused() {
         let bytes = encode_peers(&[record(1)]).unwrap();
         for cut in 0..bytes.len() {

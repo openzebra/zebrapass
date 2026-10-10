@@ -16,8 +16,9 @@ const DOMAIN_PEER: &[u8] = b"brby/v2/peer-record";
 
 /// Most addresses one record lists.
 pub const MAX_HINTS: usize = 4;
-/// Longest address, in bytes.
-pub const MAX_HINT_LEN: usize = 64;
+/// Longest address, in bytes: a relay address, a slash and a 32-digit slot
+/// (`[ipv6]:port/slot`) fits.
+pub const MAX_HINT_LEN: usize = 96;
 /// How long a record stays believable.
 pub const PEER_MAX_AGE_MS: u64 = 3 * 24 * 60 * 60 * 1000;
 /// Clock difference tolerated for a record from the future.
@@ -30,7 +31,7 @@ pub struct PeerRecord {
     pub vault_id: [u8; 16],
     /// When the device signed it, in Unix milliseconds.
     pub issued_ms: u64,
-    /// Socket addresses, as `ip:port`.
+    /// Socket addresses, as `ip:port`, or relayed ones, as `ip:port/slot`.
     pub hints: Vec<String>,
     /// Certificate of the signing device.
     pub signer: DeviceCert,

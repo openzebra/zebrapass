@@ -7,7 +7,8 @@
     clippy::indexing_slicing,
     clippy::too_many_lines,
     clippy::panic,
-    reason = "tests may unwrap and index"
+    clippy::significant_drop_tightening,
+    reason = "tests may unwrap and index; a relay or a node lives for the whole test"
 )]
 
 use std::fmt::Write as _;
@@ -550,4 +551,62 @@ fn a_peer_that_was_locked_catches_up_by_pulling_when_it_unlocks() {
         frontier(&first.session).unwrap()
     );
     assert_eq!(sleeper.apply(&frames), 0, "the same frames again are stale");
+}
+
+#[test]
+fn a_device_with_no_route_to_the_other_converges_through_a_relay() {
+    use p2p_net::{Event, Relay, RelayLimits};
+    let mut first = First::start(Limits::default());
+    let mut sleeper = Sleeper::start(&first);
+    first.write("mail");
+    first.write("bank2");
+    sleeper.unlock();
+
+    // The first device is known only by a slot on a relay; its own address is
+    // never given to the other.
+    let relay = Relay::start(
+        "127.0.0.1:0",
+        RelayLimits {
+            difficulty_idle: 4,
+            ..RelayLimits::default()
+        },
+    )
+    .unwrap();
+    let behind = Service::start(None, Arc::clone(&first.provider)).unwrap();
+    assert!(behind.hold_relay(Arc::clone(&first.provider), relay.local_addr()));
+    let hint = loop {
+        if let Event::Relayed(hint) = behind
+            .events()
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap()
+        {
+            break hint;
+        }
+    };
+
+    let view = personal_view(
+        &second_device(&SEED, 7),
+        Dialing {
+            policy: Policy { loopback: true },
+            trusted: Vec::new(),
+        },
+    )
+    .unwrap();
+    sleeper.node.pull_personal(
+        view,
+        vec![hint.to_string()],
+        frontier(&sleeper.session).unwrap(),
+        sleeper.provider.personal_serve(),
+    );
+    let p2p_net::Event::PersonalPulled { frames, .. } = next_personal_event(&sleeper.node) else {
+        panic!("the pull through the relay failed")
+    };
+    assert_eq!(frames.len(), 2);
+    assert_eq!(sleeper.apply(&frames), 2);
+    assert_eq!(
+        frontier(&sleeper.session).unwrap(),
+        frontier(&first.session).unwrap(),
+        "identical frontiers"
+    );
+    assert!(relay.stats().spliced >= 1, "and it went through the relay");
 }

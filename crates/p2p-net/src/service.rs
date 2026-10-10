@@ -24,10 +24,13 @@ use crate::server::{authenticate, first_message, serve_requests_with};
 use crate::view::{Provider, VaultView};
 
 /// Handshakes in flight before new connections are dropped unanswered.
-const MAX_HANDSHAKES: usize = 32;
+pub const MAX_HANDSHAKES: usize = 32;
 
 /// In-flight handshakes up to which no puzzle is asked.
 const FREE_HANDSHAKES: usize = 6;
+
+/// Connections that arrive through a relay, handshakes and sessions together.
+pub const MAX_RELAYED: usize = 16;
 
 /// Hellos remembered to refuse a replay, and for how long.
 /// Threads for work that touches the disk. Well under the peers times streams
@@ -88,6 +91,9 @@ pub enum Event {
         address: SocketAddr,
         vaults: Vec<[u8; 16]>,
     },
+    /// This node holds a slot on a relay: members can reach it at `hint`.
+    /// Publish it with the node's other addresses.
+    Relayed(syncwire::RelayHint),
     /// A fetch gave up, and why (the last attempt's reason).
     FetchFailed {
         vault_id: [u8; 16],
@@ -109,8 +115,9 @@ pub struct Status {
 pub struct Shared {
     peers: AtomicUsize,
     pub(crate) fetching: AtomicUsize,
-    handshakes: AtomicUsize,
-    tickets: Arc<Tickets>,
+    pub(crate) handshakes: AtomicUsize,
+    pub(crate) relayed: AtomicUsize,
+    pub(crate) tickets: Arc<Tickets>,
     listening: Mutex<Option<SocketAddr>>,
     replay: Mutex<Replay>,
 }
@@ -199,6 +206,7 @@ impl Service {
             peers: AtomicUsize::new(0),
             fetching: AtomicUsize::new(0),
             handshakes: AtomicUsize::new(0),
+            relayed: AtomicUsize::new(0),
             tickets: Tickets::new(limits),
             listening: Mutex::new(None),
             replay: Mutex::new(Replay::default()),
@@ -335,7 +343,7 @@ async fn accept_loop<P: Provider>(
     }
 }
 
-async fn connection<P: Provider>(
+pub async fn connection<P: Provider>(
     mut tcp: TcpStream,
     slot: HandshakeSlot,
     provider: Arc<P>,

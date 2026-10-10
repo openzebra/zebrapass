@@ -181,6 +181,15 @@ async fn talk<P: Provider>(
     Ok(Step::Synced(moved))
 }
 
+/// The next address to try: every direct one before any through a relay.
+fn next_hint(queue: &[String], done: &[String]) -> Option<String> {
+    let untried = || queue.iter().filter(|hint| !done.contains(hint));
+    untried()
+        .find(|hint| !hint.contains('/'))
+        .or_else(|| untried().next())
+        .cloned()
+}
+
 impl Service {
     /// Sync one open vault with every member address in `hints` that answers,
     /// and report one event: [`Event::Synced`], [`Event::Fetched`] when a new
@@ -211,11 +220,13 @@ impl Service {
                 }
             }
             let mut tried = 0;
-            while let Some(hint) = queue.get(tried).cloned() {
+            let mut done: Vec<String> = Vec::with_capacity(MAX_DIALED);
+            while let Some(hint) = next_hint(&queue, &done) {
                 if tried >= MAX_DIALED {
                     break;
                 }
                 tried += 1;
+                done.push(hint.clone());
                 let views = {
                     let provider = Arc::clone(&provider);
                     blocking(move || provider.views()).await.unwrap_or_default()
@@ -262,5 +273,28 @@ impl Service {
                 Event::FetchFailed { vault_id, reason }
             }));
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_hint;
+
+    #[test]
+    fn every_direct_address_is_tried_before_any_relay() {
+        let relay = format!("203.0.113.9:7447/{}", "ab".repeat(16));
+        let queue = vec![
+            relay.clone(),
+            "10.0.0.2:7447".to_owned(),
+            "10.0.0.3:7447".to_owned(),
+        ];
+        let mut done = Vec::new();
+        let mut order = Vec::new();
+        while let Some(next) = next_hint(&queue, &done) {
+            order.push(next.clone());
+            done.push(next);
+        }
+        assert_eq!(order, ["10.0.0.2:7447", "10.0.0.3:7447", relay.as_str()]);
+        assert_eq!(next_hint(&[], &[]), None);
     }
 }

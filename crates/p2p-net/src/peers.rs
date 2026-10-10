@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use memberlog::MemberLog;
 use session::{DeviceCert, DeviceSignKey, PeerRecord, PEER_MAX_AGE_MS};
-use syncwire::{decode_peers, encode_peers, MAX_PEERS};
+use syncwire::{decode_peers, encode_peers, RelayHint, MAX_PEERS};
 
 use crate::dialable::{Dialing, Policy};
 use crate::io::now_ms;
@@ -133,8 +133,11 @@ impl PeerBook {
                 .find(|member| member.client_id == signer.client_id)
                 .is_some_and(|member| record.verify(&member.root_vk, now).is_ok());
             let reachable = record.hints.iter().all(|hint| {
-                hint.parse::<SocketAddr>()
-                    .is_ok_and(|address| policy.allows(&address, &anchored))
+                hint.parse::<RelayHint>()
+                    .ok()
+                    .map(|relayed| relayed.relay)
+                    .or_else(|| hint.parse::<SocketAddr>().ok())
+                    .is_some_and(|address| policy.allows(&address, &anchored))
             });
             let key = (record.vault_id, signer.device_id);
             let newer = known

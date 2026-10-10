@@ -14,6 +14,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
+use crate::dialable::Target;
 use crate::io::{mux, now_ms, read_msg, write_msg, MuxReader, MuxWriter, HANDSHAKE_TIMEOUT};
 use crate::view::VaultView;
 
@@ -101,11 +102,13 @@ impl Conn {
     /// [`FetchError::Refused`] when the peer turns this device away or its
     /// answer does not verify, [`FetchError::Failed`] otherwise.
     pub async fn connect(view: &VaultView, addr: &str) -> Outcome<Self> {
-        let addr = view.dialing.resolve(addr).ok_or(FetchError::Unreachable)?;
-        let mut tcp = timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
-            .await
-            .map_err(|_| FetchError::Unreachable)?
-            .map_err(|_| FetchError::Unreachable)?;
+        let mut tcp = match view.dialing.target(addr).ok_or(FetchError::Unreachable)? {
+            Target::Direct(addr) => timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
+                .await
+                .map_err(|_| FetchError::Unreachable)?
+                .map_err(|_| FetchError::Unreachable)?,
+            Target::Relayed(hint) => crate::relay_client::connect(&hint).await?,
+        };
         let (finish, established) = handshake(view, &mut tcp).await?;
         write_msg(&mut tcp, &finish)
             .await

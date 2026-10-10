@@ -326,7 +326,8 @@ impl Unlocked {
                     }
                     ctx.redraw();
                 }
-                Event::Listening(_) => {}
+                // TODO(relay-ui): no setting names a relay yet, so none is held.
+                Event::Relayed(_) | Event::Listening(_) => {}
             }
         }
     }

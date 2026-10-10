@@ -4,7 +4,8 @@
     clippy::indexing_slicing,
     clippy::too_many_lines,
     clippy::panic,
-    reason = "tests may unwrap and index"
+    clippy::significant_drop_tightening,
+    reason = "tests may unwrap and index; a relay or a node lives for the whole test"
 )]
 
 use std::future::Future;
@@ -12,12 +13,17 @@ use std::sync::{Arc, Mutex};
 
 use p2p_core::{Account, Channel, CookieSecret, Initiator, Load, Message, Reassembler};
 use p2p_net::{
-    authenticate, fetch, first_message, now_ms, serve_requests_with, Conn, Dialing, FetchError,
-    Limits, Policy, Provider, Service, SnapshotSource, Tickets, VaultView,
+    authenticate, fetch, first_message, now_ms, serve_requests_with, Conn, Dialing, Event,
+    FetchError, Limits, Policy, Provider, Relay, RelayLimits, Service, SnapshotSource, Tickets,
+    VaultView,
 };
 use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
 use syncwire::limits::CHUNK_LEN;
-use syncwire::{ChunkRequest, Direction, Header, MsgType, SnapHead};
+use syncwire::limits::RELAY_HEADER_LEN;
+use syncwire::{
+    encode_open, Challenge, ChunkRequest, Claim, Direction, Header, MsgType, RelayHeader,
+    RelayHint, RelaySide, RelayType, SnapHead,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -991,6 +997,349 @@ fn several_connections_can_each_fetch_a_snapshot_at_once_under_a_big_enough_cap(
             .collect();
         for download in downloads {
             assert_eq!(download.await.unwrap().unwrap(), vec![9; 4 * CHUNK_LEN]);
+        }
+    });
+}
+
+// ---- through a relay ------------------------------------------------------
+
+fn quiet() -> RelayLimits {
+    RelayLimits {
+        difficulty_idle: 4,
+        ..RelayLimits::default()
+    }
+}
+
+/// A node that listens nowhere and holds a slot on `relay`: the address to
+/// reach it at, and the node.
+fn behind_nat(provider: Arc<Served>, relay: std::net::SocketAddr) -> (Service, RelayHint) {
+    let service = Service::start(None, Arc::clone(&provider)).unwrap();
+    assert!(service.hold_relay(provider, relay));
+    let hint = next_relayed(&service);
+    (service, hint)
+}
+
+fn next_relayed(service: &Service) -> RelayHint {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while std::time::Instant::now() < until {
+        if let Ok(Event::Relayed(hint)) = service
+            .events()
+            .recv_timeout(std::time::Duration::from_millis(200))
+        {
+            return hint;
+        }
+    }
+    panic!("the node never held a slot");
+}
+
+async fn read_frame(stream: &mut TcpStream) -> Option<(RelayType, Vec<u8>)> {
+    let read = async {
+        let mut head = [0u8; RELAY_HEADER_LEN];
+        stream.read_exact(&mut head).await.ok()?;
+        let header = RelayHeader::decode(&head, RelaySide::Relay).ok()?;
+        let mut payload = vec![0u8; usize::from(header.len)];
+        stream.read_exact(&mut payload).await.ok()?;
+        Some((header.ty, payload))
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), read)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Connect to a relay, open, and read its first frame.
+async fn open_relay(relay: std::net::SocketAddr) -> (TcpStream, Option<(RelayType, Vec<u8>)>) {
+    let mut stream = TcpStream::connect(relay).await.unwrap();
+    stream.write_all(&encode_open()).await.unwrap();
+    let first = read_frame(&mut stream).await;
+    (stream, first)
+}
+
+async fn send_claim(stream: &mut TcpStream, ty: RelayType, id: [u8; 16], nonce: u64) {
+    let payload = Claim { id, nonce }.encode();
+    let header = RelayHeader::new(ty, payload.len(), RelaySide::Client).unwrap();
+    stream
+        .write_all(&[&header.encode()[..], &payload].concat())
+        .await
+        .unwrap();
+}
+
+/// Claim `id` with `ty` the honest way: answer the puzzle, then send.
+async fn claim(
+    relay: std::net::SocketAddr,
+    ty: RelayType,
+    id: [u8; 16],
+) -> (TcpStream, Option<RelayType>) {
+    let (mut stream, first) = open_relay(relay).await;
+    let Some((RelayType::Challenge, payload)) = first else {
+        return (stream, first.map(|(ty, _)| ty));
+    };
+    let challenge = Challenge::try_from(&payload[..]).unwrap();
+    let nonce = p2p_core::relay_pow_solve(&challenge.salt, &id, challenge.difficulty).unwrap();
+    send_claim(&mut stream, ty, id, nonce).await;
+    let answer = read_frame(&mut stream).await.map(|(ty, _)| ty);
+    (stream, answer)
+}
+
+#[test]
+fn two_nodes_with_no_direct_route_meet_only_through_the_relay() {
+    let relay = Relay::start("127.0.0.1:0", quiet()).unwrap();
+    let provider = served(big_snapshot());
+    let (node, hint) = behind_nat(Arc::clone(&provider), relay.local_addr());
+    assert!(node.local_addr().is_none(), "it listens nowhere");
+    assert_eq!(relay.stats().reservations, 1);
+    block_on(async {
+        let fetched = fetch(&member_view(), &hint.to_string()).await.unwrap();
+        assert_eq!(
+            fetched.peer.device_id, [0xA1; 16],
+            "the far end is who it should be"
+        );
+        assert_eq!(fetched.log, provider.log);
+        assert_eq!(fetched.snapshot, big_snapshot());
+        // And again: a second splice on the same slot.
+        assert!(fetch(&member_view(), &hint.to_string()).await.is_ok());
+    });
+    assert_eq!(relay.stats().spliced, 2);
+}
+
+#[test]
+fn the_relay_sees_only_sealed_bytes() {
+    let tap = Arc::new(Mutex::new(Vec::new()));
+    let relay = Relay::start_tapped("127.0.0.1:0", quiet(), Arc::clone(&tap)).unwrap();
+    let provider = served(MARKER.repeat(2000));
+    let (_node, hint) = behind_nat(provider, relay.local_addr());
+    block_on(async {
+        let fetched = fetch(&member_view(), &hint.to_string()).await.unwrap();
+        assert_eq!(fetched.snapshot.len(), MARKER.len() * 2000);
+    });
+    let seen = tap.lock().unwrap().clone();
+    assert!(
+        seen.len() > MARKER.len() * 2000,
+        "all of it passed through the relay"
+    );
+    assert!(
+        seen.windows(4).any(|window| window == b"ZPHS"),
+        "the public handshake messages are visible, as the design says"
+    );
+    assert!(!seen.windows(MARKER.len()).any(|window| window == MARKER));
+    let log_run = vec![0x4C; 64];
+    assert!(!seen.windows(log_run.len()).any(|window| window == log_run));
+    assert!(
+        !seen.windows(16).any(|window| window == [0x77; 16]),
+        "the vault id does not cross in the clear either"
+    );
+}
+
+#[test]
+fn a_relay_that_dies_mid_transfer_shows_as_a_failure_and_the_next_attempt_recovers() {
+    let tap = Arc::new(Mutex::new(Vec::new()));
+    let slow = RelayLimits {
+        splice_rate: 128 * 1024,
+        ..quiet()
+    };
+    let relay = Relay::start_tapped("127.0.0.1:0", slow, Arc::clone(&tap)).unwrap();
+    let address = relay.local_addr();
+    let provider = served(vec![0x5A; 1024 * 1024]);
+    let (node, hint) = behind_nat(Arc::clone(&provider), address);
+    block_on(async {
+        let download = tokio::spawn({
+            let hint = hint.to_string();
+            async move { fetch(&member_view(), &hint).await }
+        });
+        let started = std::time::Instant::now();
+        while tap.lock().unwrap().len() < 300 * 1024 && started.elapsed().as_secs() < 120 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(
+            tap.lock().unwrap().len() >= 300 * 1024,
+            "the transfer was under way"
+        );
+        drop(relay);
+        let outcome = download.await.unwrap();
+        assert!(outcome.is_err(), "the failure shows: {outcome:?}");
+    });
+
+    // A relay comes back at the same address; the node holds a new slot there
+    // and the next attempt, at the new address, works.
+    let again = (0..50)
+        .find_map(|_| {
+            Relay::start(&address.to_string(), quiet())
+                .ok()
+                .or_else(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    None
+                })
+        })
+        .expect("the port is free again");
+    let fresh = next_relayed(&node);
+    assert_ne!(fresh.slot, hint.slot, "a new reservation, a new slot");
+    block_on(async {
+        let fetched = fetch(&member_view(), &fresh.to_string()).await.unwrap();
+        assert_eq!(fetched.snapshot.len(), 1024 * 1024);
+    });
+    drop(again);
+}
+
+#[test]
+fn a_relay_turns_away_the_source_over_its_connection_cap_at_once_and_says_so() {
+    let limits = RelayLimits {
+        per_address_connections: 2,
+        ..quiet()
+    };
+    let relay = Relay::start("127.0.0.1:0", limits).unwrap();
+    block_on(async {
+        let (_one, first) = open_relay(relay.local_addr()).await;
+        let (_two, second) = open_relay(relay.local_addr()).await;
+        assert_eq!(first.unwrap().0, RelayType::Challenge);
+        assert_eq!(second.unwrap().0, RelayType::Challenge);
+        let began = std::time::Instant::now();
+        let mut third = TcpStream::connect(relay.local_addr()).await.unwrap();
+        let answer = read_frame(&mut third).await.unwrap();
+        assert_eq!(
+            answer.0,
+            RelayType::Refused,
+            "no puzzle, no parsing: the answer comes first"
+        );
+        assert!(began.elapsed() < std::time::Duration::from_secs(2));
+    });
+    assert!(relay.stats().refused >= 1);
+}
+
+#[test]
+fn the_whole_relay_at_capacity_says_busy_which_is_not_a_refusal() {
+    let limits = RelayLimits {
+        max_connections: 1,
+        ..quiet()
+    };
+    let relay = Relay::start("127.0.0.1:0", limits).unwrap();
+    block_on(async {
+        let (_held, first) = open_relay(relay.local_addr()).await;
+        assert_eq!(first.unwrap().0, RelayType::Challenge);
+        let mut other = TcpStream::connect(relay.local_addr()).await.unwrap();
+        assert_eq!(read_frame(&mut other).await.unwrap().0, RelayType::Busy);
+    });
+    assert_eq!(relay.stats().busy, 1);
+    assert_eq!(relay.stats().refused, 0);
+}
+
+#[test]
+fn a_source_may_hold_only_so_many_slots_and_no_slot_twice() {
+    let limits = RelayLimits {
+        per_address_reservations: 2,
+        ..quiet()
+    };
+    let relay = Relay::start("127.0.0.1:0", limits).unwrap();
+    block_on(async {
+        let (first_slot, one) = claim(relay.local_addr(), RelayType::Reserve, [1; 16]).await;
+        assert_eq!(one, Some(RelayType::Reserved));
+        let (_b, two) = claim(relay.local_addr(), RelayType::Reserve, [2; 16]).await;
+        assert_eq!(two, Some(RelayType::Reserved));
+        let (_c, three) = claim(relay.local_addr(), RelayType::Reserve, [3; 16]).await;
+        assert_eq!(three, Some(RelayType::Refused), "over the per-source cap");
+        drop(first_slot);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let (_d, taken) = claim(relay.local_addr(), RelayType::Reserve, [2; 16]).await;
+        assert_eq!(taken, Some(RelayType::Refused), "the slot is already held");
+        let (_e, freed) = claim(relay.local_addr(), RelayType::Reserve, [4; 16]).await;
+        assert_eq!(
+            freed,
+            Some(RelayType::Reserved),
+            "a closed reservation frees its place"
+        );
+    });
+}
+
+#[test]
+fn connects_are_rate_limited_per_source_and_every_refusal_is_the_same_answer() {
+    let limits = RelayLimits {
+        connects_per_minute: 2,
+        ..quiet()
+    };
+    let relay = Relay::start("127.0.0.1:0", limits).unwrap();
+    block_on(async {
+        for attempt in 0..4u8 {
+            let began = std::time::Instant::now();
+            let (_s, answer) = claim(relay.local_addr(), RelayType::Connect, [attempt; 16]).await;
+            assert_eq!(answer, Some(RelayType::Refused), "attempt {attempt}");
+            assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        }
+        // A wrong nonce, and no claim at all, get the same.
+        let (mut stream, first) = open_relay(relay.local_addr()).await;
+        assert_eq!(first.unwrap().0, RelayType::Challenge);
+        send_claim(&mut stream, RelayType::Reserve, [9; 16], 0).await;
+        let answer = read_frame(&mut stream).await.map(|(ty, _)| ty);
+        assert!(matches!(answer, Some(RelayType::Refused) | None));
+    });
+    assert!(relay.stats().refused >= 4);
+}
+
+#[test]
+fn a_connect_nobody_takes_is_refused_when_its_time_is_up() {
+    let limits = RelayLimits {
+        pending_timeout: std::time::Duration::from_secs(1),
+        ..quiet()
+    };
+    let relay = Relay::start("127.0.0.1:0", limits).unwrap();
+    block_on(async {
+        let (_holder, reserved) = claim(relay.local_addr(), RelayType::Reserve, [7; 16]).await;
+        assert_eq!(reserved, Some(RelayType::Reserved));
+        // The holder never takes the offer.
+        let began = std::time::Instant::now();
+        let hint = RelayHint {
+            relay: relay.local_addr(),
+            slot: [7; 16],
+        };
+        let outcome = Conn::connect(&member_view(), &hint.to_string()).await;
+        assert!(outcome.is_err());
+        assert!(began.elapsed() < std::time::Duration::from_secs(15));
+    });
+}
+
+#[test]
+fn a_splice_is_cut_at_its_byte_limit_and_only_so_many_run_at_once() {
+    let limits = RelayLimits {
+        splice_bytes: 128 * 1024,
+        max_splices: 1,
+        ..quiet()
+    };
+    let relay = Relay::start("127.0.0.1:0", limits).unwrap();
+    let provider = served(vec![1; 600 * 1024]);
+    let (_node, hint) = behind_nat(provider, relay.local_addr());
+    block_on(async {
+        let mut first = Conn::connect(&member_view(), &hint.to_string())
+            .await
+            .unwrap();
+        // While one splice runs, the relay has no room for another.
+        assert!(Conn::connect(&member_view(), &hint.to_string())
+            .await
+            .is_err());
+        first.ping(1).await.unwrap();
+        assert!(
+            first.snapshot().await.is_err(),
+            "the splice is cut at its limit"
+        );
+    });
+}
+
+#[test]
+fn a_relay_address_the_policy_forbids_is_never_dialed() {
+    let slot = "ab".repeat(16);
+    let mut view = member_view();
+    view.dialing = Dialing::default();
+    block_on(async {
+        for hint in [
+            format!("127.0.0.1:7447/{slot}"),
+            format!("169.254.169.254:80/{slot}"),
+            format!("10.0.0.8:80/{slot}"),
+            format!("203.0.113.9:7447/{}", &slot[..30]),
+            format!("example.com:7447/{slot}"),
+            "/".to_owned(),
+        ] {
+            assert_eq!(
+                Conn::connect(&view, &hint).await.err(),
+                Some(FetchError::Unreachable),
+                "{hint}"
+            );
         }
     });
 }

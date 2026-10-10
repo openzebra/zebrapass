@@ -36,8 +36,36 @@ pub const MAX_BUNDLE: usize = crate::ATTESTATION_WIRE_LEN + MAX_FRAME;
 pub const MAX_FRONTIER_PAYLOAD: usize = crate::MAX_FRONTIER * 32 + 8;
 
 /// Largest list of peer records a peer may send.
-pub const MAX_PEERS_PAYLOAD: usize =
-    8 + crate::MAX_PEERS * (16 + 8 + 1 + 4 * 65 + crate::CERT_WIRE_LEN + session::SYNC_SIG_LEN);
+pub const MAX_PEERS_PAYLOAD: usize = 8 + crate::MAX_PEERS
+    * (16
+        + 8
+        + 1
+        + session::MAX_HINTS * (1 + session::MAX_HINT_LEN)
+        + crate::CERT_WIRE_LEN
+        + session::SYNC_SIG_LEN);
 
 const _: () = assert!(MUX_HEADER_LEN == 9);
 const _: () = assert!(MAX_SNAPSHOT_LEN <= u64::MAX / 2);
+
+/// Length of the header of a relay frame: type and a `u16` payload length.
+pub const RELAY_HEADER_LEN: usize = 1 + 2;
+
+/// Length of what a client sends first on a relay connection: the magic and
+/// the version.
+pub const RELAY_OPEN_LEN: usize = 4 + 2;
+
+/// Hardest puzzle a relay may ask for.
+pub const RELAY_MAX_DIFFICULTY: u8 = 24;
+
+/// Length of a relay's puzzle challenge: difficulty, salt and window.
+pub const RELAY_CHALLENGE_LEN: usize = 1 + 16 + 8;
+
+/// Length of a request that names a slot or a connection: the id and the
+/// puzzle nonce.
+pub const RELAY_CLAIM_LEN: usize = 16 + 8;
+
+/// Length of a relay's grant of a reservation.
+pub const RELAY_RESERVED_LEN: usize = 4 + 1 + 2;
+
+/// Length of a slot, as digits of a hint.
+pub const RELAY_SLOT_DIGITS: usize = 32;
