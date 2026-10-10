@@ -302,6 +302,7 @@ impl Unlocked {
             Some(Action::ShareLeave) => return Next::Stay(self.begin_leave(ctx)),
             Some(Action::ShareRekey) => return Next::Stay(self.begin_rekey(ctx)),
             Some(Action::ShareAdvertise) => return Next::Stay(self.begin_advertise()),
+            Some(Action::ShareFillObserved) => return Next::Stay(self.begin_fill_observed(ctx)),
             Some(Action::ShareRetry) => self.retry_selected(ctx),
             Some(Action::ShareListen) => self.cycle_listen(ctx),
             _ => {}

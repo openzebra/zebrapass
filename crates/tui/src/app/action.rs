@@ -206,6 +206,8 @@ actions! {
     ShareRekey,
     /// Set the public address this device offers other members.
     ShareAdvertise,
+    /// Offer the address a member saw this device at.
+    ShareFillObserved,
 }
 
 /// Where a palette entry is listed.

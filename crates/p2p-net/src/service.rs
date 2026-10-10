@@ -79,6 +79,9 @@ pub enum Event {
         address: String,
         frames: Vec<Vec<u8>>,
     },
+    /// A member reported the address it sees this device at. The port is
+    /// that of the connection this device made, not one it listens on.
+    Observed(SocketAddr),
     /// A fetch gave up, and why (the last attempt's reason).
     FetchFailed {
         vault_id: [u8; 16],

@@ -4,7 +4,7 @@
 //! world sees. The person writes it here and the node signs it into the
 //! addresses it hands to members. An empty entry takes it back.
 
-use local::parse_advertise;
+use local::{offer_observed, parse_advertise, Offer};
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
@@ -26,6 +26,32 @@ impl Unlocked {
         if let Some(current) = self.advertised() {
             input.insert_str(current);
         }
+        Step::Advertise(input)
+    }
+
+    /// Remember the address a member says it sees this device at, to offer
+    /// on the share screen. Nothing is saved or advertised by it.
+    pub fn observe(&mut self, seen: std::net::SocketAddr) {
+        let Some(p2p) = self.p2p.as_deref_mut() else {
+            return;
+        };
+        let port = p2p.service.local_addr().map_or(0, |addr| addr.port());
+        p2p.observed = Some(offer_observed(seen, port));
+    }
+
+    /// The advertise editor started from the address a member saw, to be
+    /// confirmed or changed by the person.
+    pub(super) fn begin_fill_observed(&self, ctx: &mut Ctx) -> Step {
+        let offered = match self.p2p.as_deref().and_then(|p2p| p2p.observed.as_ref()) {
+            Some(Offer::Public(address)) => Some(address.clone()),
+            Some(Offer::Local(_) | Offer::Unusable) | None => None,
+        };
+        let Some(address) = offered else {
+            ctx.toast(Tone::Info, "No address seen from outside yet.");
+            return Step::Overview;
+        };
+        let mut input = TextInput::new(ADDRESS_MAX);
+        input.insert_str(&address);
         Step::Advertise(input)
     }
 

@@ -178,3 +178,60 @@ mod personal_peers {
         assert!(save_personal_peers(&path, &k, &[Box::from("x".repeat(65))]).is_err());
     }
 }
+
+#[test]
+fn an_observed_address_is_offered_only_when_it_could_be_advertised() {
+    use local::{offer_observed, Offer};
+    let seen = |text: &str| text.parse().unwrap();
+    let public = |text: &str| Offer::Public(text.into());
+    assert_eq!(
+        offer_observed(seen("93.184.216.34:51234"), 7447),
+        public("93.184.216.34:7447"),
+        "the port is ours, not the one the peer saw"
+    );
+    assert_eq!(
+        offer_observed(seen("[2606:2800:220:1::1]:40000"), 7447),
+        public("[2606:2800:220:1::1]:7447")
+    );
+    assert_eq!(
+        offer_observed(seen("[::ffff:93.184.216.34]:40000"), 7447),
+        public("93.184.216.34:7447"),
+        "a mapped address is judged as the IPv4 one"
+    );
+    assert_eq!(
+        offer_observed(seen("192.168.1.9:40000"), 7447),
+        public("192.168.1.9:7447"),
+        "a LAN address passes the advertise rules"
+    );
+    for local in ["127.0.0.1:40000", "[::1]:40000", "[::ffff:127.0.0.1]:40000"] {
+        assert!(
+            matches!(offer_observed(seen(local), 7447), Offer::Local(_)),
+            "{local}"
+        );
+    }
+    for never in [
+        "0.0.0.0:1",
+        "169.254.169.254:1",
+        "224.0.0.1:1",
+        "255.255.255.255:1",
+        "203.0.113.5:1",
+        "198.18.0.1:1",
+        "240.0.0.1:1",
+        "[fe80::1]:1",
+        "[ff02::1]:1",
+        "[2001:db8::1]:1",
+        "[::]:1",
+    ] {
+        assert_eq!(
+            offer_observed(seen(never), 7447),
+            Offer::Unusable,
+            "{never}"
+        );
+    }
+    assert_eq!(
+        offer_observed(seen("93.184.216.34:51234"), 0),
+        Offer::Unusable,
+        "no listening port to pair it with"
+    );
+    assert_eq!(offer_observed(seen("127.0.0.1:5"), 0), Offer::Unusable);
+}

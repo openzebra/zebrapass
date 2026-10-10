@@ -65,3 +65,31 @@ pub fn parse_peer_address(input: &str, allow_loopback: bool) -> Result<Box<str>,
     }
     Ok(address.to_string().into_boxed_str())
 }
+
+/// What to do with the address a peer reports having seen this device at.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Offer {
+    /// A public address worth offering as the advertised one, with the
+    /// node's own port.
+    Public(Box<str>),
+    /// The peer is on this machine: shown, never offered.
+    Local(Box<str>),
+    /// An address that could never be dialed, or no port to pair it with.
+    Unusable,
+}
+
+/// Judge the address a peer saw this device at.
+///
+/// Only the address counts: the port a peer sees is that of an outgoing
+/// connection, so it is replaced by `listen_port`, the one this node accepts
+/// connections on. The result then passes the same rules as the advertised
+/// address.
+#[must_use]
+pub fn offer_observed(seen: std::net::SocketAddr, listen_port: u16) -> Offer {
+    let ip = seen.ip().to_canonical();
+    let candidate = std::net::SocketAddr::new(ip, listen_port).to_string();
+    if ip.is_loopback() && listen_port != 0 {
+        return Offer::Local(candidate.into_boxed_str());
+    }
+    parse_advertise(&candidate).map_or(Offer::Unusable, Offer::Public)
+}

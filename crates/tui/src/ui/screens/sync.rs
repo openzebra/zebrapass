@@ -3,7 +3,7 @@
 //! No frames, one quiet column; the fingerprints are the only thing drawn
 //! large, because they are what two people compare aloud.
 
-use local::Listen;
+use local::{Listen, Offer};
 use memberlog::Role;
 use p2p_net::FetchError;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -210,7 +210,28 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
             Span::styled(address.to_owned(), theme.text()),
         ]));
     }
+    lines.extend(observed_line(state, theme));
     lines
+}
+
+/// What a member saw this device at, and what can be done with it.
+fn observed_line(state: &Unlocked, theme: &Theme) -> Option<Line<'static>> {
+    let (text, style) = match state.p2p.as_deref()?.observed.as_ref()? {
+        Offer::Public(address) if state.advertised() == Some(address.as_ref()) => return None,
+        Offer::Public(address) => (
+            format!("your router sees {address}  ·  o to use it"),
+            theme.text(),
+        ),
+        Offer::Local(address) => (
+            format!("seen at {address}  ·  this machine, cannot be offered"),
+            theme.muted(),
+        ),
+        Offer::Unusable => return None,
+    };
+    Some(Line::from(vec![
+        Span::styled(format!("{INDENT}{:<14}", "seen"), theme.muted()),
+        Span::styled(text, style),
+    ]))
 }
 
 fn prompt(title: &str, hint: &str, theme: &Theme) -> Vec<Line<'static>> {

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use local::{Listen, SyncIdentity};
+use local::{Listen, Offer, SyncIdentity};
 use p2p_net::{reachable_hints, Service, SharedProvider};
 use session::MAX_HINTS;
 
@@ -32,6 +32,8 @@ pub struct P2p {
     /// The addresses other devices can reach it at, best first, as found when
     /// it started.
     pub reachable: Box<[String]>,
+    /// What the last member to answer said it sees this device at.
+    pub observed: Option<Offer>,
     checked: Instant,
 }
 
@@ -77,6 +79,7 @@ impl P2p {
             listen,
             advertise,
             reachable: Box::default(),
+            observed: None,
             checked: Instant::now(),
         });
         let hints = node.hints();

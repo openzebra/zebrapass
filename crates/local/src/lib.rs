@@ -31,7 +31,7 @@ use aead::BodyAlg;
 use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
-pub use address::{never_dialable, parse_advertise, parse_peer_address};
+pub use address::{never_dialable, offer_observed, parse_advertise, parse_peer_address, Offer};
 pub use atomic::write_atomic;
 pub use attest_store::AttestStore;
 pub use device_key::{

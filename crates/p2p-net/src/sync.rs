@@ -2,6 +2,7 @@
 //! take over a new seed when one is offered, then trade the revisions each
 //! side lacks, record by record.
 
+use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -123,10 +124,13 @@ async fn talk<P: Provider>(
     provider: &Arc<P>,
     view: &VaultView,
     hint: &str,
+    observed: &mut Option<SocketAddr>,
 ) -> Result<Step, FetchError> {
     let vault_id = view.vault_id;
     let mut conn = Conn::connect(view, hint).await?;
     let log = conn.log().await?;
+    // After the first request, so a peer that closes on us still reads as a refusal.
+    *observed = conn.whoami().await.ok().or(*observed);
     let merged = {
         let (provider, log) = (Arc::clone(provider), log.clone());
         blocking(move || provider.merge_log(&vault_id, &log)).await?
@@ -192,6 +196,7 @@ impl Service {
             let mut reason = FetchError::Unreachable;
             let mut total = Moved::default();
             let mut reached = false;
+            let mut observed = None;
             let mut outcome = None;
             let mut queue = hints;
             let remembered = {
@@ -219,7 +224,7 @@ impl Service {
                     reason = FetchError::Failed;
                     break;
                 };
-                match talk(&provider, view, &hint).await {
+                match talk(&provider, view, &hint, &mut observed).await {
                     Ok(Step::Synced(moved)) => {
                         reached = true;
                         total.add(moved);
@@ -243,6 +248,9 @@ impl Service {
                 }
             }
             shared.fetching.fetch_sub(1, Ordering::Relaxed);
+            if let Some(address) = observed {
+                let _ = sender.send(Event::Observed(address));
+            }
             let _ = sender.send(outcome.unwrap_or(if reached || tried == 0 {
                 Event::Synced {
                     vault_id,

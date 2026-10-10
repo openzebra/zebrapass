@@ -520,3 +520,25 @@ fn an_advertised_address_reaches_the_members_ahead_of_the_others() {
         "the advertised address comes first and both are kept"
     );
 }
+
+#[test]
+fn a_check_in_learns_the_address_a_member_sees() {
+    let [alice, bob, _] = trio();
+    bob.service.check_in(
+        Arc::clone(&bob.provider),
+        bob.reference.vault_id,
+        vec![alice.addr],
+    );
+    let mut seen = None;
+    loop {
+        match bob.service.events().recv_timeout(WAIT).unwrap() {
+            Event::Observed(address) => seen = Some(address),
+            Event::Synced { .. } => break,
+            Event::FetchFailed { reason, .. } => panic!("check-in failed: {reason}"),
+            _ => {}
+        }
+    }
+    let seen = seen.expect("the member said what it sees");
+    assert!(seen.ip().is_loopback(), "{seen}");
+    assert_ne!(seen.port(), 0);
+}

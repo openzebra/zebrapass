@@ -218,6 +218,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Sync: ch('d') => ShareLeave, "leave";
     Sync: ch('k') => ShareRekey, "new key";
     Sync: ch('p') => ShareAdvertise, "public address";
+    Sync: ch('o') => ShareFillObserved, "use seen address";
     Sync: ch('j') => ShareJoin, "join";
     Sync: ch('r') => ShareRetry, "retry";
     Sync: ch('l') => ShareListen, "listen";

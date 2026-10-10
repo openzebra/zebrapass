@@ -318,6 +318,7 @@ impl Unlocked {
                 }
                 Event::PersonalPulled { frames, .. } => self.apply_pulled(&frames, ctx),
                 Event::PeerConnected { .. } | Event::PeerGone { .. } => ctx.redraw(),
+                Event::Observed(seen) => self.observe(seen),
                 Event::Listening(_) => {}
             }
         }

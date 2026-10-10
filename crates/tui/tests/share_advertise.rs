@@ -98,3 +98,75 @@ fn the_address_is_validated_saved_offered_first_and_can_be_cleared() {
     assert!(state(&app).advertised().is_none());
     assert!(!offered(&app).contains(&String::from("93.184.216.34:7447")));
 }
+
+fn observe(app: &mut App, seen: &str) {
+    let Screen::Unlocked(state) = &mut app.screen else {
+        panic!("not unlocked")
+    };
+    state.observe(seen.parse().unwrap());
+}
+
+#[test]
+fn the_address_a_member_saw_is_offered_never_applied_and_fills_the_field_on_one_key() {
+    let mut app = with_shared_vault();
+    let port = state(&app)
+        .p2p
+        .as_deref()
+        .unwrap()
+        .service
+        .local_addr()
+        .unwrap()
+        .port();
+
+    // Nothing seen yet: no offer, and the key says so without opening anything.
+    assert!(!render(&app, 110, 30).contains("your router sees"));
+    press(&mut app, KeyCode::Char('o'));
+    assert!(matches!(share(&app).step, Step::Overview));
+
+    // A member on this machine: shown, marked as local, never offered.
+    observe(&mut app, "127.0.0.1:50000");
+    let screen = render(&app, 110, 30);
+    assert!(
+        screen.contains("this machine, cannot be offered"),
+        "{screen}"
+    );
+    assert!(!screen.contains("your router sees"), "{screen}");
+    press(&mut app, KeyCode::Char('o'));
+    assert!(matches!(share(&app).step, Step::Overview));
+
+    // An address that could never be dialed leaves no trace.
+    observe(&mut app, "169.254.169.254:50000");
+    let screen = render(&app, 110, 30);
+    assert!(!screen.contains("your router sees"), "{screen}");
+    assert!(!screen.contains("cannot be offered"), "{screen}");
+
+    // A public address is offered with this node's port, and nothing is
+    // applied until the person confirms.
+    observe(&mut app, "93.184.216.34:50000");
+    let seen_at = format!("93.184.216.34:{port}");
+    let screen = render(&app, 110, 30);
+    assert!(
+        screen.contains(&format!("your router sees {seen_at}")),
+        "{screen}"
+    );
+    assert!(state(&app).advertised().is_none());
+    press(&mut app, KeyCode::Char('o'));
+    let Step::Advertise(input) = &share(&app).step else {
+        panic!("the field was not opened")
+    };
+    assert_eq!(input.value(), seen_at);
+    assert!(state(&app).advertised().is_none(), "filled, not applied");
+    press(&mut app, KeyCode::Esc);
+    assert!(
+        state(&app).advertised().is_none(),
+        "backing out applies nothing"
+    );
+    assert!(!offered(&app).contains(&seen_at));
+
+    // Confirming saves it; the offer then has nothing left to say.
+    press(&mut app, KeyCode::Char('o'));
+    press(&mut app, KeyCode::Enter);
+    wait(&mut app);
+    assert_eq!(state(&app).advertised(), Some(seen_at.as_str()));
+    assert!(!render(&app, 110, 30).contains("your router sees"));
+}
