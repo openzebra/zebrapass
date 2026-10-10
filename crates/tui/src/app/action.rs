@@ -214,6 +214,8 @@ actions! {
     ShareUpgrade,
     /// Paste a relay address.
     ShareRelay,
+    /// Announce me through the saved relay.
+    ShareHold,
 }
 
 /// Where a palette entry is listed.

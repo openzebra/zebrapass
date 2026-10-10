@@ -3,7 +3,7 @@
 //! No frames, one quiet column; the fingerprints are the only thing drawn
 //! large, because they are what two people compare aloud.
 
-use local::{Listen, Offer};
+use local::Listen;
 use memberlog::Role;
 use p2p_net::FetchError;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -146,7 +146,11 @@ fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
         .is_some_and(|p2p| p2p.relayed.is_some());
     let (text, style) = match state.p2p.as_deref().map(|p2p| p2p.service.local_addr()) {
         Some(Some(addr)) if relayed => (
-            format!("{} listening {addr} · {mode} · via relay", theme.glyphs.on),
+            format!("{} listening {addr} · announced via relay", theme.glyphs.on),
+            theme.accent(),
+        ),
+        Some(None) if relayed => (
+            String::from("not listening · announced via relay"),
             theme.accent(),
         ),
         Some(Some(addr)) => (
@@ -219,7 +223,7 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
             Span::styled(address.to_owned(), theme.text()),
         ]));
     }
-    lines.extend(observed_line(state, theme));
+    lines.extend(crate::ui::screens::sync_lines::observed_line(state, theme));
     if let Some(saved) = state
         .p2p
         .as_deref()
@@ -228,7 +232,13 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
     {
         lines.push(Line::from(vec![
             Span::styled(format!("{INDENT}{:<14}", "relays"), theme.muted()),
-            Span::styled(format!("{saved} saved  ·  v to add another"), theme.text()),
+            Span::styled(
+                format!(
+                    "{saved} saved  ·  {}",
+                    crate::ui::screens::sync_lines::hold_gloss(state)
+                ),
+                theme.text(),
+            ),
         ]));
     }
     if state.identity_is_old() {
@@ -244,25 +254,6 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
 }
 
 /// What a member saw this device at, and what can be done with it.
-fn observed_line(state: &Unlocked, theme: &Theme) -> Option<Line<'static>> {
-    let (text, style) = match state.p2p.as_deref()?.observed.as_ref()? {
-        Offer::Public(address) if state.advertised() == Some(address.as_ref()) => return None,
-        Offer::Public(address) => (
-            format!("your router sees {address}  ·  o to use it"),
-            theme.text(),
-        ),
-        Offer::Local(address) => (
-            format!("seen at {address}  ·  this machine, cannot be offered"),
-            theme.muted(),
-        ),
-        Offer::Unusable => return None,
-    };
-    Some(Line::from(vec![
-        Span::styled(format!("{INDENT}{:<14}", "seen"), theme.muted()),
-        Span::styled(text, style),
-    ]))
-}
-
 fn prompt(title: &str, hint: &str, theme: &Theme) -> Vec<Line<'static>> {
     vec![
         blank(),

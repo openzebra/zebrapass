@@ -11,12 +11,14 @@ use crate::app::node::P2p;
 use crate::ui::widgets::toast::Tone;
 use crate::vault::Vault;
 
-/// Whether a node is wanted for this identity: there are shared vaults to
-/// serve and fetch, or the personal vault can be served to the account's
-/// other devices and the user has not turned listening off.
+/// Whether a node is wanted for this identity.
+///
+/// There are shared vaults to serve and fetch, or the personal vault can be
+/// served to the account's other devices and the user has not turned
+/// listening off, or it holds a slot on a relay, which needs no listener.
 #[must_use]
-pub const fn wants_node(has_gate: bool, shared: usize, listen: Listen) -> bool {
-    shared > 0 || (has_gate && !matches!(listen, Listen::Off))
+pub const fn wants_node(has_gate: bool, shared: usize, listen: Listen, holds: bool) -> bool {
+    shared > 0 || (has_gate && (holds || !matches!(listen, Listen::Off)))
 }
 
 /// Ask another device of this account, at an address remembered next to the

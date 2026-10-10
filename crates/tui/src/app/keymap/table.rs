@@ -222,6 +222,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Sync: ch('o') => ShareFillObserved, "use seen address";
     Sync: ch('u') => ShareUpgrade, "upgrade identity";
     Sync: ch('v') => ShareRelay, "add relay";
+    Sync: ch('t') => ShareHold, "announce via relay";
     Sync: ch('j') => ShareJoin, "join";
     Sync: ch('r') => ShareRetry, "retry";
     Sync: ch('l') => ShareListen, "listen";

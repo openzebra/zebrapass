@@ -81,6 +81,10 @@ pub const TAG_PREF_P2P_ADVERTISE: u16 = 0x0219;
 /// (`Text`).
 pub const TAG_PREF_P2P_RELAYS: u16 = 0x021A;
 
+/// Whether this node holds a slot on the first saved relay and announces it,
+/// 1 byte, 0 or 1 (`Bytes`).
+pub const TAG_PREF_P2P_HOLD: u16 = 0x021B;
+
 /// Record copy usage on this device: packed 16-byte entries
 /// `id u32 LE ‖ count u32 LE ‖ last_ms u64 LE`, sorted by id (`Bytes`).
 pub const TAG_USAGE: u16 = 0x0220;

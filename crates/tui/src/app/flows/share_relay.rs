@@ -48,6 +48,9 @@ impl Unlocked {
     }
 
     fn add_relay(&mut self, text: &str, ctx: &mut Ctx) -> Result<(), &'static str> {
+        if text.trim().is_empty() {
+            return self.remove_relays(ctx);
+        }
         let hint = parse_relay_hint(text)?;
         let mut prefs = self.info.prefs.clone().unwrap_or_default();
         if prefs.p2p_relays.contains(&hint) {
@@ -69,10 +72,52 @@ impl Unlocked {
         Ok(())
     }
 
-    /// Note that this node holds a slot on a relay, for the node line.
+    /// An empty entry takes every saved relay back, and with them the slot
+    /// the node held.
+    fn remove_relays(&mut self, ctx: &mut Ctx) -> Result<(), &'static str> {
+        let mut prefs = self.info.prefs.clone().unwrap_or_default();
+        if prefs.p2p_relays.is_empty() {
+            return Err("No relay is saved.");
+        }
+        prefs.p2p_relays.clear();
+        let held = std::mem::take(&mut prefs.p2p_hold);
+        self.info.prefs = Some(prefs.clone());
+        if let Some(p2p) = self.p2p.as_deref_mut() {
+            p2p.relays.clear();
+        }
+        if held {
+            self.restart_p2p();
+        }
+        self.run(Op::SavePrefs(Box::new(prefs)), Task::Save, ctx);
+        ctx.toast(Tone::Success, "Relays removed.");
+        Ok(())
+    }
+
+    /// Note that this node holds a slot on a relay, for the node line and
+    /// for the addresses it offers.
     pub fn note_relayed(&mut self, hint: p2p_net::RelayHint) {
         if let Some(p2p) = self.p2p.as_deref_mut() {
-            p2p.relayed = Some(hint);
+            p2p.note_relayed(hint);
         }
+    }
+
+    /// Switch announcing through the first saved relay on or off, and
+    /// restart the node, which drops a slot it held.
+    pub(super) fn toggle_hold(&mut self, ctx: &mut Ctx) {
+        let mut prefs = self.info.prefs.clone().unwrap_or_default();
+        if prefs.p2p_relays.is_empty() {
+            ctx.toast(Tone::Info, "Save a relay first: v adds one.");
+            return;
+        }
+        prefs.p2p_hold = !prefs.p2p_hold;
+        let message = if prefs.p2p_hold {
+            "Announcing this device through the first saved relay."
+        } else {
+            "No longer announced through a relay."
+        };
+        self.info.prefs = Some(prefs.clone());
+        self.restart_p2p();
+        self.run(Op::SavePrefs(Box::new(prefs)), Task::Save, ctx);
+        ctx.toast(Tone::Success, message);
     }
 }

@@ -315,6 +315,7 @@ impl Unlocked {
             Some(Action::ShareFillObserved) => return Next::Stay(self.begin_fill_observed(ctx)),
             Some(Action::ShareUpgrade) => return Next::Stay(self.begin_upgrade(ctx)),
             Some(Action::ShareRelay) => return Next::Stay(Self::begin_relay()),
+            Some(Action::ShareHold) => self.toggle_hold(ctx),
             Some(Action::ShareRetry) => self.retry_selected(ctx),
             Some(Action::ShareListen) => self.cycle_listen(ctx),
             _ => {}

@@ -39,6 +39,7 @@ fn saved() -> Prefs {
         p2p_listen: local::Listen::Local,
         p2p_advertise: Some("93.184.216.35:8000".into()),
         p2p_relays: vec![format!("93.184.216.36:7447/{}", "cd".repeat(16)).into()],
+        p2p_hold: true,
     }
 }
 

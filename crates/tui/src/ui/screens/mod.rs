@@ -22,6 +22,7 @@ pub mod restore;
 pub mod settings;
 pub mod sync;
 mod sync_confirm;
+mod sync_lines;
 mod sync_relay;
 mod sync_upgrade;
 pub mod unlock;

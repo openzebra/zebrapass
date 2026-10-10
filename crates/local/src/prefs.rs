@@ -8,14 +8,15 @@
 
 use record::{
     Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER,
-    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_LISTEN, TAG_PREF_P2P_RELAYS, TAG_PREF_REVEAL_HIDE,
-    TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE, TAG_PREF_THEME,
+    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_HOLD, TAG_PREF_P2P_LISTEN, TAG_PREF_P2P_RELAYS,
+    TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE,
+    TAG_PREF_THEME,
 };
 
 use crate::address::{parse_advertise, parse_relay_hint};
 use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, RELAYS_MAX, REVEAL_HIDE_S};
 
-const TAGS: [u16; 11] = [
+const TAGS: [u16; 12] = [
     TAG_PREF_LOCK_AFTER,
     TAG_PREF_CLIP_CLEAR,
     TAG_PREF_REVEAL_HIDE,
@@ -27,6 +28,7 @@ const TAGS: [u16; 11] = [
     TAG_PREF_P2P_LISTEN,
     TAG_PREF_P2P_ADVERTISE,
     TAG_PREF_P2P_RELAYS,
+    TAG_PREF_P2P_HOLD,
 ];
 
 const FLAG_ANIM: u8 = 1;
@@ -125,6 +127,7 @@ impl TryFrom<u8> for Listen {
 }
 
 /// Preferences of this device for one vault.
+#[allow(clippy::struct_excessive_bools, reason = "flags")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prefs {
     /// Sync server origin, validated by [`parse_origin`].
@@ -155,6 +158,9 @@ pub struct Prefs {
     /// Relay slots, as `ip:port/slot`, this device was told about and may
     /// dial through; each validated by [`parse_relay_hint`], at most four.
     pub p2p_relays: Vec<Box<str>>,
+    /// This node holds a slot on the first saved relay and announces it; only
+    /// ever on while a relay is saved.
+    pub p2p_hold: bool,
 }
 
 impl Default for Prefs {
@@ -173,6 +179,7 @@ impl Default for Prefs {
             p2p_listen: Listen::Lan,
             p2p_advertise: None,
             p2p_relays: Vec::new(),
+            p2p_hold: false,
         }
     }
 }
@@ -208,6 +215,9 @@ impl Prefs {
         }
         if !self.p2p_relays.is_empty() {
             doc.set_text(TAG_PREF_P2P_RELAYS, &self.p2p_relays.join("\n"));
+        }
+        if self.p2p_hold {
+            doc.set_data(TAG_PREF_P2P_HOLD, ValueType::Bytes, &[1]);
         }
         if let Some(origin) = self.server_origin.as_deref() {
             doc.set_text(TAG_PREF_SERVER_ORIGIN, origin);
@@ -272,6 +282,11 @@ impl Prefs {
         if p2p_relays.len() > RELAYS_MAX {
             return Err(out_of_range());
         }
+        let p2p_hold = match byte(doc, TAG_PREF_P2P_HOLD)? {
+            None | Some(0) => false,
+            Some(1) if !p2p_relays.is_empty() => true,
+            Some(_) => return Err(out_of_range()),
+        };
         Ok(Self {
             server_origin,
             server_key_pin,
@@ -287,6 +302,7 @@ impl Prefs {
                 .map_or(Ok(defaults.p2p_listen), Listen::try_from)?,
             p2p_advertise,
             p2p_relays,
+            p2p_hold,
         })
     }
 
@@ -388,6 +404,7 @@ mod tests {
             p2p_listen: Listen::Off,
             p2p_advertise: Some("93.184.216.34:7447".into()),
             p2p_relays: vec![format!("93.184.216.35:7447/{}", "ab".repeat(16)).into()],
+            p2p_hold: true,
         }
     }
 

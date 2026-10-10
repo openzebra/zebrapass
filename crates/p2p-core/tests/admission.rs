@@ -21,6 +21,36 @@ fn hello_from(secret: u8, at: u64) -> (Initiator, Vec<u8>) {
     Initiator::start(&gate_key(secret), at).unwrap()
 }
 
+/// Leading zero bits of the puzzle hash of `counter` for the solved message
+/// `solved` (header, cookie, counter, hello), worked out here and not by the
+/// code under test: `SHA-256("brby/v2/p2p-pow" ‖ cookie mac ‖ H(hello) ‖ counter)`
+/// with `H(hello) = SHA-256("brby/v2/p2p-hello" ‖ hello)`.
+fn zero_bits(solved: &[u8], counter: u64) -> u32 {
+    use sha2::{Digest, Sha256};
+    let counter_at = SOLVED_LEN - HELLO_LEN - 8;
+    let mac = &solved[18..counter_at];
+    let hello = &solved[SOLVED_LEN - HELLO_LEN..];
+    let hello_hash = Sha256::new()
+        .chain_update(b"brby/v2/p2p-hello")
+        .chain_update(hello)
+        .finalize();
+    let digest = Sha256::new()
+        .chain_update(b"brby/v2/p2p-pow")
+        .chain_update(mac)
+        .chain_update(hello_hash)
+        .chain_update(counter.to_be_bytes())
+        .finalize();
+    let mut bits = 0;
+    for byte in digest {
+        if byte == 0 {
+            bits += 8;
+        } else {
+            return bits + byte.leading_zeros();
+        }
+    }
+    bits
+}
+
 fn challenge_for(hello: &[u8], load: Load) -> Vec<u8> {
     match accept(&node(0xB2), load, hello, NOW).unwrap() {
         Accept::Challenge(challenge) => challenge,
@@ -164,8 +194,21 @@ fn a_solution_is_bound_to_its_hello_its_cookie_and_the_clock() {
         !try_it(&easier, BUSY, NOW),
         "difficulty lowered by the client"
     );
+    // A counter that is not a solution, found by looking: most counters fail
+    // by a wide margin, but flipping bits of the real one could land on
+    // another that solves it, so the search says which one fails.
+    let at = SOLVED_LEN - HELLO_LEN - 8;
+    let real = u64::from_be_bytes(solved[at..at + 8].try_into().unwrap());
+    assert!(
+        zero_bits(&solved, real) >= u32::from(BUSY.difficulty),
+        "the real counter solves it, by this test's own hash"
+    );
+    let wrong = (1..=1_000_000u64)
+        .map(|step| real.wrapping_add(step))
+        .find(|counter| zero_bits(&solved, *counter) < u32::from(BUSY.difficulty))
+        .unwrap();
     let mut wrong_counter = solved.clone();
-    wrong_counter[9 + 41] ^= 0xFF;
+    wrong_counter[at..at + 8].copy_from_slice(&wrong.to_be_bytes());
     assert!(!try_it(&wrong_counter, BUSY, NOW), "wrong counter");
 
     // A cookie from an easier moment does not satisfy a harder demand.

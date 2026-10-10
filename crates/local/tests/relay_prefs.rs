@@ -60,3 +60,47 @@ fn a_vault_with_only_relays_saved_still_has_saved_preferences() {
     assert_eq!(read.p2p_relays, [hint(1)]);
     assert_eq!(read.lock_after_s, Prefs::default().lock_after_s);
 }
+
+#[test]
+fn the_hold_switch_round_trips_and_only_exists_with_a_saved_relay() {
+    use record::TAG_PREF_P2P_HOLD;
+    let on = Prefs {
+        p2p_relays: vec![hint(1)],
+        p2p_hold: true,
+        ..Prefs::default()
+    };
+    assert!(Prefs::read(&saved(&on)).unwrap().unwrap().p2p_hold);
+    let off = Prefs {
+        p2p_relays: vec![hint(1)],
+        ..Prefs::default()
+    };
+    assert!(!Prefs::read(&saved(&off)).unwrap().unwrap().p2p_hold);
+    assert!(
+        !Prefs::read(&saved(&Prefs::default()))
+            .unwrap()
+            .unwrap()
+            .p2p_hold
+    );
+
+    let tagged = |relays: Option<&str>, value: &[u8]| {
+        let mut doc = saved(&Prefs::default());
+        if let Some(relays) = relays {
+            doc.set_text(TAG_PREF_P2P_RELAYS, relays);
+        }
+        doc.set_data(TAG_PREF_P2P_HOLD, record::ValueType::Bytes, value);
+        doc
+    };
+    assert!(Prefs::read(&tagged(Some(&hint(1)), &[1])).is_ok());
+    assert!(Prefs::read(&tagged(None, &[0])).is_ok());
+    for (relays, value) in [
+        (Some(hint(1).to_string()), vec![2u8]),
+        (Some(hint(1).to_string()), vec![]),
+        (Some(hint(1).to_string()), vec![1, 1]),
+        (None, vec![1]),
+    ] {
+        assert!(
+            Prefs::read(&tagged(relays.as_deref(), &value)).is_err(),
+            "{relays:?} {value:?}"
+        );
+    }
+}

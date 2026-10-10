@@ -41,6 +41,8 @@ pub struct P2p {
     pub discovered: Vec<String>,
     /// Relay slots the person saved, as `ip:port/slot`.
     pub relays: Vec<String>,
+    /// The node holds a slot on the first saved relay.
+    pub holds: bool,
     /// The latest relay slot this node holds, when it holds one.
     pub relayed: Option<p2p_net::RelayHint>,
     checked: Instant,
@@ -92,6 +94,7 @@ impl P2p {
             observed: None,
             discovered: Vec::new(),
             relays: Vec::new(),
+            holds: false,
             relayed: None,
             checked: Instant::now(),
         });
@@ -117,6 +120,29 @@ impl P2p {
                 .service
                 .start_beacon(Arc::clone(&self.provider), identity, config);
         }
+    }
+
+    /// Hold a slot on the first saved relay, when the person asked for it.
+    /// Dropping the node frees the slot.
+    pub fn hold_saved(&self) {
+        let relay = self
+            .relays
+            .first()
+            .and_then(|text| text.parse::<p2p_net::RelayHint>().ok())
+            .map(|hint| hint.relay);
+        if let (true, Some(relay)) = (self.holds, relay) {
+            self.service.hold_relay(Arc::clone(&self.provider), relay);
+        }
+    }
+
+    /// Note the relay slot this node now holds, and offer it to members with
+    /// the node's other addresses.
+    pub fn note_relayed(&mut self, hint: p2p_net::RelayHint) {
+        self.relayed = Some(hint);
+        let mut own = self.hints();
+        own.truncate(MAX_HINTS - 1);
+        own.push(hint.to_string());
+        self.provider.set_hints(own);
     }
 
     /// Remember an address another device announced; the newest few stay.

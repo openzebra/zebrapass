@@ -18,6 +18,10 @@ use crate::vault::records::Summary;
 use crate::vault::shared::{references, SharedItem, Status};
 use crate::vault::Vault;
 
+mod relays;
+pub use relays::check_in;
+use relays::saved_relays;
+
 pub use crate::app::node::P2p;
 
 /// What a freshly unlocked personal vault brings up.
@@ -62,10 +66,16 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
         .prefs
         .as_ref()
         .map_or_else(Listen::default, |prefs| prefs.p2p_listen);
+    let holds = vault
+        .meta
+        .prefs
+        .as_ref()
+        .is_some_and(|prefs| prefs.p2p_hold);
     let p2p = if crate::app::personal::wants_node(
         identity.account_gate().is_some(),
         shared.len(),
         listen,
+        holds,
     ) {
         let advertise = vault
             .meta
@@ -74,6 +84,7 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
             .and_then(|prefs| prefs.p2p_advertise.clone());
         P2p::start(base, Arc::clone(&identity), listen, advertise, beacon).map(|mut p2p| {
             p2p.relays = saved_relays(vault.meta.prefs.as_ref());
+            p2p.holds = holds;
             p2p
         })
     } else {
@@ -81,6 +92,7 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
     };
     if let Some(p2p) = p2p.as_deref() {
         p2p.serve_personal(vault);
+        p2p.hold_saved();
         crate::app::personal::pull_personal(p2p, vault);
         for item in &shared {
             p2p.provider.serve(Arc::clone(&item.reference));
@@ -107,28 +119,6 @@ pub fn fetch(p2p: &P2p, item: &SharedItem) {
             p2p.service.fetch(view, item.reference.hints.clone());
         }
     }
-}
-
-/// Trade revisions with the members of an open shared vault, once.
-pub fn check_in(p2p: &P2p, item: &SharedItem) {
-    if !item.ready() {
-        return;
-    }
-    let mut hints = item.reference.hints.clone();
-    for relay in &p2p.relays {
-        if !hints.contains(relay) {
-            hints.push(relay.clone());
-        }
-    }
-    p2p.service
-        .check_in(Arc::clone(&p2p.provider), item.reference.vault_id, hints);
-}
-
-/// The relay slots saved in `prefs`, as text.
-fn saved_relays(prefs: Option<&local::Prefs>) -> Vec<String> {
-    prefs.map_or_else(Vec::new, |prefs| {
-        prefs.p2p_relays.iter().map(ToString::to_string).collect()
-    })
 }
 
 const fn reason_text(reason: FetchError) -> &'static str {
@@ -176,9 +166,11 @@ impl Unlocked {
         )
         .map(|mut p2p| {
             p2p.relays = saved_relays(self.info.prefs.as_ref());
+            p2p.holds = self.info.prefs.as_ref().is_some_and(|prefs| prefs.p2p_hold);
             p2p
         });
         if let Some(p2p) = self.p2p.as_deref() {
+            p2p.hold_saved();
             if let Some(vault) = self.vault.as_deref() {
                 p2p.serve_personal(vault);
                 crate::app::personal::pull_personal(p2p, vault);
@@ -199,6 +191,7 @@ impl Unlocked {
                 identity.account_gate().is_some(),
                 self.shared.len(),
                 self.listen_mode(),
+                self.info.prefs.as_ref().is_some_and(|prefs| prefs.p2p_hold),
             )
         });
         if wanted {
