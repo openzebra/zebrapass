@@ -16,7 +16,11 @@ const PORT: u16 = 7447;
 /// Announced addresses kept.
 const MAX_DISCOVERED: usize = 8;
 
-const CHECK_EVERY: Duration = Duration::from_secs(15);
+/// How often a node checks in with its peers: the only periodic work it has.
+/// A fetch-only device sets no other timer, so between check-ins it is idle.
+pub const CHECK_EVERY: Duration = Duration::from_secs(15);
+
+const _: () = assert!(CHECK_EVERY.as_secs() >= 15, "no sub-15-second polling");
 
 /// The running node and what it signs with. Dropping it stops the node and
 /// wipes the identity copy it holds.
@@ -59,8 +63,10 @@ impl std::fmt::Debug for P2p {
 impl P2p {
     /// Start a node for `identity` over the shared vaults under `base`.
     ///
-    /// TODO(client-only): a phone could run with no listener at all and only
-    /// pull from the account's other devices; `Listen::Off` is the seam.
+    /// `Listen::Off` and `Listen::Fetch` bind nothing: the node only dials
+    /// out. They differ in whether anything asks for a node (see
+    /// [`crate::app::personal::wants_node`]), not in what the node does once
+    /// it runs.
     #[must_use]
     pub fn start(
         base: &Path,
@@ -73,11 +79,11 @@ impl P2p {
             base.to_path_buf(),
             Arc::clone(&identity),
         ));
-        if matches!(listen, Listen::Local) {
+        if matches!(listen, Listen::Local | Listen::Fetch) {
             provider.allow_loopback_peers();
         }
         let bind = |port: u16| match listen {
-            Listen::Off => None,
+            Listen::Off | Listen::Fetch => None,
             Listen::Local => Some(format!("127.0.0.1:{port}")),
             Listen::Lan | Listen::Beacon => Some(format!("0.0.0.0:{port}")),
         };
@@ -130,7 +136,7 @@ impl P2p {
             .first()
             .and_then(|text| text.parse::<p2p_net::RelayHint>().ok())
             .map(|hint| hint.relay);
-        if let (true, Some(relay)) = (self.holds, relay) {
+        if let (true, false, Some(relay)) = (self.holds, self.listen == Listen::Fetch, relay) {
             self.service.hold_relay(Arc::clone(&self.provider), relay);
         }
     }
@@ -193,7 +199,7 @@ impl P2p {
             return Vec::new();
         };
         match self.listen {
-            Listen::Off => Vec::new(),
+            Listen::Off | Listen::Fetch => Vec::new(),
             Listen::Local => vec![format!("127.0.0.1:{port}")],
             Listen::Lan | Listen::Beacon => {
                 let mut hints = reachable_hints(port);

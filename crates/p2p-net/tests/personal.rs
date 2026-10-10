@@ -427,6 +427,12 @@ struct Sleeper {
 
 impl Sleeper {
     fn start(first: &First) -> Self {
+        Self::start_with(first, true)
+    }
+
+    /// A second device; with `listens` false its node binds nothing, as on a
+    /// phone that cannot be reached.
+    fn start_with(first: &First, listens: bool) -> Self {
         let base = temp_dir("sleeper");
         let path = base.join("vault.bin");
         std::fs::copy(&first.paths.vault_file, &path).unwrap();
@@ -434,8 +440,11 @@ impl Sleeper {
         let session = open_fetched(file.as_bytes().to_vec());
         let provider = Arc::new(SharedProvider::new(base, Arc::new(second_device(&SEED, 7))));
         provider.allow_loopback_peers();
-        let node = Service::start(Some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
-        let address = node.local_addr().unwrap().to_string();
+        let node = Service::start(listens.then_some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
+        let address = node
+            .local_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_default();
         Self {
             session,
             file,
@@ -609,4 +618,66 @@ fn a_device_with_no_route_to_the_other_converges_through_a_relay() {
         "identical frontiers"
     );
     assert!(relay.stats().spliced >= 1, "and it went through the relay");
+}
+
+#[test]
+fn a_device_that_listens_nowhere_converges_both_ways_through_its_own_pulls() {
+    let mut first = First::start(Limits::default());
+    let mut phone = Sleeper::start_with(&first, false);
+    assert!(
+        phone.node.local_addr().is_none(),
+        "nothing listens on the phone"
+    );
+    first.write("mail");
+    // The phone edits a record both devices hold; the peer adds a new one.
+    let wifi = list_records(&phone.session)
+        .unwrap()
+        .iter()
+        .find(|row| {
+            open_record(&phone.session, row.id)
+                .unwrap()
+                .text(TAG_TITLE)
+                .unwrap()
+                == Some("wifi")
+        })
+        .unwrap()
+        .id;
+    write_record(
+        &mut phone.session,
+        &mut phone.file,
+        Some(wifi),
+        &titled("wifi on the phone"),
+    )
+    .unwrap();
+    write_atomic(&phone.path, phone.file.as_bytes()).unwrap();
+    phone.unlock();
+
+    phone.node.pull_personal(
+        personal_conn_view(&first.address, 7),
+        vec![first.address.clone()],
+        frontier(&phone.session).unwrap(),
+        phone.provider.personal_serve(),
+    );
+    let p2p_net::Event::PersonalPulled { frames, .. } = next_personal_event(&phone.node) else {
+        panic!("the pull failed")
+    };
+    assert_eq!(frames.len(), 1, "the phone pulled what it lacked");
+    assert_eq!(phone.apply(&frames), 1);
+
+    // And pushed what the other lacked, to be applied by its owner.
+    let pushed = first.provider.take_pushed();
+    assert_eq!(pushed.len(), 1);
+    for frame in &pushed {
+        accept_peer_frame(&mut first.session, &mut first.file, frame).unwrap();
+    }
+    write_atomic(&first.paths.vault_file, first.file.as_bytes()).unwrap();
+    assert_eq!(
+        frontier(&phone.session).unwrap(),
+        frontier(&first.session).unwrap()
+    );
+    assert_eq!(
+        titles(&phone.session),
+        ["bank", "mail", "wifi on the phone"]
+    );
+    assert_eq!(titles(&first.session), titles(&phone.session));
 }

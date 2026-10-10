@@ -17,6 +17,7 @@ use crate::app::ctx::Ctx;
 use crate::app::flows::share::{ShareState, Step};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::Scope;
+use crate::app::node::CHECK_EVERY;
 use crate::ui::input::TextInput;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::home::header;
@@ -135,10 +136,11 @@ fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
 
 fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
     let mode = match state.listen_mode() {
-        Listen::Lan => "local network",
-        Listen::Beacon => "local network, announced",
-        Listen::Local => "this device only",
-        Listen::Off => "fetch only",
+        Listen::Lan => "local network".to_owned(),
+        Listen::Beacon => "local network, announced".to_owned(),
+        Listen::Local => "this device only".to_owned(),
+        Listen::Fetch => format!("fetch only · pulls every {} s", CHECK_EVERY.as_secs()),
+        Listen::Off => "off".to_owned(),
     };
     let relayed = state
         .p2p
@@ -149,6 +151,9 @@ fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
             format!("{} listening {addr} · announced via relay", theme.glyphs.on),
             theme.accent(),
         ),
+        Some(None) if state.listen_mode() == Listen::Fetch => {
+            (format!("{} {mode}", theme.glyphs.on), theme.accent())
+        }
         Some(None) if relayed => (
             String::from("not listening · announced via relay"),
             theme.accent(),

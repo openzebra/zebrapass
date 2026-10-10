@@ -104,3 +104,30 @@ fn the_hold_switch_round_trips_and_only_exists_with_a_saved_relay() {
         );
     }
 }
+
+#[test]
+fn a_saved_hold_together_with_fetch_only_is_a_load_error() {
+    use local::Listen;
+    let hold = |listen: Listen| Prefs {
+        p2p_relays: vec![hint(1)],
+        p2p_hold: true,
+        p2p_listen: listen,
+        ..Prefs::default()
+    };
+    for listen in [Listen::Lan, Listen::Beacon, Listen::Local, Listen::Off] {
+        assert!(Prefs::read(&saved(&hold(listen))).is_ok(), "{listen:?}");
+    }
+    assert!(
+        Prefs::read(&saved(&hold(Listen::Fetch))).is_err(),
+        "fetch only holds no slot, so a saved hold contradicts it"
+    );
+    let fetch = Prefs {
+        p2p_listen: Listen::Fetch,
+        p2p_relays: vec![hint(1)],
+        ..Prefs::default()
+    };
+    assert_eq!(
+        Prefs::read(&saved(&fetch)).unwrap().unwrap().p2p_listen,
+        Listen::Fetch
+    );
+}

@@ -11,6 +11,7 @@ mod attest_store;
 mod device_key;
 mod last_seen;
 mod limits;
+mod listen;
 mod meta;
 mod peer_store;
 mod personal_peers;
@@ -46,10 +47,11 @@ pub use limits::{
     PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX,
     SHARED_NAME_MAX,
 };
+pub use listen::Listen;
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 pub use peer_store::{load_peers, save_peers};
 pub use personal_peers::{load_personal_peers, remember_personal_peer, save_personal_peers};
-pub use prefs::{parse_origin, Listen, Prefs, SyncMode};
+pub use prefs::{parse_origin, Prefs, SyncMode};
 pub use revocations::Revocations;
 pub use share_keys::{ShareKeys, SharePublics};
 pub use shared::{

@@ -15,6 +15,7 @@ use record::{
 
 use crate::address::{parse_advertise, parse_relay_hint};
 use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, RELAYS_MAX, REVEAL_HIDE_S};
+use crate::listen::Listen;
 
 const TAGS: [u16; 12] = [
     TAG_PREF_LOCK_AFTER,
@@ -64,58 +65,6 @@ impl From<SyncMode> for u8 {
 }
 
 impl TryFrom<u8> for SyncMode {
-    type Error = anyhow::Error;
-
-    fn try_from(byte: u8) -> anyhow::Result<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|mode| u8::from(*mode) == byte)
-            .ok_or_else(out_of_range)
-    }
-}
-
-/// Where this device's sync node accepts connections.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Listen {
-    /// Nowhere: the device only fetches from others.
-    Off,
-    /// On this device only (`127.0.0.1`).
-    Local,
-    /// On the local network (`0.0.0.0`).
-    #[default]
-    Lan,
-    /// On the local network, and announced there by a sealed beacon that
-    /// only the account's other devices can read.
-    Beacon,
-}
-
-impl Listen {
-    /// Every mode, in the order a toggle cycles through them.
-    pub const ALL: [Self; 4] = [Self::Lan, Self::Beacon, Self::Local, Self::Off];
-
-    /// The next mode.
-    #[must_use]
-    pub fn next(self) -> Self {
-        let at = Self::ALL.iter().position(|mode| *mode == self).unwrap_or(0);
-        Self::ALL
-            .get((at + 1) % Self::ALL.len())
-            .copied()
-            .unwrap_or(Self::Off)
-    }
-}
-
-impl From<Listen> for u8 {
-    fn from(mode: Listen) -> Self {
-        match mode {
-            Listen::Off => 0,
-            Listen::Local => 1,
-            Listen::Lan => 2,
-            Listen::Beacon => 3,
-        }
-    }
-}
-
-impl TryFrom<u8> for Listen {
     type Error = anyhow::Error;
 
     fn try_from(byte: u8) -> anyhow::Result<Self> {
@@ -282,9 +231,12 @@ impl Prefs {
         if p2p_relays.len() > RELAYS_MAX {
             return Err(out_of_range());
         }
+        let p2p_listen =
+            byte(doc, TAG_PREF_P2P_LISTEN)?.map_or(Ok(defaults.p2p_listen), Listen::try_from)?;
+        let fetch_only = p2p_listen == Listen::Fetch;
         let p2p_hold = match byte(doc, TAG_PREF_P2P_HOLD)? {
             None | Some(0) => false,
-            Some(1) if !p2p_relays.is_empty() => true,
+            Some(1) if !p2p_relays.is_empty() && !fetch_only => true,
             Some(_) => return Err(out_of_range()),
         };
         Ok(Self {
@@ -298,8 +250,7 @@ impl Prefs {
             anim: flags & FLAG_ANIM != 0,
             ascii: flags & FLAG_ASCII != 0,
             focus_lock: flags & FLAG_FOCUS_LOCK != 0,
-            p2p_listen: byte(doc, TAG_PREF_P2P_LISTEN)?
-                .map_or(Ok(defaults.p2p_listen), Listen::try_from)?,
+            p2p_listen,
             p2p_advertise,
             p2p_relays,
             p2p_hold,

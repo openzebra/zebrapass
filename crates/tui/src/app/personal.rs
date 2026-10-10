@@ -25,7 +25,7 @@ pub const fn wants_node(has_gate: bool, shared: usize, listen: Listen, holds: bo
 /// vault, for the record frames this device lacks, and send it the ones it
 /// lacks. Does nothing when no address is remembered.
 pub fn pull_personal(p2p: &P2p, vault: &Vault) {
-    let loopback = matches!(p2p.listen, Listen::Local);
+    let loopback = matches!(p2p.listen, Listen::Local | Listen::Fetch);
     let remembered = vault
         .session
         .personal_peers_key()

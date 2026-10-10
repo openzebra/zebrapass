@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use local::{create_shared_vault, join_shared_vault, Introduction, SharedRef};
+use local::{create_shared_vault, join_shared_vault, Introduction, Listen, SharedRef};
 use memberlog::{Action as LogAction, Role};
 use sharing::{account_fingerprint, vault_number, ContactCard, Invitation, Inviter, Offer, Opened};
 use zeroize::Zeroizing;
@@ -354,6 +354,10 @@ impl Unlocked {
     pub(super) fn cycle_listen(&mut self, ctx: &mut Ctx) {
         let mut prefs = self.info.prefs.clone().unwrap_or_default();
         prefs.p2p_listen = prefs.p2p_listen.next();
+        if prefs.p2p_listen == Listen::Fetch {
+            // Fetch only holds no slot, so the switch goes off with it.
+            prefs.p2p_hold = false;
+        }
         self.info.prefs = Some(prefs.clone());
         self.restart_p2p();
         self.run(Op::SavePrefs(Box::new(prefs)), Task::Save, ctx);

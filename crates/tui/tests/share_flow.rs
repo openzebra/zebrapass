@@ -211,7 +211,21 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     press(&mut alice, KeyCode::Char('l'));
     wait(&mut alice);
     let screen = render(&alice, 100, 30);
-    assert!(screen.contains("fetch only"), "{screen}");
+    assert!(screen.contains("fetch only · pulls every 15 s"), "{screen}");
+    assert!(
+        state(&alice)
+            .p2p
+            .as_deref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_none(),
+        "fetch only listens nowhere"
+    );
+    press(&mut alice, KeyCode::Char('l'));
+    wait(&mut alice);
+    let screen = render(&alice, 100, 30);
+    assert!(screen.contains("off"), "{screen}");
     assert!(screen.contains("not listening"), "{screen}");
     assert!(state(&alice)
         .p2p

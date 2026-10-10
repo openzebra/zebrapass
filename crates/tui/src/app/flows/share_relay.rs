@@ -5,7 +5,7 @@
 //! added to the addresses a check-in dials after the direct ones.
 
 use crossterm::event::KeyEvent;
-use local::{parse_relay_hint, RELAYS_MAX};
+use local::{parse_relay_hint, Listen, RELAYS_MAX};
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
@@ -105,6 +105,10 @@ impl Unlocked {
     /// restart the node, which drops a slot it held.
     pub(super) fn toggle_hold(&mut self, ctx: &mut Ctx) {
         let mut prefs = self.info.prefs.clone().unwrap_or_default();
+        if prefs.p2p_listen == Listen::Fetch {
+            ctx.toast(Tone::Info, "Fetch only holds no relay slot.");
+            return;
+        }
         if prefs.p2p_relays.is_empty() {
             ctx.toast(Tone::Info, "Save a relay first: v adds one.");
             return;

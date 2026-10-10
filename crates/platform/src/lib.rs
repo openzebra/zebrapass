@@ -24,7 +24,7 @@
 //! valid grant: sealing always adds the software ML-KEM-768 half, so opening
 //! needs both.
 //!
-//! !todo!: physical-key (`YubiKey` PRF) support was removed. To restore it:
+//! TODO(hw-key): physical-key (`YubiKey` PRF) support was removed. To restore it:
 //! a `PrfBackend` trait here (`enroll`/`prf`/`prf_with`/`remove`) over a
 //! fixed `CTAP` client — `ctap-fido2` 0.1.3 has a PIN-v1 `alg` bug (wrong
 //! `-25` label, `PinAuthInvalid` with a correct PIN; reported upstream

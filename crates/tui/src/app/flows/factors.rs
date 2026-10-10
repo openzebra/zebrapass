@@ -173,7 +173,7 @@ fn details(view: &FactorView) -> Dialog {
         ));
     }
     body.push(String::from(
-        "Device certificates: none on file (sync server TODO).",
+        "Device certificates: none on file (the sync server is not built yet).",
     ));
     Dialog::Info(Info {
         title: factor_label(view),
