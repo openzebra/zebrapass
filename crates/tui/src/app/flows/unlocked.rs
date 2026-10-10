@@ -309,6 +309,11 @@ impl Unlocked {
         if let View::Import(import) = &mut self.view {
             hid |= import.reveal.tick(ctx.now, ctx.reveal_after);
         }
+        if let View::Sync(share) = &mut self.view {
+            if let crate::app::flows::share::Step::Upgrade(prompt) = &mut share.step {
+                hid |= prompt.reveal.tick(ctx.now, ctx.reveal_after);
+            }
+        }
         if hid {
             ctx.redraw();
         }

@@ -210,6 +210,8 @@ actions! {
     ShareAdvertise,
     /// Offer the address a member saw this device at.
     ShareFillObserved,
+    /// Upgrade this device's sync identity.
+    ShareUpgrade,
 }
 
 /// Where a palette entry is listed.

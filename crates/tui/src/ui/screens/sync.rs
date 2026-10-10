@@ -212,6 +212,15 @@ fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'st
         ]));
     }
     lines.extend(observed_line(state, theme));
+    if state.identity_is_old() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{INDENT}{:<14}", "identity"), theme.muted()),
+            Span::styled(
+                "old format, cannot serve your devices  ·  u to upgrade with your phrase",
+                theme.warn(),
+            ),
+        ]));
+    }
     lines
 }
 
@@ -430,6 +439,7 @@ fn step_lines(
         Step::LeaveConfirm(mode) => leave_confirm_lines(*mode, &vault_name, theme),
         Step::RekeyConfirm => rekey_confirm_lines(&vault_name, theme),
         Step::Advertise(input) => advertise_lines(input, width, theme),
+        Step::Upgrade(prompt) => crate::ui::screens::sync_upgrade::upgrade_lines(prompt, theme),
         Step::PasteInvite => prompt(
             "join a shared vault",
             "Paste the invitation you were given.",
