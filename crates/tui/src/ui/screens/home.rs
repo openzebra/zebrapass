@@ -15,6 +15,7 @@ use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
 use crate::ui::layout::{body_and_hints, Breakpoint};
 use crate::ui::screens::detail;
+use crate::ui::screens::p2p_status::summary;
 use crate::ui::widgets::chrome::{hint_bar, row_style};
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::list;
@@ -37,7 +38,9 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
     let countdown = format!(" {} {} ", theme.glyphs.rotate, clock(left));
     let fill = if theme.ascii { "-" } else { "─" };
     let (sync_text, sync_style) = link_indicator(state, ctx);
-    let used = head.chars().count()
+    let light = summary(state, theme).light;
+    let used = 9
+        + head.chars().count()
         + rest.chars().count()
         + countdown.chars().count()
         + sync_text.chars().count()
@@ -53,6 +56,8 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
         Span::styled(sync_text, sync_style),
         Span::styled(countdown, countdown_style),
         Span::styled(fill, theme.muted()),
+        Span::styled(format!(" {}", theme.glyphs.on), light.style(theme)),
+        Span::styled(" Ctrl+I", theme.muted()),
     ]);
     frame.render_widget(Paragraph::new(line).style(theme.base()), area);
 }
@@ -76,6 +81,22 @@ fn link_indicator(state: &Unlocked, ctx: &Ctx) -> (String, Style) {
     }
 }
 
+const GUIDANCE: &str = "Sync starts when this device finds your other one — same network with its Beacon on, or add its address in Settings → Sync.";
+const GUIDANCE_SHORT: &str =
+    "No peer yet: its Beacon on this network, or add its address in Settings → Sync.";
+
+/// One line for a restored vault that has no records yet: how the other
+/// device is found. The long form when it fits, the short one otherwise.
+fn guidance(state: &Unlocked, width: u16) -> Option<&'static str> {
+    if state.held.is_none() || !state.cache.is_empty() {
+        return None;
+    }
+    let room = usize::from(width).saturating_sub(1);
+    [GUIDANCE, GUIDANCE_SHORT]
+        .into_iter()
+        .find(|text| text.chars().count() <= room)
+}
+
 fn pane_block<'a>(title: Line<'a>, focused: bool, ctx: &Ctx) -> Block<'a> {
     let theme = &ctx.theme;
     Block::default()
@@ -94,6 +115,15 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
     let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
     header(frame, top, state, "", ctx);
     let [body, hints] = body_and_hints(rest);
+    let body = guidance(state, area.width).map_or(body, |text| {
+        let [body, line] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(body);
+        frame.render_widget(
+            Paragraph::new(Span::styled(format!(" {text}"), ctx.theme.muted())),
+            line,
+        );
+        body
+    });
     match Breakpoint::from(area.width) {
         Breakpoint::Wide => {
             let [filters, records, detail_area] = Layout::horizontal([

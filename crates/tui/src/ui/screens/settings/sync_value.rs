@@ -6,7 +6,7 @@ use local::Listen;
 use crate::app::ctx::Ctx;
 use crate::app::flows::settings::rows::Row;
 use crate::app::flows::unlocked::Unlocked;
-use crate::app::node::{CheckIn, CheckOutcome};
+use crate::ui::screens::p2p_status::{checkin_text, peers_text, summary};
 use crate::ui::screens::sync::node_text;
 
 const UNKNOWN: &str = "—";
@@ -28,19 +28,12 @@ pub fn sync_value(row: Row, state: &Unlocked, ctx: &Ctx) -> String {
         ),
         Row::SyncPeers => p2p.map_or_else(
             || UNKNOWN.to_owned(),
-            |p2p| {
-                let members: usize = state
-                    .shared
-                    .iter()
-                    .map(|item| item.people.saturating_sub(1))
-                    .sum();
-                format!(
-                    "{} known · {} reachable",
-                    members + p2p.discovered.len(),
-                    p2p.service.status().peers
-                )
-            },
+            |_| peers_text(&summary(state, &ctx.theme)),
         ),
+        Row::SyncDevices => match state.manual_devices().count() {
+            0 => String::from("none"),
+            added => format!("{added} added"),
+        },
         Row::SyncRelays => {
             let saved = state
                 .info
@@ -62,21 +55,4 @@ pub fn sync_value(row: Row, state: &Unlocked, ctx: &Ctx) -> String {
         }),
         _ => String::from("Enter"),
     }
-}
-
-fn checkin_text(checkin: CheckIn) -> String {
-    let outcome = match checkin.outcome {
-        CheckOutcome::Synced => "synced",
-        CheckOutcome::RefusedChanges => "refused: a member's changes were refused",
-        CheckOutcome::TurnedAway => "refused: turned this device away",
-        CheckOutcome::Unreachable => "unreachable",
-        CheckOutcome::Failed => "failed",
-    };
-    let secs = checkin.at.elapsed().as_secs();
-    let ago = match secs {
-        0..=59 => format!("{secs} s"),
-        60..=3599 => format!("{} min", secs / 60),
-        _ => format!("{} h", secs / 3600),
-    };
-    format!("{outcome} · {ago} ago")
 }

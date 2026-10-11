@@ -81,6 +81,7 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         Row::DeviceStatus => form(state, Form::add_device()),
         Row::DevicePin if owned.is_some() => form(state, Form::change_pin()),
         Row::SyncNow => state.sync_now(ctx),
+        Row::SyncDevices => state.open_addresses(false),
         Row::Name => form(state, Form::rename(&state.info.label)),
         Row::RotateKey => form(state, Form::rotate(found.password)),
         Row::ForgetDevice if owned.is_some() => {

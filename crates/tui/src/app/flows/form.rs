@@ -383,6 +383,7 @@ pub fn run_confirm(state: &mut Unlocked, kind: ConfirmKind, ctx: &mut Ctx) {
         }
         ConfirmKind::Discard => crate::app::flows::editor_keys::close(state, ctx),
         ConfirmKind::DiscardSettings => crate::app::flows::settings::apply::discard(state, ctx),
+        ConfirmKind::RemoveDeviceAddress(index) => state.remove_device_address(index, ctx),
     }
 }
 

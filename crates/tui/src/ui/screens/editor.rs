@@ -15,7 +15,7 @@ use crate::secure::strength::estimate;
 use crate::ui::layout::body_and_hints;
 use crate::ui::screens::home::header;
 use crate::ui::theme::Theme;
-use crate::ui::widgets::chrome::{checkbox, hint_bar, panel};
+use crate::ui::widgets::chrome::{button, checkbox, hint_bar, panel};
 use crate::ui::widgets::field::{secret_line, text_line};
 use crate::ui::widgets::meter::{bar, size_label, strength_spans};
 
@@ -76,6 +76,9 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, editor: &Editor
             },
         );
     }
+    let [footer, save_slot] =
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(14)]).areas(footer);
+    button(frame, save_slot, "Save →", editor.dirty, false, theme);
     let size = editor.estimated_size();
     let fraction = f64::from(u32::try_from(size).unwrap_or(u32::MAX))
         / f64::from(u32::try_from(record::MAX_DOC_LEN).unwrap_or(1));

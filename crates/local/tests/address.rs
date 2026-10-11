@@ -93,7 +93,8 @@ fn a_dialed_address_follows_the_advertise_rules_except_for_loopback_on_request()
 
 mod personal_peers {
     use local::{
-        load_personal_peers, remember_personal_peer, save_personal_peers, PERSONAL_PEERS_MAX,
+        add_manual_peer, load_personal_entries, load_personal_peers, remember_personal_peer,
+        remove_personal_peer, save_personal_peers, PERSONAL_PEERS_MAX,
     };
     use secret::Secret;
 
@@ -112,7 +113,7 @@ mod personal_peers {
         let path = dir("round").join("peers.store");
         let k = key(1);
         for n in 0..=PERSONAL_PEERS_MAX + 3 {
-            remember_personal_peer(&path, &k, &format!("93.184.216.{n}:7447"), false).unwrap();
+            remember_personal_peer(&path, &k, &format!("93.184.216.{n}:7447")).unwrap();
         }
         let found = load_personal_peers(&path, &k, false).unwrap();
         assert_eq!(found.len(), PERSONAL_PEERS_MAX);
@@ -120,7 +121,7 @@ mod personal_peers {
             found[0].as_ref(),
             format!("93.184.216.{}:7447", PERSONAL_PEERS_MAX + 3)
         );
-        remember_personal_peer(&path, &k, "93.184.216.5:7447", false).unwrap();
+        remember_personal_peer(&path, &k, "93.184.216.5:7447").unwrap();
         let again = load_personal_peers(&path, &k, false).unwrap();
         assert_eq!(again[0].as_ref(), "93.184.216.5:7447");
         assert_eq!(
@@ -152,7 +153,7 @@ mod personal_peers {
         std::fs::write(&path, b"").unwrap();
         assert!(load_personal_peers(&path, &k, false).is_err());
         // A damaged file is replaced the next time an address is remembered.
-        remember_personal_peer(&path, &k, "93.184.216.35:7447", false).unwrap();
+        remember_personal_peer(&path, &k, "93.184.216.35:7447").unwrap();
         assert_eq!(load_personal_peers(&path, &k, false).unwrap().len(), 1);
     }
 
@@ -176,6 +177,89 @@ mod personal_peers {
         let local = load_personal_peers(&path, &k, true).unwrap();
         assert_eq!(local.len(), 2);
         assert!(save_personal_peers(&path, &k, &[Box::from("x".repeat(65))]).is_err());
+    }
+
+    fn format_one(addresses: &[&str]) -> Vec<u8> {
+        let mut plain = u16::try_from(addresses.len())
+            .unwrap()
+            .to_be_bytes()
+            .to_vec();
+        for address in addresses {
+            plain.push(u8::try_from(address.len()).unwrap());
+            plain.extend_from_slice(address.as_bytes());
+        }
+        let meta = frame::FrameMeta {
+            kind: frame::KIND_REVISION,
+            record_id: 0,
+            revision: 1,
+            origin_device: [1u8; 16],
+            timestamp_ms: 0,
+            alg: frame::ALG_CASCADE,
+        };
+        frame::seal(&key(7), &meta, &plain).unwrap()
+    }
+
+    #[test]
+    fn a_format_one_file_loads_as_learned_entries_and_upgrades_on_write() {
+        let path = dir("golden1").join("peers.store");
+        let k = key(7);
+        std::fs::write(
+            &path,
+            format_one(&["93.184.216.34:7447", "93.184.216.35:7447"]),
+        )
+        .unwrap();
+        let entries = load_personal_entries(&path, &k, false).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| !entry.manual));
+        add_manual_peer(&path, &k, "93.184.216.36:7447", false).unwrap();
+        let entries = load_personal_entries(&path, &k, false).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert!(entries[0].manual && &*entries[0].address == "93.184.216.36:7447");
+        assert!(entries[1..].iter().all(|entry| !entry.manual));
+    }
+
+    #[test]
+    fn manual_entries_round_trip_and_are_never_evicted_by_learned_ones() {
+        let path = dir("manual").join("peers.store");
+        let k = key(8);
+        add_manual_peer(&path, &k, "93.184.216.1:7447", false).unwrap();
+        for n in 10..10 + PERSONAL_PEERS_MAX + 3 {
+            remember_personal_peer(&path, &k, &format!("93.184.216.{n}:7447")).unwrap();
+        }
+        let entries = load_personal_entries(&path, &k, false).unwrap();
+        assert_eq!(entries.len(), PERSONAL_PEERS_MAX);
+        assert!(entries[0].manual && &*entries[0].address == "93.184.216.1:7447");
+        save_personal_peers(&path, &k, &[Box::from("93.184.216.99:7447")]).unwrap();
+        let entries = load_personal_entries(&path, &k, false).unwrap();
+        assert!(entries.iter().any(|entry| entry.manual));
+        remember_personal_peer(&path, &k, "93.184.216.1:7447").unwrap();
+        let entries = load_personal_entries(&path, &k, false).unwrap();
+        assert!(entries
+            .iter()
+            .any(|e| e.manual && &*e.address == "93.184.216.1:7447"));
+        remove_personal_peer(&path, &k, "93.184.216.1:7447").unwrap();
+        let entries = load_personal_entries(&path, &k, false).unwrap();
+        assert!(entries.iter().all(|entry| !entry.manual));
+    }
+
+    #[test]
+    fn a_manual_address_is_refused_with_a_reason() {
+        let path = dir("refuse").join("peers.store");
+        let k = key(9);
+        let why = |input: &str, loopback: bool| {
+            add_manual_peer(&path, &k, input, loopback)
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(why("not an address", false).contains("ip:port"));
+        assert!(why("127.0.0.1:7447", false).contains("cannot reach"));
+        assert!(why("169.254.169.254:80", true).contains("cannot reach"));
+        add_manual_peer(&path, &k, "127.0.0.1:7447", true).unwrap();
+        assert_eq!(why("127.0.0.1:7447", true), "Already added.");
+        for n in 1..PERSONAL_PEERS_MAX {
+            add_manual_peer(&path, &k, &format!("93.184.216.{n}:7447"), false).unwrap();
+        }
+        assert_eq!(why("93.184.216.200:7447", false), "Up to 8 addresses.");
     }
 }
 

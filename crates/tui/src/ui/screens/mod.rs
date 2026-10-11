@@ -1,5 +1,6 @@
 //! One module per screen; [`draw`] dispatches on the screen state.
 
+pub mod addresses;
 pub mod alert;
 pub mod busy;
 pub mod ceremony;
@@ -18,6 +19,8 @@ pub mod import;
 pub mod import_mapping;
 pub mod import_preview;
 pub mod locked;
+pub mod p2p_info;
+pub mod p2p_status;
 pub mod restore;
 pub mod settings;
 pub mod sync;
@@ -31,6 +34,7 @@ pub mod welcome;
 use ratatui::widgets::Block;
 use ratatui::Frame;
 
+use crate::app::flows::dialog::Dialog;
 use crate::app::flows::palette::Overlay;
 use crate::app::flows::unlocked::View;
 use crate::app::screen::Screen;
@@ -72,8 +76,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             if let Some(modal) = state.settings.as_deref() {
                 settings::draw(frame, area, state, modal, ctx);
             }
-            if let Some(dialog) = state.dialog.as_deref() {
-                dialog::draw(frame, area, dialog, ctx);
+            match state.dialog.as_deref() {
+                Some(Dialog::Addresses(list)) => addresses::draw(frame, area, list, state, ctx),
+                Some(Dialog::P2p(scroll)) => p2p_info::draw(frame, area, *scroll, state, ctx),
+                Some(dialog) => dialog::draw(frame, area, dialog, ctx),
+                None => {}
             }
         }
     }

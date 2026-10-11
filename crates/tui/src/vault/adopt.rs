@@ -85,6 +85,9 @@ pub struct AdoptRequest {
     pub password: Zeroizing<Vec<u8>>,
     /// Addresses to try, newest last.
     pub addresses: Vec<String>,
+    /// Addresses the owner typed, which the account's vault keeps once it
+    /// is here.
+    pub manual: Vec<String>,
     /// Addresses on this machine may be dialed.
     pub loopback: bool,
 }
@@ -159,6 +162,7 @@ pub fn adopt_fetched(
         )
         .map_err(|_| UnlockError::Io)?;
     remember_peer(&paths, &session, address);
+    keep_manual(&paths, &session, &request.manual);
     let vault = land(
         (session, file, paths),
         (request.client_id, request.name.clone()),
@@ -169,11 +173,26 @@ pub fn adopt_fetched(
     Ok(vault)
 }
 
+/// The addresses the owner typed on the placeholder stay with the vault that
+/// replaces it.
+fn keep_manual(paths: &Paths, session: &Session, manual: &[String]) {
+    if let Ok(key) = session.personal_peers_key() {
+        manual.iter().rev().for_each(|address| {
+            drop(local::add_manual_peer(
+                &paths.peers_store(),
+                &key,
+                address,
+                true,
+            ));
+        });
+    }
+}
+
 /// A hint cache: failing to write it costs the next session a search.
 fn remember_peer(paths: &Paths, session: &Session, address: &str) {
     let _ = session
         .personal_peers_key()
-        .and_then(|key| remember_personal_peer(&paths.peers_store(), &key, address, true));
+        .and_then(|key| remember_personal_peer(&paths.peers_store(), &key, address));
 }
 
 /// Refuse a file older than the vault this device already holds, or one that

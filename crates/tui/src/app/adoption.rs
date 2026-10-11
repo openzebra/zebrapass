@@ -49,7 +49,13 @@ impl Unlocked {
         if !is_placeholder(&vault.paths) {
             return;
         }
-        let known = p2p.discovered.len();
+        let manual: Vec<String> = self
+            .devices
+            .iter()
+            .filter(|entry| entry.manual)
+            .map(|entry| entry.address.to_string())
+            .collect();
+        let known = p2p.discovered.len() + manual.len();
         let due = p2p.check_due();
         if known == 0 || (known == self.adopt_seen && !due) {
             return;
@@ -66,7 +72,9 @@ impl Unlocked {
                 .iter()
                 .filter(|address| address.parse::<SocketAddr>().is_ok())
                 .cloned()
+                .chain(manual.iter().rev().cloned())
                 .collect(),
+            manual,
             loopback: self.beacon.is_some_and(|config| config.loopback),
         };
         ctx.start(Job::Adopt(Box::new(request)), Task::Adopt);

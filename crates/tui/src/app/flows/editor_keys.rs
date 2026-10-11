@@ -41,6 +41,16 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         }
         return Nav::Stay;
     }
+    let on_toggle = event.code == KeyCode::Enter
+        && matches!(
+            editor.focused(),
+            Some((index, Part::Value))
+                if matches!(editor.fields.get(index).map(|f| &f.value), Some(Value::Toggle(_)))
+        );
+    if on_toggle {
+        type_into(editor, event, ctx);
+        return Nav::Stay;
+    }
     match resolve(Scope::Editor, event) {
         Some(Action::Save) => save(state, ctx),
         Some(Action::Back) => {
@@ -153,6 +163,10 @@ fn save(state: &mut Unlocked, ctx: &mut Ctx) {
     let View::Editor(editor) = &state.view else {
         return;
     };
+    if !editor.dirty && editor.id.is_some() {
+        close(state, ctx);
+        return;
+    }
     let title_empty = editor
         .fields
         .iter()

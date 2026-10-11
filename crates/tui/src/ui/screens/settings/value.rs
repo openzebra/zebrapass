@@ -51,6 +51,7 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
         Row::SyncStatus
         | Row::LastCheckIn
         | Row::SyncPeers
+        | Row::SyncDevices
         | Row::SyncRelays
         | Row::SyncAdvertised
         | Row::SyncBeacon

@@ -1,5 +1,6 @@
 //! Per-screen state and key handling. Drawing lives in `ui::screens`.
 
+pub mod addresses;
 pub mod ceremony;
 pub mod create;
 pub mod dialog;

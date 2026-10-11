@@ -83,6 +83,8 @@ pub enum Row {
     LastCheckIn,
     /// Peers known and reachable.
     SyncPeers,
+    /// Addresses of the account's other devices, typed by the owner.
+    SyncDevices,
     /// Saved relays and whether this node holds a slot.
     SyncRelays,
     /// The address this device offers other members.
@@ -130,7 +132,7 @@ pub enum Row {
 }
 
 /// Every row with its section, in display order.
-pub const ROWS: [(Section, Row); 34] = [
+pub const ROWS: [(Section, Row); 35] = [
     (Section::Security, Row::AutoLock),
     (Section::Security, Row::FocusLock),
     (Section::Security, Row::RevealHide),
@@ -143,6 +145,7 @@ pub const ROWS: [(Section, Row); 34] = [
     (Section::Sync, Row::SyncStatus),
     (Section::Sync, Row::LastCheckIn),
     (Section::Sync, Row::SyncPeers),
+    (Section::Sync, Row::SyncDevices),
     (Section::Sync, Row::SyncRelays),
     (Section::Sync, Row::SyncAdvertised),
     (Section::Sync, Row::SyncBeacon),
@@ -187,6 +190,7 @@ impl Row {
             Self::SyncStatus => "Status",
             Self::LastCheckIn => "Last check-in",
             Self::SyncPeers => "Peers",
+            Self::SyncDevices => "Device addresses",
             Self::SyncRelays => "Relays",
             Self::SyncAdvertised => "Advertised address",
             Self::SyncBeacon => "Beacon",
@@ -228,6 +232,7 @@ impl Row {
             Self::SyncStatus => "Peer-to-peer sync of this vault. l on the Share screen is the only switch between listening, fetch only and off.",
             Self::LastCheckIn => "The latest check-in with your peers, and how it ended. Checks repeat on their own every 15 s.",
             Self::SyncPeers => "Other devices and members this node knows, and how many are connected now.",
+            Self::SyncDevices => "Addresses of your other devices, typed here when no beacon reaches them: another network, another country. Enter opens the list; a adds one.",
             Self::SyncRelays => "Relay slots saved here. A relay only passes sealed traffic; it never holds your data.",
             Self::SyncAdvertised => "The address this device offers other members when it sits behind a port forward. Set it on the Share screen.",
             Self::SyncBeacon => "Whether this device announces itself to your other devices on the local network.",

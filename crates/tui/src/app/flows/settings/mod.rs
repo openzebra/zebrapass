@@ -8,7 +8,7 @@ pub mod apply;
 pub mod posture;
 pub mod rows;
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use local::Prefs;
 
 use crate::app::action::Action;
@@ -147,6 +147,16 @@ fn filter_key(modal: &mut SettingsModal, event: &KeyEvent) {
 }
 
 fn rows_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
+    if event.code == KeyCode::Char('a')
+        && state
+            .settings
+            .as_deref()
+            .and_then(SettingsModal::row)
+            .is_some_and(|row| row == Row::SyncDevices)
+    {
+        state.open_addresses(true);
+        return Nav::Stay;
+    }
     let Some(action) = resolve(Scope::Settings, event) else {
         return Nav::Stay;
     };

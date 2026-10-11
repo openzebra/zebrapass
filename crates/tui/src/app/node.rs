@@ -1,6 +1,8 @@
 //! The node itself: the service, what it serves, and where it tells members
 //! to reach it.
 
+pub mod log;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -77,6 +79,8 @@ pub struct P2p {
     pub relayed: Option<p2p_net::RelayHint>,
     /// How the latest check-in ended; `None` before the first.
     pub last_checkin: Option<CheckIn>,
+    /// What the node reported this session.
+    pub log: crate::app::node::log::EventLog,
     checked: Instant,
 }
 
@@ -131,6 +135,7 @@ impl P2p {
             holds: false,
             relayed: None,
             last_checkin: None,
+            log: crate::app::node::log::EventLog::default(),
             checked: Instant::now(),
         });
         let hints = node.hints();
@@ -182,6 +187,7 @@ impl P2p {
 
     /// Record the outcome a node event reports, when it reports one.
     pub fn note_event(&mut self, event: &Event) {
+        self.log.note(event);
         let outcome = match event {
             Event::Synced { refused: 0, .. } | Event::PersonalPulled { .. } => CheckOutcome::Synced,
             Event::Synced { .. } => CheckOutcome::RefusedChanges,

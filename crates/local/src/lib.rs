@@ -49,7 +49,10 @@ pub use limits::{
 pub use listen::Listen;
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 pub use peer_store::{load_peers, save_peers};
-pub use personal_peers::{load_personal_peers, remember_personal_peer, save_personal_peers};
+pub use personal_peers::{
+    add_manual_peer, load_personal_entries, load_personal_peers, remember_personal_peer,
+    remove_personal_peer, save_personal_entries, save_personal_peers, PersonalPeer,
+};
 pub use prefs::Prefs;
 pub use revocations::Revocations;
 pub use share_keys::{ShareKeys, SharePublics};

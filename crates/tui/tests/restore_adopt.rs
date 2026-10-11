@@ -80,6 +80,7 @@ fn identity(words: &str) -> SyncIdentity {
 fn request(words: &str, base: &Path, password: &str) -> AdoptRequest {
     let phrase = phrase(words);
     AdoptRequest {
+        manual: Vec::new(),
         placeholder: local::paths_for(base, &[0xAA; 16]),
         identity: Arc::new(identity(words)),
         client_id: kdf::client_id(phrase.seed()).unwrap(),

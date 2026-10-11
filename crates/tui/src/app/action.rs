@@ -96,6 +96,8 @@ actions! {
     OpenHealth,
     /// Settings.
     OpenSettings,
+    /// Peer-to-peer state and event log.
+    OpenP2pInfo,
     /// Reset the selected setting to its default.
     ResetSetting,
     /// Reset every setting of the section.
@@ -282,6 +284,7 @@ pub const PALETTE: &[(Action, &str, Section)] = &[
     (Action::ToggleAnimation, "Toggle animations", Section::View),
     (Action::ToggleAscii, "Toggle ASCII glyphs", Section::View),
     (Action::OpenSettings, "Settings", Section::View),
+    (Action::OpenP2pInfo, "Peer-to-peer info", Section::View),
     (Action::Help, "Keyboard shortcuts", Section::View),
     (Action::CreateVault, "Create a new vault", Section::Session),
     (

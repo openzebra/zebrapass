@@ -97,6 +97,9 @@ pub struct Unlocked {
     pub health: Option<Box<HealthReport>>,
     /// The running import read a plain-text export.
     pub import_plaintext: bool,
+    /// What the peer store holds: the addresses typed by the owner and the
+    /// ones learned.
+    pub devices: Vec<local::PersonalPeer>,
 }
 
 impl Unlocked {
@@ -109,6 +112,7 @@ impl Unlocked {
         beacon: Option<p2p_net::BeaconConfig>,
     ) -> Self {
         let cache = build_cache(&vault.session).unwrap_or_default();
+        let devices = crate::app::flows::addresses::load_devices(&vault);
         let crate::app::p2p::Setup {
             identity,
             p2p,
@@ -138,6 +142,7 @@ impl Unlocked {
             settings: None,
             health: None,
             import_plaintext: false,
+            devices,
         };
         state.prune_usage();
         state.load_detail();

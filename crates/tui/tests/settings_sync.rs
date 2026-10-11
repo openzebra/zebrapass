@@ -109,7 +109,7 @@ fn sync_now_with_no_peers_checks_in_without_failing() {
     let mut app = app(&base);
     unlock(&mut app, PASSWORD);
     open_sync(&mut app);
-    for _ in 0..6 {
+    for _ in 0..7 {
         press(&mut app, KeyCode::Down);
     }
     press(&mut app, KeyCode::Enter);
@@ -144,7 +144,7 @@ fn a_real_check_in_shows_its_outcome_and_sync_now_runs_another() {
         .last_checkin
         .unwrap()
         .at;
-    for _ in 0..6 {
+    for _ in 0..7 {
         press(&mut second, KeyCode::Down);
     }
     press(&mut second, KeyCode::Enter);

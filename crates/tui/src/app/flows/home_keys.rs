@@ -112,6 +112,7 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
         Action::OpenSettings => {
             state.settings = Some(Box::new(SettingsModal::open(state, ctx)));
         }
+        Action::OpenP2pInfo => state.dialog = Some(Box::new(Dialog::P2p(0))),
         Action::Lock => return Nav::Lock,
         Action::Quit => return Nav::Quit,
         _ => return crate::app::flows::factors::palette_action(state, action, ctx),

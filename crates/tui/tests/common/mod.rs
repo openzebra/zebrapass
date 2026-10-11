@@ -118,6 +118,11 @@ fn listen_with(base: &Path, password: &str, listen: local::Listen) {
     apply(&mut vault, Op::SavePrefs(Box::new(prefs))).unwrap();
 }
 
+/// Make the node of the vault under `base` never run: sync is off.
+pub fn sync_off_with(base: &Path, password: &str) {
+    listen_with(base, password, local::Listen::Off);
+}
+
 /// Parse a normalized phrase back.
 pub fn phrase(words: &str) -> SeedPhrase {
     let phrase = SecretString::new(words.to_owned().into_boxed_str());
@@ -394,4 +399,106 @@ pub fn titles_of(app: &App) -> Vec<String> {
         .collect();
     titles.sort();
     titles
+}
+
+/// The unlocked state of `app`.
+pub fn unlocked_state(app: &App) -> &tui::app::flows::unlocked::Unlocked {
+    let Screen::Unlocked(state) = &app.screen else {
+        panic!("not unlocked: {}", app.screen.name())
+    };
+    state
+}
+
+/// The device that holds the records, and a new device restored from its
+/// phrase whose beacon cannot hear it: only a typed address can join them.
+pub fn pair(tag: &str) -> (App, App, PathBuf) {
+    let (a, words, _) = announcing_device(
+        &format!("{tag}-a"),
+        beacon(free_udp_port(), free_udp_port()),
+        &["wifi", "bank"],
+    );
+    let base = temp_dir(&format!("{tag}-b"));
+    let b = restore_empty(
+        &base,
+        &words,
+        PASSWORD,
+        beacon(free_udp_port(), free_udp_port()),
+    );
+    (a, b, base)
+}
+
+/// Where the node of `app` listens, as a loopback address.
+pub fn address_of(app: &App) -> String {
+    let port = unlocked_state(app)
+        .p2p
+        .as_ref()
+        .unwrap()
+        .service
+        .local_addr()
+        .unwrap()
+        .port();
+    format!("127.0.0.1:{port}")
+}
+
+/// Settings → Sync → Device addresses, with the list open.
+pub fn open_address_list(app: &mut App) {
+    type_text(app, ",");
+    press(app, KeyCode::Tab);
+    press(app, KeyCode::Tab);
+    for _ in 0..3 {
+        press(app, KeyCode::Down);
+    }
+    press(app, KeyCode::Enter);
+}
+
+/// Type `address` into the list's field and submit.
+pub fn add_address(app: &mut App, address: &str) {
+    press(app, KeyCode::Char('a'));
+    type_text(app, address);
+    press(app, KeyCode::Enter);
+}
+
+/// Tick both apps until `done`, or `within` runs out.
+pub fn tick_both(
+    a: &mut App,
+    b: &mut App,
+    within: Duration,
+    done: impl Fn(&App, &App) -> bool,
+) -> bool {
+    let until = Instant::now() + within;
+    while Instant::now() < until {
+        tick(b, Duration::from_millis(50));
+        tick(a, Duration::from_millis(50));
+        b.wait_for_job(Duration::from_millis(20));
+        a.wait_for_job(Duration::from_millis(20));
+        if done(a, b) {
+            return true;
+        }
+    }
+    done(a, b)
+}
+
+/// [`pair`], with the second device brought in by a typed address and then
+/// left fetch-only, so it dials the typed address on every check-in.
+pub fn adopted_pair(tag: &str) -> (App, App, PathBuf) {
+    let (mut a, mut b, base) = pair(tag);
+    open_address_list(&mut b);
+    add_address(&mut b, &address_of(&a));
+    assert!(
+        tick_both(&mut a, &mut b, Duration::from_secs(60), |_, b| {
+            b.screen.name() == "unlocked" && !is_placeholder(b)
+        }),
+        "the vault never arrived"
+    );
+    for _ in 0..200 {
+        press(&mut b, KeyCode::Char('L'));
+        if b.screen.name() != "unlocked" {
+            break;
+        }
+        b.wait_for_job(Duration::from_millis(20));
+    }
+    press(&mut b, KeyCode::Enter);
+    fetch_only_with(&base, PASSWORD);
+    unlock(&mut b, PASSWORD);
+    (a, b, base)
 }
