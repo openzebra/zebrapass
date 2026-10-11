@@ -23,8 +23,10 @@ use crate::create::Session;
 use crate::rotate::write_records;
 
 mod batch;
+mod ids;
 
 pub use batch::{write_records_batch, MAX_BATCH};
+pub use ids::fresh_record_id;
 
 /// One live record: its winning revision frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -155,14 +157,11 @@ pub fn write_record(
     id: Option<u32>,
     doc: &Document,
 ) -> anyhow::Result<u32> {
-    let refs = index(session)?;
-    let record_id = if let Some(id) = id {
-        id
-    } else {
-        let max = refs.iter().map(|r| r.record_id).max().unwrap_or(0);
-        max.checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("record id overflow"))?
+    let record_id = match id {
+        Some(id) => id,
+        None => fresh_record_id(session)?,
     };
+    let refs = index(session)?;
     let revision = next_revision(latest(&refs, record_id))?;
     let encoded = doc.encode()?;
     append_frame(

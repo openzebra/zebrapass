@@ -33,24 +33,26 @@ fn fresh_vault() -> (container::VaultFile, crate::Session) {
 #[test]
 fn record_lifecycle() {
     let (mut file, mut session) = fresh_vault();
-    let id = write_record(&mut session, &mut file, None, &sample_doc("Blog", "p1")).unwrap();
+    // An id given by the caller is kept, as in a vault written by an older
+    // binary, which numbered its records from 1.
+    let id = write_record(&mut session, &mut file, Some(1), &sample_doc("Blog", "p1")).unwrap();
     assert_eq!(id, 1);
     let listed = list_records(&session).unwrap();
     assert_eq!(
         listed,
         vec![RecordSummary {
-            id: 1,
+            id,
             revision: 1,
             timestamp_ms: listed[0].timestamp_ms
         }]
     );
-    let doc = open_record(&session, 1).unwrap();
+    let doc = open_record(&session, id).unwrap();
     assert_eq!(doc.text(TAG_TITLE).unwrap().unwrap(), "Blog");
 
-    write_record(&mut session, &mut file, Some(1), &sample_doc("Blog", "p2")).unwrap();
-    assert_eq!(history(&session, 1).unwrap().len(), 2);
+    write_record(&mut session, &mut file, Some(id), &sample_doc("Blog", "p2")).unwrap();
+    assert_eq!(history(&session, id).unwrap().len(), 2);
 
-    let restored_rev = restore_revision(&mut session, &mut file, 1, 1).unwrap();
+    let restored_rev = restore_revision(&mut session, &mut file, id, 1).unwrap();
     assert_eq!(restored_rev, 3);
     assert_eq!(
         open_record(&session, 1)
@@ -103,14 +105,92 @@ fn missing_and_deleted_records() {
 }
 
 #[test]
-fn ids_are_allocated_from_the_highest() {
+fn new_records_get_random_ids_that_are_never_zero_and_never_held() {
     let (mut file, mut session) = fresh_vault();
-    let a = write_record(&mut session, &mut file, Some(5), &sample_doc("A", "")).unwrap();
-    let b = write_record(&mut session, &mut file, None, &sample_doc("B", "")).unwrap();
-    assert_eq!((a, b), (5, 6));
-    // Explicit ids can be sparse; allocation follows the maximum.
-    let listed = list_records(&session).unwrap();
-    assert_eq!(listed.len(), 2);
+    // Records numbered the old way stay valid and are never reused.
+    write_record(&mut session, &mut file, Some(1), &sample_doc("old", "")).unwrap();
+    write_record(&mut session, &mut file, Some(2), &sample_doc("older", "")).unwrap();
+    delete_record(&mut session, &mut file, 2).unwrap();
+    let mut seen = std::collections::HashSet::from([1u32, 2]);
+    for n in 0..300 {
+        let id = write_record(
+            &mut session,
+            &mut file,
+            None,
+            &sample_doc(&format!("r{n}"), ""),
+        )
+        .unwrap();
+        assert_ne!(id, 0);
+        assert!(seen.insert(id), "id {id} was handed out twice");
+    }
+    assert_eq!(list_records(&session).unwrap().len(), 301);
+    let beyond_a_counter = seen.iter().filter(|id| **id > 1_000).count();
+    assert!(
+        beyond_a_counter > 290,
+        "ids are spread over the whole range, not counted up"
+    );
+}
+
+#[test]
+fn the_batch_draws_distinct_random_ids_too() {
+    let (mut file, mut session) = fresh_vault();
+    write_record(&mut session, &mut file, Some(7), &sample_doc("Seven", "")).unwrap();
+    let docs: Vec<Document> = (0..200).map(|n| sample_doc(&format!("b{n}"), "")).collect();
+    let ids = write_records_batch(&mut session, &mut file, &docs).unwrap();
+    let distinct: std::collections::HashSet<u32> = ids.iter().copied().collect();
+    assert_eq!(distinct.len(), 200);
+    assert!(!distinct.contains(&0) && !distinct.contains(&7));
+    assert_eq!(list_records(&session).unwrap().len(), 201);
+}
+
+#[test]
+fn a_draw_that_is_zero_or_taken_is_drawn_again_and_the_tries_are_bounded() {
+    use super::ids::pick;
+    use anyhow::anyhow;
+    let mut draws = [0u32, 5, 5, 9].into_iter();
+    let id = pick(|| Ok(draws.next().unwrap()), |id| id == 5).unwrap();
+    assert_eq!(id, 9, "zero and the taken id are skipped");
+
+    let mut tries = 0;
+    let error = pick(
+        || {
+            tries += 1;
+            Ok(5)
+        },
+        |_| true,
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "no free record id");
+    assert_eq!(tries, 32, "bounded, and no fallback to counting");
+
+    let mut tries = 0;
+    let error = pick(
+        || {
+            tries += 1;
+            Err(anyhow!("os entropy failed"))
+        },
+        |_| false,
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "os entropy failed");
+    assert_eq!(tries, 1, "a failing generator is an error, never retried");
+}
+
+#[test]
+fn with_every_other_id_of_the_wire_taken_the_only_free_one_is_found_or_the_search_stops() {
+    use super::ids::pick;
+    // The vault "holds" every id the wire allows except `free`.
+    let free = 4_000_000_000u32;
+    let taken = |id: u32| id != free;
+    let mut near = (free - 20..).map(Ok);
+    assert_eq!(pick(|| near.next().unwrap(), taken).unwrap(), free);
+    let mut far = (free - 40..).map(Ok);
+    assert!(
+        pick(|| far.next().unwrap(), taken).is_err(),
+        "32 draws that miss end the search with an error"
+    );
+    let mut all = 1..=u32::MAX;
+    assert!(pick(|| Ok(all.next().unwrap()), |_| true).is_err());
 }
 
 #[test]
@@ -147,7 +227,7 @@ fn batch_writes_every_record_in_one_generation() {
         sample_doc("C", "pc"),
     ];
     let ids = write_records_batch(&mut session, &mut file, &docs).unwrap();
-    assert_eq!(ids, [1, 2, 3]);
+    assert_eq!(ids.len(), 3);
     assert_eq!(session.generation(), before + 1);
     assert_eq!(list_records(&session).unwrap().len(), 3);
     for (id, password) in ids.iter().zip(["pa", "pb", "pc"]) {
@@ -159,19 +239,6 @@ fn batch_writes_every_record_in_one_generation() {
     }
     let reopened = unlock(&file, &UnlockCreds::master(&[1u8; 64]), None).unwrap();
     assert_eq!(list_records(&reopened).unwrap().len(), 3);
-}
-
-#[test]
-fn batch_ids_continue_after_the_highest() {
-    let (mut file, mut session) = fresh_vault();
-    write_record(&mut session, &mut file, Some(7), &sample_doc("Seven", "")).unwrap();
-    let ids = write_records_batch(
-        &mut session,
-        &mut file,
-        &[sample_doc("X", ""), sample_doc("Y", "")],
-    )
-    .unwrap();
-    assert_eq!(ids, [8, 9]);
 }
 
 #[test]

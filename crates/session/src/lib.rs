@@ -46,9 +46,9 @@ pub use pq::{
     SYNC_VK_LEN,
 };
 pub use records::{
-    clear_history, delete_record, history, list_records, open_record, open_revision,
-    restore_revision, vault_meta, write_record, write_records_batch, write_vault_meta,
-    RecordSummary, RevisionInfo, MAX_BATCH,
+    clear_history, delete_record, fresh_record_id, history, list_records, open_record,
+    open_revision, restore_revision, vault_meta, write_record, write_records_batch,
+    write_vault_meta, RecordSummary, RevisionInfo, MAX_BATCH,
 };
 pub use revocation::{issue_revocation, Revocation};
 pub use rotate::{

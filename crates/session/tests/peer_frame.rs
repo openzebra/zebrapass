@@ -72,23 +72,23 @@ fn a_newer_frame_is_kept_and_the_same_one_again_is_stale() {
 fn a_frame_sealed_under_another_vault_key_is_refused_and_changes_nothing() {
     let (mut first, mut first_file) = vault();
     first.set_origin_device([1; 16]).unwrap();
-    write_record(&mut first, &mut first_file, None, &titled("one")).unwrap();
+    let id = write_record(&mut first, &mut first_file, None, &titled("one")).unwrap();
     let (mut second, mut second_file) = copy_of(&first_file);
     let before = second_file.as_bytes().to_vec();
 
     let meta = FrameMeta {
         kind: KIND_REVISION,
-        record_id: 1,
+        record_id: id,
         revision: 9,
         origin_device: [1; 16],
         timestamp_ms: 0,
         alg: ALG_CASCADE,
     };
-    let foreign = frame_key(&[0xEE; 32], second.vault_id(), 1).unwrap();
+    let foreign = frame_key(&[0xEE; 32], second.vault_id(), id).unwrap();
     let forged = seal(&foreign, &meta, b"forged").unwrap();
     assert!(accept_peer_frame(&mut second, &mut second_file, &forged).is_err());
     assert_eq!(second_file.as_bytes(), before.as_slice());
-    assert_eq!(title(&second, 1), "one");
+    assert_eq!(title(&second, id), "one");
 }
 
 #[test]
@@ -160,10 +160,10 @@ fn a_frame_from_the_zero_origin_or_an_oversized_one_is_refused() {
 #[test]
 fn a_vault_reopens_with_its_key_and_only_with_the_right_one() {
     let (mut first, mut first_file) = vault();
-    write_record(&mut first, &mut first_file, None, &titled("one")).unwrap();
+    let id = write_record(&mut first, &mut first_file, None, &titled("one")).unwrap();
     let key = first.reopen_key();
     let reopened = unlock_with_key(&first_file, &key, [4; 16]).unwrap();
-    assert_eq!(title(&reopened, 1), "one");
+    assert_eq!(title(&reopened, id), "one");
     assert_eq!(reopened.generation(), first.generation());
     assert_eq!(reopened.origin_device(), [4; 16]);
 

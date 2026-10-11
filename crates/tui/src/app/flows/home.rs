@@ -143,15 +143,19 @@ pub fn visible(
             .and_then(|summary| usage.get(summary.id))
             .map_or((0, 0), |entry| (entry.rank(now_ms), entry.last_ms))
     };
+    // Ties end on the title and then the id, never on where a record sits in
+    // the cache: ids are random, so cache order says nothing about age.
+    let name_and_id = |index: usize| {
+        cache
+            .get(index)
+            .map(|summary| (summary.display_title().to_lowercase(), summary.id))
+    };
     if query.trim().is_empty() {
-        scored.sort_by_cached_key(|(_, index)| {
-            let title = cache
-                .get(*index)
-                .map(|summary| summary.display_title().to_lowercase());
-            (Reverse(used(*index)), title)
-        });
+        scored.sort_by_cached_key(|(_, index)| (Reverse(used(*index)), name_and_id(*index)));
     } else {
-        scored.sort_by_key(|(score, index)| (Reverse(*score), Reverse(used(*index))));
+        scored.sort_by_cached_key(|(score, index)| {
+            (Reverse(*score), Reverse(used(*index)), name_and_id(*index))
+        });
     }
     scored.into_iter().map(|(_, index)| index).collect()
 }
@@ -427,5 +431,36 @@ mod tests {
             .map(|index| cache[*index].search_score("bank").unwrap())
             .collect();
         assert!(scores.windows(2).all(|pair| pair[0] >= pair[1]));
+    }
+
+    #[test]
+    fn equal_titles_order_by_id_whatever_the_cache_order() {
+        let make = |ids: [u32; 4]| -> Vec<Summary> {
+            ids.into_iter()
+                .map(|id| {
+                    summary(
+                        id,
+                        if id == 4_000_000_000 { "alpha" } else { "bank" },
+                        false,
+                    )
+                })
+                .collect()
+        };
+        let forward = make([900, 5, 4_000_000_000, 70]);
+        let backward = make([70, 4_000_000_000, 5, 900]);
+        let usage = Usage::default();
+        for cache in [&forward, &backward] {
+            assert_eq!(
+                ids(cache, &visible(cache, &Filter::All, "", None, &usage, NOW)),
+                [4_000_000_000, 5, 70, 900]
+            );
+            assert_eq!(
+                ids(
+                    cache,
+                    &visible(cache, &Filter::All, "bank", None, &usage, NOW)
+                ),
+                [5, 70, 900]
+            );
+        }
     }
 }

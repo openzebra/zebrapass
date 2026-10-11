@@ -87,7 +87,7 @@ fn reuse_groups(passwords: &[(u32, &[u8])]) -> Box<[Box<[u32]>]> {
     order.sort_by_key(|index| {
         passwords
             .get(*index)
-            .map_or(0, |(_, password)| password.len())
+            .map_or((0, 0), |(id, password)| (password.len(), *id))
     });
     let mut grouped = vec![false; passwords.len()];
     let mut groups = Vec::new();

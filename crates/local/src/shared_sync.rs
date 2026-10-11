@@ -8,14 +8,12 @@
 //! lists as a writer, so a reader, a removed member or an outsider cannot add
 //! to the vault even though a reader holds the vault key.
 
-use std::collections::HashSet;
-
 use memberlog::{Action, MemberLog, Role};
 use record::Document;
 use session::{
-    accept_revision, attest_latest, delete_record, frontier, latest_frame, open_record,
-    verify_snapshot, write_record, Accepted, Attestation, Revocation, Session, SessionError, Trust,
-    TrustedAccount,
+    accept_revision, attest_latest, delete_record, fresh_record_id, frontier, latest_frame,
+    open_record, verify_snapshot, write_record, Accepted, Attestation, Revocation, Session,
+    SessionError, Trust, TrustedAccount,
 };
 use syncwire::{decode_bundle, encode_bundle, encode_frontier};
 
@@ -66,22 +64,6 @@ pub fn verdict_of(error: &anyhow::Error) -> Verdict {
         ) => Verdict::Refused,
         _ => Verdict::Invalid,
     }
-}
-
-fn fresh_record_id(vault: &SharedVault) -> anyhow::Result<u32> {
-    let taken: HashSet<u32> = frontier(&vault.session)?
-        .into_iter()
-        .map(|entry| entry.record_id)
-        .collect();
-    for _ in 0..32 {
-        let mut bytes = [0u8; 4];
-        getrandom::fill(&mut bytes)?;
-        let id = u32::from_be_bytes(bytes);
-        if id != 0 && !taken.contains(&id) {
-            return Ok(id);
-        }
-    }
-    Err(anyhow::anyhow!("os entropy failed"))
 }
 
 /// Check a vault file this device did not build against the attestations
@@ -342,7 +324,7 @@ impl SharedVault {
         let own = identity.devices().first().ok_or_else(unavailable)?;
         let id = match edit {
             Edit::Create(doc) => {
-                let id = fresh_record_id(self)?;
+                let id = fresh_record_id(&self.session)?;
                 write_record(&mut self.session, &mut self.file, Some(id), &doc)?;
                 id
             }

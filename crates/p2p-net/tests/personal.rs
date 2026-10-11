@@ -144,6 +144,7 @@ fn the_frontier_and_a_revision_let_a_device_catch_up_one_record_at_a_time() {
     let mut file = VaultFile::new(fetched.file);
     let mut session = unlock(&file, &UnlockCreds::master(&SEED), None).unwrap();
     first.write("mail");
+    let newest = record_titled(&first.session, "mail");
 
     let view = personal_view(
         &second_device(&SEED, 9),
@@ -161,7 +162,6 @@ fn the_frontier_and_a_revision_let_a_device_catch_up_one_record_at_a_time() {
         .block_on(async {
             let mut conn = Conn::connect(&view, &address).await.unwrap();
             let theirs = conn.frontier().await.unwrap();
-            let newest = decode_frontier(&theirs).unwrap().last().unwrap().record_id;
             let revision = conn
                 .revisions(&[(newest, 1)])
                 .await
@@ -173,7 +173,6 @@ fn the_frontier_and_a_revision_let_a_device_catch_up_one_record_at_a_time() {
     let theirs = decode_frontier(&theirs).unwrap();
     assert_eq!(theirs, frontier(&first.session).unwrap());
     assert_eq!(theirs.len(), 3);
-    let newest = theirs.last().unwrap().record_id;
     assert_eq!(frame, latest_frame(&first.session, newest).unwrap());
 
     accept_peer_frame(&mut session, &mut file, &frame).unwrap();
@@ -277,7 +276,7 @@ fn personal_conn_view(address: &str, device: u8) -> p2p_net::VaultView {
 #[test]
 fn a_device_of_the_account_can_push_a_frame_and_the_owner_takes_it_once() {
     let first = First::start(Limits::default());
-    let newest = frontier(&first.session).unwrap().last().unwrap().record_id;
+    let newest = record_titled(&first.session, "bank");
     let frame = latest_frame(&first.session, newest).unwrap();
     let pushed = syncwire::encode_personal_frame(&frame).unwrap();
     let view = personal_conn_view(&first.address, 9);
@@ -311,7 +310,7 @@ fn a_pull_also_sends_the_frames_the_other_device_lacks() {
     let address = node.local_addr().unwrap().to_string();
 
     first.write("mail");
-    let newest = frontier(&first.session).unwrap().last().unwrap().record_id;
+    let newest = record_titled(&first.session, "mail");
     let wanted = latest_frame(&first.session, newest).unwrap();
     first.service.pull_personal(
         personal_conn_view(&address, 9),
@@ -680,4 +679,112 @@ fn a_device_that_listens_nowhere_converges_both_ways_through_its_own_pulls() {
         ["bank", "mail", "wifi on the phone"]
     );
     assert_eq!(titles(&first.session), titles(&phone.session));
+}
+
+/// One pull from `owner`'s node by `device`, applied by `device`; what it
+/// pushed is applied to `first`.
+fn exchange(first: &mut First, phone: &mut Sleeper) {
+    phone.node.pull_personal(
+        personal_conn_view(&first.address, 7),
+        vec![first.address.clone()],
+        frontier(&phone.session).unwrap(),
+        phone.provider.personal_serve(),
+    );
+    let p2p_net::Event::PersonalPulled { frames, .. } = next_personal_event(&phone.node) else {
+        panic!("the pull failed")
+    };
+    phone.apply(&frames);
+    for frame in &first.provider.take_pushed() {
+        accept_peer_frame(&mut first.session, &mut first.file, frame).unwrap();
+    }
+    write_atomic(&first.paths.vault_file, first.file.as_bytes()).unwrap();
+}
+
+fn record_titled(session: &Session, title: &str) -> u32 {
+    list_records(session)
+        .unwrap()
+        .iter()
+        .find(|row| {
+            open_record(session, row.id)
+                .unwrap()
+                .text(TAG_TITLE)
+                .unwrap()
+                == Some(title)
+        })
+        .unwrap()
+        .id
+}
+
+/// Regression pin: two devices that create records while apart used to pick
+/// the same next sequential id, and one record replaced the other.
+#[test]
+fn two_devices_that_create_records_while_apart_both_keep_every_record() {
+    let mut first = First::start(Limits::default());
+    let mut phone = Sleeper::start_with(&first, false);
+    for round in 0..10 {
+        first.write(&format!("laptop {round}"));
+        write_record(
+            &mut phone.session,
+            &mut phone.file,
+            None,
+            &titled(&format!("phone {round}")),
+        )
+        .unwrap();
+    }
+    write_atomic(&phone.path, phone.file.as_bytes()).unwrap();
+    phone.unlock();
+
+    exchange(&mut first, &mut phone);
+
+    let mut expected: Vec<String> = ["wifi", "bank"]
+        .iter()
+        .map(|title| (*title).to_owned())
+        .chain((0..10).flat_map(|n| [format!("laptop {n}"), format!("phone {n}")]))
+        .collect();
+    expected.sort();
+    assert_eq!(titles(&phone.session), expected);
+    assert_eq!(titles(&first.session), expected);
+    assert_eq!(
+        frontier(&phone.session).unwrap(),
+        frontier(&first.session).unwrap()
+    );
+}
+
+#[test]
+fn editing_the_same_record_on_both_devices_is_won_by_revision_then_device_id() {
+    let mut first = First::start(Limits::default());
+    let mut phone = Sleeper::start_with(&first, false);
+    let wifi = record_titled(&first.session, "wifi");
+    write_record(
+        &mut first.session,
+        &mut first.file,
+        Some(wifi),
+        &titled("wifi laptop"),
+    )
+    .unwrap();
+    write_atomic(&first.paths.vault_file, first.file.as_bytes()).unwrap();
+    write_record(
+        &mut phone.session,
+        &mut phone.file,
+        Some(wifi),
+        &titled("wifi phone"),
+    )
+    .unwrap();
+    write_atomic(&phone.path, phone.file.as_bytes()).unwrap();
+    phone.unlock();
+
+    // Both wrote revision 2, so the greater origin device wins.
+    let winner = if first.session.origin_device() > phone.session.origin_device() {
+        "wifi laptop"
+    } else {
+        "wifi phone"
+    };
+    exchange(&mut first, &mut phone);
+    assert_eq!(titles(&phone.session), titles(&first.session));
+    assert!(titles(&first.session).contains(&winner.to_owned()));
+    assert_eq!(titles(&first.session).len(), 2);
+    assert_eq!(
+        frontier(&phone.session).unwrap(),
+        frontier(&first.session).unwrap()
+    );
 }
