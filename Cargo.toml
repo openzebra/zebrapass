@@ -83,10 +83,55 @@ panic = "deny"
 indexing_slicing = "deny"
 cargo_common_metadata = "allow"
 
-# Argon2 dominates debug-build test time; optimize it even in dev.
+# Crypto dominates debug-build test time; optimize it even in dev.
 [profile.dev.package.argon2]
 opt-level = 3
 
 [profile.dev.package.blake2]
 opt-level = 3
 
+[profile.dev.package.ml-kem]
+opt-level = 3
+
+[profile.dev.package.ml-dsa]
+opt-level = 3
+
+[profile.dev.package.p256]
+opt-level = 3
+
+[profile.dev.package.primeorder]
+opt-level = 3
+
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.sha3]
+opt-level = 3
+
+[profile.dev.package.hmac]
+opt-level = 3
+
+[profile.dev.package.hkdf]
+opt-level = 3
+
+[profile.dev.package.aegis]
+opt-level = 3
+
+[profile.dev.package.kuznechik-rs]
+opt-level = 3
+
+[profile.dev.package.module-lattice]
+opt-level = 3
+
+[profile.dev.package.hybrid-array]
+opt-level = 3
+
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1

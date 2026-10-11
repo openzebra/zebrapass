@@ -19,8 +19,8 @@ use std::path::Path;
 
 use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
-use session::{write_record, KdfProfile};
-use tui::app::flows::restore::RestoreField;
+use session::write_record;
+use tui::app::flows::restore::{RestoreField, RestoreStep};
 use tui::app::screen::Screen;
 use tui::vault::discover::discover;
 use tui::vault::open::{unlock_vault, Credential};
@@ -122,11 +122,9 @@ fn set_address_and_continue(app: &mut App, address: &str) {
     while restore_state(app).field != RestoreField::Phrase {
         press(app, KeyCode::BackTab);
     }
-    if !restore_state(app).network {
-        app.on_key(&ctrl('n'));
-    }
     press(app, KeyCode::Tab);
-    assert_eq!(restore_state(app).field, RestoreField::Source);
+    press(app, KeyCode::Tab);
+    assert_eq!(restore_state(app).field, RestoreField::Address);
     for _ in 0..restore_state(app).address.value().len() {
         press(app, KeyCode::Backspace);
     }
@@ -256,7 +254,7 @@ fn an_address_nobody_may_dial_is_refused_on_the_screen() {
         "10.0.0.1",
     ] {
         set_address_and_continue(&mut second, refused);
-        assert_eq!(restore_state(&second).field, RestoreField::Source);
+        assert_eq!(restore_state(&second).field, RestoreField::Address);
         assert_eq!(
             second.screen.name(),
             "restore",
@@ -284,38 +282,109 @@ fn restoring_from_a_file_still_works_as_before() {
     type_phrase(&mut second, &words);
     press(&mut second, KeyCode::Tab);
     assert_eq!(restore_state(&second).field, RestoreField::Source);
-    assert!(!restore_state(&second).network, "a file is the default");
     for _ in 0..restore_state(&second).source.value().len() {
         press(&mut second, KeyCode::Backspace);
     }
     type_text(&mut second, &file.to_string_lossy());
-    assert!(restore_state(&second).source_ready());
+    assert!(!restore_state(&second).file_problem());
     press(&mut second, KeyCode::Enter);
     enroll_password(&mut second);
     assert_eq!(second.screen.name(), "unlocked");
     assert_eq!(titles_of(&second), ["bank", "wifi"]);
 }
 
+/// Type `text` into the file field, replacing what was there.
+fn set_file(app: &mut App, text: &str) {
+    while restore_state(app).field != RestoreField::Phrase {
+        press(app, KeyCode::BackTab);
+    }
+    press(app, KeyCode::Tab);
+    assert_eq!(restore_state(app).field, RestoreField::Source);
+    for _ in 0..restore_state(app).source.value().len() {
+        press(app, KeyCode::Backspace);
+    }
+    type_text(app, text);
+}
+
 #[test]
-fn ctrl_n_switches_between_the_file_and_the_network_and_keeps_both_entries() {
-    let base = temp_dir("net-switch");
+fn an_empty_file_field_is_a_valid_state_and_says_it_syncs_over_the_network() {
+    let base = temp_dir("net-empty-file");
     let mut second = app(&base);
     open_restore(&mut second);
-    assert!(!restore_state(&second).network);
-    press(&mut second, KeyCode::Tab);
-    type_text(&mut second, "x");
-    let file_text = restore_state(&second).source.value().to_owned();
-    second.on_key(&ctrl('n'));
-    assert!(restore_state(&second).network);
-    type_text(&mut second, "192.168.1.5:7447");
-    assert!(restore_state(&second).source_ready());
-    second.on_key(&ctrl('n'));
-    assert!(!restore_state(&second).network);
-    assert_eq!(restore_state(&second).source.value(), file_text);
-    assert_eq!(restore_state(&second).address.value(), "192.168.1.5:7447");
+    assert_eq!(restore_state(&second).source.value(), "");
+    assert!(!restore_state(&second).file_problem());
     let screen = render(&second, 140, 50);
-    assert!(screen.contains("over the network") && screen.contains("from a file"));
-    let _ = KdfProfile::Fast;
+    assert!(screen.contains("Vault file (optional)"), "{screen}");
+    assert!(screen.contains("empty → sync over the network"), "{screen}");
+    assert!(!screen.contains("no vault file at this path"), "{screen}");
+    assert!(!screen.contains("from a file"), "{screen}");
+}
+
+#[test]
+fn a_wrong_non_empty_file_path_is_refused_on_the_screen() {
+    let (_first, words, _address) = first_device("net-wrong-path");
+    let base = temp_dir("net-wrong-path-second");
+    let mut second = app(&base);
+    open_restore(&mut second);
+    type_phrase(&mut second, &words);
+    set_file(&mut second, "/nonexistent/vault.zp");
+    assert!(restore_state(&second).file_problem());
+    assert!(render(&second, 140, 50).contains("no vault file at this path"));
+    press(&mut second, KeyCode::Enter);
+    assert_eq!(second.screen.name(), "restore");
+    assert_eq!(restore_state(&second).step, RestoreStep::Phrase);
+    assert_eq!(
+        restore_state(&second).error,
+        Some("No ZebraPass vault file at that path.")
+    );
+}
+
+#[test]
+fn an_empty_file_and_no_address_toasts_and_starts_nothing() {
+    let (_first, words, _address) = first_device("net-no-address");
+    let base = temp_dir("net-no-address-second");
+    let mut second = app(&base);
+    open_restore(&mut second);
+    type_phrase(&mut second, &words);
+    press(&mut second, KeyCode::Enter);
+    assert_eq!(restore_state(&second).step, RestoreStep::Phrase);
+    assert!(
+        restore_state(&second).error.is_none(),
+        "an empty field is never echoed"
+    );
+    assert!(
+        render(&second, 140, 50).contains("Give a device address, or let the beacon find one."),
+    );
+    assert!(discover(&base).is_empty());
+}
+
+#[test]
+fn a_file_and_an_address_together_use_the_file() {
+    let first_base = temp_dir("both-first");
+    let words = make_vault(&first_base);
+    add_records(&first_base, &["wifi", "bank"]);
+    let file = discover(&first_base)
+        .first()
+        .unwrap()
+        .paths
+        .vault_file
+        .clone();
+    let closed = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().to_string()
+    };
+
+    let base = temp_dir("both-second");
+    let mut second = app(&base);
+    open_restore(&mut second);
+    type_phrase(&mut second, &words);
+    set_file(&mut second, &file.to_string_lossy());
+    press(&mut second, KeyCode::Tab);
+    type_text(&mut second, &closed);
+    press(&mut second, KeyCode::Enter);
+    enroll_password(&mut second);
+    assert_eq!(second.screen.name(), "unlocked");
+    assert_eq!(titles_of(&second), ["bank", "wifi"]);
 }
 
 #[test]

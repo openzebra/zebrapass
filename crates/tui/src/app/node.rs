@@ -238,6 +238,16 @@ impl P2p {
         due
     }
 
+    /// Make the next `check_due` fire as if `CHECK_EVERY` had passed, so a
+    /// test need not wait out the real timer.
+    #[doc(hidden)]
+    pub fn expire_check_timer(&mut self) {
+        self.checked = self
+            .checked
+            .checked_sub(CHECK_EVERY)
+            .unwrap_or(self.checked);
+    }
+
     /// Where other devices can reach this node; empty when it listens
     /// nowhere.
     #[must_use]

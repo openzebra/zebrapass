@@ -682,24 +682,22 @@ fn append_is_constant_time_vs_vault_size() {
     };
 
     let (mut file10, mut s10) = fill(10);
-    let (mut file5k, mut s5k) = fill(5_000);
+    let (mut file500, mut s500) = fill(500);
 
     let t10 = Instant::now();
     session::write_record(&mut s10, &mut file10, None, &Document::new()).unwrap();
     let d10 = t10.elapsed();
 
-    let t5k = Instant::now();
-    session::write_record(&mut s5k, &mut file5k, None, &Document::new()).unwrap();
-    let d5k = t5k.elapsed();
+    let t500 = Instant::now();
+    session::write_record(&mut s500, &mut file500, None, &Document::new()).unwrap();
+    let d500 = t500.elapsed();
 
-    // 500x more records, same order of magnitude of append cost. Generous
-    // bound: the append must not scale with vault size. The padded 256-byte
-    // frame floor makes the 5k vault ~1.3 MB (vs ~35-byte frames before
-    // padding), so the absolute constant is ~50x larger; the bound keeps
-    // the original per-record proportion, and any accidental O(n) re-verify
-    // per frame would blow past it by two orders of magnitude.
+    // 50x more records, same order of magnitude of append cost. Generous
+    // bound: the append must not scale with vault size, and an accidental
+    // O(n) re-verify per frame would cost at least the 50x record ratio on
+    // top of a constant that is already well below the bound.
     assert!(
-        d5k.as_millis() < d10.as_millis().max(1) * 500,
-        "append at 5k records ({d5k:?}) must be O(1) vs 10 records ({d10:?})"
+        d500.as_millis() < d10.as_millis().max(1) * 20,
+        "append at 500 records ({d500:?}) must be O(1) vs 10 records ({d10:?})"
     );
 }

@@ -87,7 +87,6 @@ pub const KEYMAP: &[Binding] = bindings! {
     Restore: ch(' ') => NextWord, "next word";
     Restore: ctrl('r') => RevealWord, "reveal last";
     Restore: ctrl('e') => HideWord, "hide current";
-    Restore: ctrl('n') => RestoreSource, "file / network";
     Restore: ctrl('b') => RestoreFound, "found device";
     Restore: key(KeyCode::Down) => NextField, "field";
     Restore: key(KeyCode::Up) => PrevField;

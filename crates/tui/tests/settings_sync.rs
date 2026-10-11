@@ -20,7 +20,7 @@ use tui::app::screen::Screen;
 use tui::App;
 
 use common::{
-    app, ctrl, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
+    app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
     PASSWORD,
 };
 
@@ -81,11 +81,8 @@ fn restored_from(words: &str, address: &str, tag: &str) -> App {
     press(&mut second, KeyCode::Enter);
     press(&mut second, KeyCode::Enter);
     type_phrase(&mut second, words);
-    second.on_key(&ctrl('n'));
     press(&mut second, KeyCode::Tab);
-    for _ in 0..16 {
-        press(&mut second, KeyCode::Backspace);
-    }
+    press(&mut second, KeyCode::Tab);
     type_text(&mut second, address);
     press(&mut second, KeyCode::Enter);
     type_text(&mut second, SECOND_PASSWORD);

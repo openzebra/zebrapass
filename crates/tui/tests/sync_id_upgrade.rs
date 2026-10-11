@@ -30,7 +30,7 @@ use tui::App;
 use zeroize::Zeroizing;
 
 use common::{
-    app, ctrl, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
+    app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
     PASSWORD,
 };
 
@@ -164,12 +164,12 @@ fn an_old_identity_is_offered_an_upgrade_and_serves_nothing_until_it_is_done() {
     press(&mut second, KeyCode::Enter);
     assert_eq!(second.screen.name(), "restore");
     type_phrase(&mut second, &words);
-    second.on_key(&ctrl('n'));
+    press(&mut second, KeyCode::Tab);
     press(&mut second, KeyCode::Tab);
     let Screen::Restore(restore) = &second.screen else {
         panic!("not restore")
     };
-    assert_eq!(restore.field, RestoreField::Source);
+    assert_eq!(restore.field, RestoreField::Address);
     type_text(&mut second, &address);
     press(&mut second, KeyCode::Enter);
     type_text(&mut second, SECOND_PASSWORD);

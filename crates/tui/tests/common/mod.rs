@@ -161,7 +161,15 @@ pub fn unlock(app: &mut App, password: &str) {
 }
 
 /// Advance the app clock by `by` and run timers.
+///
+/// The node's check-in timer runs on the real clock, so each tick also
+/// expires it: a test waiting for sync does not wait out the interval.
 pub fn tick(app: &mut App, by: Duration) {
+    if let Screen::Unlocked(state) = &mut app.screen {
+        if let Some(node) = state.p2p.as_deref_mut() {
+            node.expire_check_timer();
+        }
+    }
     let now = app.ctx.now + by;
     app.on_tick(now);
 }

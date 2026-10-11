@@ -1,5 +1,7 @@
-//! Restore from phrase: type the words, point at the vault file (a backup or
-//! a copy from another device), then enroll this device's own factor.
+//! Restore from phrase, with an optional vault file or device address.
+//!
+//! The file is only a bootstrap shortcut; the network always carries the data
+//! after unlock. Then this device's own factor is enrolled.
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +14,7 @@ use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::editing::{edit_secret, edit_text, printable, Edit};
 use crate::app::flows::enroll::{EnrollEvent, EnrollState};
+pub use crate::app::flows::restore_field::RestoreField;
 use crate::app::flows::unlock::MAX_PASSPHRASE;
 use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::Nav;
@@ -20,8 +23,8 @@ use crate::secure::phrase_input::{secret_string, PhraseInput, Typed};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
+use crate::ui::widgets::toast::Tone;
 use crate::vault::create::{Enrollment, RestoreSource, RestoreVault};
-use crate::vault::discover::discover;
 use crate::vault::factors::presence;
 use crate::vault::limits::{MAX_PATH_INPUT, MAX_VAULT_NAME};
 use crate::vault::open::read_directory;
@@ -44,39 +47,6 @@ pub enum RestoreStep {
     Enroll,
 }
 
-/// Focus on the phrase step, in Tab order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RestoreField {
-    /// The words.
-    Phrase,
-    /// Vault file path.
-    Source,
-    /// Display name.
-    Name,
-    /// Optional 25th word.
-    Passphrase,
-}
-
-impl RestoreField {
-    const ORDER: [Self; 4] = [Self::Phrase, Self::Source, Self::Name, Self::Passphrase];
-
-    fn shift(self, forward: bool) -> Self {
-        let at = Self::ORDER
-            .iter()
-            .position(|field| *field == self)
-            .unwrap_or(0);
-        let next = if forward {
-            at + 1
-        } else {
-            at + Self::ORDER.len() - 1
-        };
-        Self::ORDER
-            .get(next % Self::ORDER.len())
-            .copied()
-            .unwrap_or(Self::Phrase)
-    }
-}
-
 /// Restore state.
 #[derive(Debug)]
 pub struct RestoreState {
@@ -86,13 +56,10 @@ pub struct RestoreState {
     pub phrase: PhraseInput,
     /// Optional passphrase.
     pub passphrase: SecretInput,
-    /// Vault file path.
+    /// Optional vault file path; empty means sync over the network.
     pub source: TextInput,
-    /// Address of another device of the account, for a restore over the
-    /// network.
+    /// Optional address of another device of the account.
     pub address: TextInput,
-    /// The vault comes from another device instead of a file.
-    pub network: bool,
     /// Display name.
     pub name: TextInput,
     /// Focus.
@@ -103,6 +70,8 @@ pub struct RestoreState {
     pub reveal: RevealGuard,
     /// The validated phrase, between the two steps.
     pub parsed: Option<Box<SeedPhrase>>,
+    /// Where the vault comes from, resolved when the factor step opens.
+    resolved: Option<RestoreSource>,
     /// Factor step.
     pub enroll: EnrollState,
     /// Unlock factors in the file at `source`; `None` when it is not a vault.
@@ -122,31 +91,23 @@ pub struct RestoreState {
 }
 
 impl RestoreState {
-    /// Restore screen, pre-filled with `source` or the first vault on disk.
+    /// Restore screen. The file field starts empty, so the network is the
+    /// default path; only an explicit `source` pre-fills it.
     #[must_use]
     pub fn new(source: Option<PathBuf>, ctx: &Ctx) -> Self {
-        let guess = source.or_else(|| ctx.vault_file.clone()).or_else(|| {
-            discover(&ctx.base)
-                .into_iter()
-                .next()
-                .map(|vault| vault.paths.vault_file)
-        });
-        let path = guess
-            .as_deref()
-            .map(Path::to_string_lossy)
-            .unwrap_or_default();
+        let path = source.map_or_else(String::new, |path| path.to_string_lossy().into_owned());
         let mut state = Self {
             step: RestoreStep::Phrase,
             phrase: PhraseInput::default(),
             passphrase: SecretInput::new(MAX_PASSPHRASE),
             source: TextInput::with_value(&path, MAX_PATH_INPUT),
             address: TextInput::with_value("", MAX_ADDRESS_INPUT),
-            network: false,
             name: TextInput::with_value("Personal", MAX_VAULT_NAME),
             field: RestoreField::Phrase,
             hide_current: false,
             reveal: RevealGuard::default(),
             parsed: None,
+            resolved: None,
             enroll: EnrollState::new(false),
             source_factors: None,
             error: None,
@@ -170,10 +131,10 @@ impl RestoreState {
     }
 
     /// Keep listening for beacons of the account the phrase in the form
-    /// belongs to, while it is a whole, valid phrase and the restore is over
-    /// the network; otherwise stop and forget what was found.
+    /// belongs to, while it is a whole, valid phrase; otherwise stop and
+    /// forget what was found.
     fn refresh_listener(&mut self) {
-        let seed = (self.network && self.beacon.is_some() && self.phrase.plausible())
+        let seed = (self.beacon.is_some() && self.phrase.plausible())
             .then(|| secret_string(self.passphrase.expose()))
             .flatten()
             .and_then(|passphrase| SeedPhrase::parse(&self.phrase.to_secret(), &passphrase).ok());
@@ -225,7 +186,7 @@ impl RestoreState {
     /// Put the next found device in the address field. It is not used until
     /// the person continues.
     fn use_found(&mut self) {
-        if !self.network || self.found.is_empty() {
+        if self.found.is_empty() {
             return;
         }
         let at = if self.address.value() == self.found.get(self.picked).map_or("", |a| a) {
@@ -240,21 +201,20 @@ impl RestoreState {
         }
     }
 
-    /// Whether the source looks usable: a vault file, or an address.
+    /// A file path is typed in and it is not a vault file. An empty field is
+    /// a valid state, never a problem.
     #[must_use]
-    pub fn source_ready(&self) -> bool {
-        if self.network {
-            self.peer_address().is_ok()
-        } else {
-            self.source_factors.is_some()
-        }
+    pub fn file_problem(&self) -> bool {
+        !self.source.value().trim().is_empty() && self.source_factors.is_none()
     }
 
     /// Re-read the wrap directory at `source`. Unauthenticated: this only
     /// tells the user whether the path points at a vault.
     fn check_source(&mut self) {
-        self.source_factors = read_directory(Path::new(self.source.value().trim()))
-            .ok()
+        let path = self.source.value().trim();
+        self.source_factors = (!path.is_empty())
+            .then(|| read_directory(Path::new(path)).ok())
+            .flatten()
             .map(|directory| directory.factors.len());
     }
 
@@ -310,7 +270,10 @@ impl RestoreState {
         }
         let text_field = matches!(
             self.field,
-            RestoreField::Source | RestoreField::Name | RestoreField::Passphrase
+            RestoreField::Source
+                | RestoreField::Address
+                | RestoreField::Name
+                | RestoreField::Passphrase
         );
         match resolve(Scope::Restore, event) {
             // Space types into text fields; Tab still moves between them.
@@ -323,13 +286,13 @@ impl RestoreState {
             RestoreField::Passphrase => {
                 edit_secret(&mut self.passphrase, event);
             }
-            RestoreField::Source if self.network => {
-                edit_text(&mut self.address, event);
-            }
             RestoreField::Source => {
                 if edit_text(&mut self.source, event) == Edit::Consumed {
                     self.check_source();
                 }
+            }
+            RestoreField::Address => {
+                edit_text(&mut self.address, event);
             }
             RestoreField::Name => {
                 edit_text(&mut self.name, event);
@@ -360,12 +323,12 @@ impl RestoreState {
                 self.passphrase.insert_str(text);
                 self.refresh_listener();
             }
-            RestoreField::Source if self.network => {
-                self.address.insert_str(text);
-            }
             RestoreField::Source => {
                 self.source.insert_str(text);
                 self.check_source();
+            }
+            RestoreField::Address => {
+                self.address.insert_str(text);
             }
             RestoreField::Name => {
                 self.name.insert_str(text);
@@ -401,11 +364,6 @@ impl RestoreState {
             Action::NextField | Action::PrevField => {
                 self.field = self.field.shift(action == Action::NextField);
             }
-            Action::RestoreSource => {
-                self.network = !self.network;
-                self.error = None;
-                self.refresh_listener();
-            }
             Action::RestoreFound => self.use_found(),
             Action::Confirm => self.enter_enroll(ctx),
             Action::Back => return Nav::To(crate::app::flows::gate::initial_screen(ctx)),
@@ -431,19 +389,10 @@ impl RestoreState {
             self.error = Some("Give the vault a name.");
             return;
         }
-        let existing = if self.network {
-            if let Err(problem) = self.peer_address() {
-                self.error = Some(problem);
-                return;
-            }
-            false
-        } else {
-            let Ok(directory) = read_directory(Path::new(self.source.value().trim())) else {
-                self.error = Some("No ZebraPass vault file at that path.");
-                return;
-            };
-            presence(&directory, None).password
+        let Some((source, existing)) = self.resolve_source(ctx) else {
+            return;
         };
+        self.resolved = Some(source);
         self.parsed = Some(Box::new(parsed));
         self.listener = None;
         self.phrase.clear();
@@ -456,22 +405,49 @@ impl RestoreState {
         }
     }
 
+    /// Where the vault comes from, and whether its file already has a
+    /// password factor. A typed file wins over an address; with no file an
+    /// address is required, typed or heard from a beacon.
+    fn resolve_source(&mut self, ctx: &mut Ctx) -> Option<(RestoreSource, bool)> {
+        let path = self.source.value().trim();
+        if !path.is_empty() {
+            let Ok(directory) = read_directory(Path::new(path)) else {
+                self.error = Some("No ZebraPass vault file at that path.");
+                return None;
+            };
+            let existing = presence(&directory, None).password;
+            return Some((RestoreSource::File(PathBuf::from(path)), existing));
+        }
+        let address = if self.address.value().trim().is_empty() {
+            let Some(found) = self.found.get(self.picked).or_else(|| self.found.first()) else {
+                ctx.toast(
+                    Tone::Warn,
+                    "Give a device address, or let the beacon find one.",
+                );
+                return None;
+            };
+            found.clone()
+        } else {
+            match self.peer_address() {
+                Ok(address) => address,
+                Err(problem) => {
+                    self.error = Some(problem);
+                    return None;
+                }
+            }
+        };
+        Some((RestoreSource::Network(address), false))
+    }
+
     fn finish(&mut self, factor: Enrollment, ctx: &mut Ctx) {
-        let Some(phrase) = self.parsed.take() else {
+        let (Some(phrase), Some(source)) = (self.parsed.take(), self.resolved.take()) else {
             return;
         };
         let request = RestoreVault {
             phrase,
             name: self.name.value().trim().to_owned(),
             base: ctx.base.clone(),
-            source: self
-                .network
-                .then(|| self.peer_address().ok())
-                .flatten()
-                .map_or_else(
-                    || RestoreSource::File(PathBuf::from(self.source.value().trim())),
-                    RestoreSource::Network,
-                ),
+            source,
             profile: KdfProfile::Balanced,
             factor,
         };

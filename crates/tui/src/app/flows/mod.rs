@@ -22,6 +22,7 @@ pub mod info;
 pub mod palette;
 pub mod panels;
 pub mod restore;
+mod restore_field;
 pub mod settings;
 pub mod share;
 pub mod share_advertise;

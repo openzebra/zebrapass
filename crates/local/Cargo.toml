@@ -18,12 +18,12 @@ memberlog = { path = "../memberlog" }
 pq = { path = "../pq" }
 record = { path = "../record" }
 secret = { path = "../secret" }
-seed = { path = "../seed" }
 session = { path = "../session" }
 syncwire = { path = "../syncwire" }
 zeroize.workspace = true
 
 [dev-dependencies]
+seed = { path = "../seed" }
 sha2.workspace = true
 
 [lints]

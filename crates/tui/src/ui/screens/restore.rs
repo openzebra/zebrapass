@@ -1,5 +1,5 @@
 //! Restore from phrase: masked word grid with autocomplete, passphrase,
-//! vault file, and name. Then the enroll step.
+//! optional vault file and device address, and name. Then the enroll step.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -145,7 +145,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
     frame.render_widget(block, card);
     let columns = slot_columns(inner.width.saturating_sub(6));
     let grid_rows = u16::try_from(MAX_WORDS.div_ceil(columns)).unwrap_or(24);
-    let [phrase_head, grid, suggest, _, file_head, file, file_status, method, details, footer] =
+    let [phrase_head, grid, suggest, _, source_head, sources, source_status_row, details, footer] =
         Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(grid_rows + 2),
@@ -153,7 +153,6 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(3),
-            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(4),
             Constraint::Min(3),
@@ -168,75 +167,61 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
         ctx,
     );
     draw_words(frame, grid, suggest, state, columns, ctx);
-    if state.network {
-        section(
-            frame,
-            file_head,
-            "2",
-            "Another device",
-            "its address, ip:port",
-            ctx,
-        );
-    } else {
-        section(
-            frame,
-            file_head,
-            "2",
-            "Vault file",
-            "backup or copy from another device",
-            ctx,
-        );
-    }
-    let file_focus = state.field == RestoreField::Source;
-    let file_rect = Rect {
-        x: file.x + 2,
-        width: file.width.saturating_sub(4),
-        ..file
-    };
-    let typed = if state.network {
-        &state.address
-    } else {
-        &state.source
-    };
-    boxed(
-        frame,
-        file_rect,
-        text_line(typed, file_rect.width.saturating_sub(2), file_focus, theme),
-        file_focus,
-        theme,
-    );
-    frame.render_widget(Paragraph::new(source_status(state, theme)), file_status);
-    frame.render_widget(Paragraph::new(method_line(state, theme)), method);
+    draw_sources(frame, [source_head, sources, source_status_row], state, ctx);
     draw_details(frame, details, state, ctx);
     draw_footer(frame, footer, state, ctx);
     hint_bar(frame, hints, Scope::Restore, "", ctx);
 }
 
-/// What is known about the source so far.
-fn source_status<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
-    if state.network {
-        return match (
-            state.address.value().trim().is_empty(),
-            state.peer_address(),
-        ) {
-            (true, _) if !state.found.is_empty() => Span::styled(
-                format!(
-                    "    {} found on this network  ·  ctrl-b puts one in the field",
-                    state.found.len()
-                ),
-                theme.accent(),
-            ),
-            (true, _) => Span::styled(
-                "    the phrase and a device that is on and unlocked are enough",
-                theme.muted(),
-            ),
-            (false, Ok(address)) => {
-                Span::styled(format!("    {} {address}", theme.glyphs.ok), theme.accent())
-            }
-            (false, Err(problem)) => {
-                Span::styled(format!("    {} {problem}", theme.glyphs.fail), theme.warn())
-            }
-        };
+/// The optional vault file and the optional device address, side by side.
+fn draw_sources(
+    frame: &mut Frame<'_>,
+    [head, boxes, status]: [Rect; 3],
+    state: &RestoreState,
+    ctx: &Ctx,
+) {
+    let theme = &ctx.theme;
+    let columns = [Constraint::Percentage(50), Constraint::Percentage(50)];
+    let [file_head, address_head] = Layout::horizontal(columns).areas(head);
+    let [file_box, address_box] = Layout::horizontal(columns).areas(boxes);
+    let [file_status, address_status] = Layout::horizontal(columns).areas(status);
+    let label = |text: &'static str| Paragraph::new(Span::styled(text, theme.strong()));
+    frame.render_widget(label("  2  Vault file (optional)"), file_head);
+    frame.render_widget(
+        label(if address_head.width >= 40 {
+            "  Device address (optional with beacon)"
+        } else {
+            "  Device address (optional)"
+        }),
+        address_head,
+    );
+    let inset = |rect: Rect| Rect {
+        x: rect.x + 2,
+        width: rect.width.saturating_sub(4),
+        ..rect
+    };
+    for (rect, input, field) in [
+        (file_box, &state.source, RestoreField::Source),
+        (address_box, &state.address, RestoreField::Address),
+    ] {
+        let focus = state.field == field;
+        let rect = inset(rect);
+        boxed(
+            frame,
+            rect,
+            text_line(input, rect.width.saturating_sub(2), focus, theme),
+            focus,
+            theme,
+        );
+    }
+    frame.render_widget(Paragraph::new(file_hint(state, theme)), file_status);
+    frame.render_widget(Paragraph::new(address_hint(state, theme)), address_status);
+}
+
+/// What is known about the vault file: nothing to say when it is empty.
+fn file_hint<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
+    if state.source.value().trim().is_empty() {
+        return Span::styled("    empty → sync over the network", theme.muted());
     }
     state.source_factors.map_or_else(
         || {
@@ -257,41 +242,25 @@ fn source_status<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
     )
 }
 
-/// Which source is chosen, and how to switch.
-fn method_line<'a>(state: &RestoreState, theme: &Theme) -> Line<'a> {
-    let (file, network) = if state.network {
-        ("( ) from a file", "(•) over the network")
-    } else {
-        ("(•) from a file", "( ) over the network")
-    };
-    let ascii = |text: &'a str| {
-        if theme.ascii {
-            text.replace('•', "*")
+/// What is known about the device address typed in, or heard.
+fn address_hint<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
+    if state.address.value().trim().is_empty() {
+        return if state.found.is_empty() {
+            Span::styled("    a device that is on and unlocked", theme.muted())
         } else {
-            text.to_owned()
-        }
-    };
-    Line::from(vec![
-        Span::styled("    ", theme.muted()),
-        Span::styled(
-            ascii(file),
-            if state.network {
-                theme.muted()
-            } else {
-                theme.accent()
-            },
-        ),
-        Span::styled("   ", theme.muted()),
-        Span::styled(
-            ascii(network),
-            if state.network {
-                theme.accent()
-            } else {
-                theme.muted()
-            },
-        ),
-        Span::styled("   Ctrl-N switches", theme.muted()),
-    ])
+            Span::styled(
+                format!(
+                    "    {} found  ·  ctrl-b puts one in the field",
+                    state.found.len()
+                ),
+                theme.accent(),
+            )
+        };
+    }
+    match state.peer_address() {
+        Ok(address) => Span::styled(format!("    {} {address}", theme.glyphs.ok), theme.accent()),
+        Err(problem) => Span::styled(format!("    {} {problem}", theme.glyphs.fail), theme.warn()),
+    }
 }
 
 /// `3 / 24 words` plus a short bar.
@@ -451,7 +420,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ct
             },
         );
     }
-    let ready = state.phrase.plausible() && state.source_ready();
+    let ready = state.phrase.plausible();
     let rect = Rect {
         x: action.x + 1,
         width: action.width.saturating_sub(3),

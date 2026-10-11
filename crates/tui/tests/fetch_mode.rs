@@ -33,8 +33,8 @@ use tui::App;
 use zeroize::Zeroizing;
 
 use common::{
-    app, app_with, config, ctrl, keep_to_this_device, make_vault, press, render, temp_dir,
-    type_text, unlock, wait, CAPS, PASSWORD,
+    app, app_with, config, keep_to_this_device, make_vault, press, render, temp_dir, type_text,
+    unlock, wait, CAPS, PASSWORD,
 };
 
 const SECOND_PASSWORD: &str = "another-long-password-for-B-77";
@@ -127,11 +127,9 @@ fn set_address_and_continue(app: &mut App, address: &str) {
     while restore_state(app).field != RestoreField::Phrase {
         press(app, KeyCode::BackTab);
     }
-    if !restore_state(app).network {
-        app.on_key(&ctrl('n'));
-    }
     press(app, KeyCode::Tab);
-    assert_eq!(restore_state(app).field, RestoreField::Source);
+    press(app, KeyCode::Tab);
+    assert_eq!(restore_state(app).field, RestoreField::Address);
     for _ in 0..restore_state(app).address.value().len() {
         press(app, KeyCode::Backspace);
     }
