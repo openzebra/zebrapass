@@ -95,7 +95,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, cursor: usize, 
         Span::styled("  (from the phrase)", theme.muted()),
     ]));
     lines.push(Line::from(Span::styled(
-        "  Device certificates and last-sync times come from the sync server (not built yet).",
+        "  Device certificates are kept in sync.id; check-in times are per peer.",
         theme.muted(),
     )));
     frame.render_widget(Paragraph::new(lines), inner);

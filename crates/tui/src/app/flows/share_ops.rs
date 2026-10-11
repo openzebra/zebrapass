@@ -321,34 +321,56 @@ impl Unlocked {
         Ok(())
     }
 
+    /// Check in with a ready shared vault's members, or ask again for a
+    /// pending one. `None` when there is no such vault; otherwise whether the
+    /// node could be asked.
+    fn check_shared(&mut self, index: usize) -> Option<bool> {
+        let ready = self.shared.get(index).map(SharedItem::ready)?;
+        self.ensure_p2p();
+        if !ready {
+            return Some(self.retry(index));
+        }
+        Some(
+            self.p2p
+                .as_deref()
+                .zip(self.shared.get(index))
+                .map(|(p2p, item)| crate::app::p2p::fetch(p2p, item))
+                .is_some(),
+        )
+    }
+
     pub(super) fn retry_selected(&mut self, ctx: &mut Ctx) {
         let cursor = self.share_cursor();
         let ready = self.shared.get(cursor).map(SharedItem::ready);
-        match ready {
-            None => ctx.toast(Tone::Info, "Nothing to sync yet."),
-            Some(true) => {
-                self.ensure_p2p();
-                let checked = self
-                    .p2p
-                    .as_deref()
-                    .zip(self.shared.get(cursor))
-                    .map(|(p2p, item)| crate::app::p2p::fetch(p2p, item))
-                    .is_some();
-                if checked {
-                    ctx.toast(Tone::Info, "Checking with the members.");
-                } else {
-                    ctx.toast(Tone::Warn, "Could not start the node.");
-                }
-            }
-            Some(false) => {
-                self.ensure_p2p();
-                if self.retry(cursor) {
-                    ctx.toast(Tone::Info, "Asking the members again.");
-                } else {
-                    ctx.toast(Tone::Warn, "Could not start the node.");
-                }
-            }
+        match (self.check_shared(cursor), ready) {
+            (None, _) => ctx.toast(Tone::Info, "Nothing to sync yet."),
+            (Some(true), Some(true)) => ctx.toast(Tone::Info, "Checking with the members."),
+            (Some(true), _) => ctx.toast(Tone::Info, "Asking the members again."),
+            (Some(false), _) => ctx.toast(Tone::Warn, "Could not start the node."),
         }
+    }
+
+    /// Check in with every peer once, now: each shared vault's members and
+    /// the account's other devices.
+    pub fn sync_now(&mut self, ctx: &mut Ctx) {
+        if self.p2p.is_none() && self.listen_mode() == Listen::Off {
+            ctx.toast(
+                Tone::Info,
+                "Sync is off for this vault. l on the Share screen turns it on.",
+            );
+            return;
+        }
+        if !self.ensure_p2p() {
+            ctx.toast(Tone::Warn, "Could not start the node.");
+            return;
+        }
+        (0..self.shared.len()).for_each(|index| {
+            self.check_shared(index);
+        });
+        if let (Some(p2p), Some(vault)) = (self.p2p.as_deref(), self.vault.as_deref()) {
+            crate::app::personal::pull_personal(p2p, vault);
+        }
+        ctx.toast(Tone::Info, "Checking with your peers.");
     }
 
     pub(super) fn cycle_listen(&mut self, ctx: &mut Ctx) {

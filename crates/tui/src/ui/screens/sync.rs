@@ -134,7 +134,9 @@ fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
     }
 }
 
-fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
+/// What the node is doing, and whether it is up, as the node line and the
+/// settings status row both say it.
+pub(crate) fn node_text(state: &Unlocked, theme: &Theme) -> (String, bool) {
     let mode = match state.listen_mode() {
         Listen::Lan => "local network".to_owned(),
         Listen::Beacon => "local network, announced".to_owned(),
@@ -146,25 +148,27 @@ fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
         .p2p
         .as_deref()
         .is_some_and(|p2p| p2p.relayed.is_some());
-    let (text, style) = match state.p2p.as_deref().map(|p2p| p2p.service.local_addr()) {
+    match state.p2p.as_deref().map(|p2p| p2p.service.local_addr()) {
         Some(Some(addr)) if relayed => (
             format!("{} listening {addr} · announced via relay", theme.glyphs.on),
-            theme.accent(),
+            true,
         ),
         Some(None) if state.listen_mode() == Listen::Fetch => {
-            (format!("{} {mode}", theme.glyphs.on), theme.accent())
+            (format!("{} {mode}", theme.glyphs.on), true)
         }
-        Some(None) if relayed => (
-            String::from("not listening · announced via relay"),
-            theme.accent(),
-        ),
+        Some(None) if relayed => (String::from("not listening · announced via relay"), true),
         Some(Some(addr)) => (
             format!("{} listening {addr} · {mode}", theme.glyphs.on),
-            theme.accent(),
+            true,
         ),
-        Some(None) => (format!("not listening · {mode}"), theme.muted()),
-        None => (format!("stopped · {mode}"), theme.muted()),
-    };
+        Some(None) => (format!("not listening · {mode}"), false),
+        None => (format!("stopped · {mode}"), false),
+    }
+}
+
+fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
+    let (text, up) = node_text(state, theme);
+    let style = if up { theme.accent() } else { theme.muted() };
     Line::from(vec![
         Span::styled(format!("{INDENT}{:<14}", "node"), theme.muted()),
         Span::styled(text, style),

@@ -4,6 +4,7 @@
 //! one-line switcher when narrow), rows with staged values, the reason
 //! behind the selected row, and the unsaved count.
 
+mod sync_value;
 mod value;
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -149,9 +150,6 @@ fn draw_rail(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &T
             if changed.contains(section) {
                 spans.push(Span::styled(format!(" {}", theme.glyphs.dot), theme.warn()));
             }
-            if *section == Section::Sync {
-                spans.push(Span::styled(" soon", theme.muted()));
-            }
             Line::from(spans)
         })
         .collect();
@@ -199,13 +197,7 @@ fn draw_rows(
             let pointer = if chosen { theme.glyphs.pointer } else { " " };
             let label = format!(" {pointer} {:<LABEL_WIDTH$}", row.label());
             let mut spans = vec![Span::styled(label, row_style(chosen, theme))];
-            let editing = chosen && modal.focus == Focus::Edit;
-            if editing {
-                let width = u16::try_from(value_width).unwrap_or(u16::MAX);
-                spans.extend(text_line(&modal.edit, width, true, theme).spans);
-            } else {
-                spans.extend(value_spans(*row, chosen, value_width, state, modal, ctx));
-            }
+            spans.extend(value_spans(*row, chosen, value_width, state, modal, ctx));
             if row.changed(&modal.draft, &modal.saved) {
                 spans.push(Span::styled(
                     format!("  {}", theme.glyphs.dot),
@@ -272,12 +264,6 @@ fn draw_why(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Th
         ..area
     };
     let mut lines = Vec::with_capacity(3);
-    if let Some(error) = modal.error {
-        lines.push(Line::from(Span::styled(
-            format!("{} {error}", theme.glyphs.fail),
-            theme.danger(),
-        )));
-    }
     if let Some(row) = modal.row() {
         lines.push(Line::from(Span::styled(row.why(), theme.muted())));
         if row == Row::Theme {

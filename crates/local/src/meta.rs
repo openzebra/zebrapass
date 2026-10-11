@@ -173,8 +173,9 @@ mod tests {
 
     use std::fmt::Write as _;
 
+    use frame::{seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
     use kdf::{frame_key, local_meta_key};
-    use record::TAG_DEVICE_ID;
+    use record::{ValueType, TAG_DEVICE_ID};
 
     use super::{load_local_meta, meta_document, meta_from_document, save_local_meta, LocalMeta};
 
@@ -271,6 +272,49 @@ mod tests {
             load_local_meta(&path, &other).unwrap_err().to_string(),
             "frame authentication failed"
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_vault_saved_with_the_retired_server_tags_loads_and_drops_them() {
+        let dir = temp_dir("legacy");
+        let path = dir.join("local.meta");
+        let key = local_meta_key(&[9u8; 32], &[7u8; 16]).unwrap();
+        let mut meta = sample_meta();
+        meta.prefs = Some(crate::Prefs {
+            lock_after_s: 120,
+            clip_clear_s: 10,
+            ..crate::Prefs::default()
+        });
+        let mut doc = meta_document(&meta);
+        doc.set_data(record::TAG_PREF_SYNC_MODE, ValueType::Bytes, &[2]);
+        doc.set_text(record::TAG_PREF_SERVER_ORIGIN, "https://sync.example");
+        doc.set_data(record::TAG_PREF_SERVER_PIN, ValueType::Bytes, &[5; 32]);
+        let frame_meta = FrameMeta {
+            kind: KIND_REVISION,
+            record_id: 0,
+            revision: 1,
+            origin_device: meta.device_id,
+            timestamp_ms: meta.created_at_ms,
+            alg: ALG_CASCADE,
+        };
+        let bytes = seal(&key, &frame_meta, &doc.encode().unwrap()).unwrap();
+        fs::write(&path, &bytes).unwrap();
+
+        let loaded = load_local_meta(&path, &key).unwrap();
+        assert_eq!(loaded, meta, "other preferences are intact");
+        assert_eq!(fs::read(&path).unwrap(), bytes, "loading writes nothing");
+
+        save_local_meta(&path, &loaded, &key).unwrap();
+        let saved = frame::open(&key, &fs::read(&path).unwrap()).unwrap();
+        let saved = record::Document::parse(saved.expose()).unwrap();
+        for tag in [
+            record::TAG_PREF_SYNC_MODE,
+            record::TAG_PREF_SERVER_ORIGIN,
+            record::TAG_PREF_SERVER_PIN,
+        ] {
+            assert!(saved.get(tag).is_none());
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 }

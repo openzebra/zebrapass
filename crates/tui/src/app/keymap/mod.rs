@@ -65,8 +65,6 @@ pub enum Scope {
     History,
     /// Settings.
     Settings,
-    /// Editing a text setting.
-    SettingsEdit,
     /// A dialog.
     Dialog,
     /// Command palette.
@@ -107,7 +105,6 @@ impl Scope {
             Self::Health => "Health",
             Self::History => "History",
             Self::Settings => "Settings",
-            Self::SettingsEdit => "Settings text",
             Self::Dialog => "Dialogs",
             Self::Palette => "Command palette",
             Self::Help => "Help",
@@ -212,7 +209,7 @@ pub fn in_scope(scope: Scope) -> impl Iterator<Item = &'static Binding> {
 }
 
 /// Every scope, in help-screen order.
-pub const SCOPES: [Scope; 31] = [
+pub const SCOPES: [Scope; 30] = [
     Scope::Global,
     Scope::Home,
     Scope::Search,
@@ -225,7 +222,6 @@ pub const SCOPES: [Scope; 31] = [
     Scope::Health,
     Scope::History,
     Scope::Settings,
-    Scope::SettingsEdit,
     Scope::Dialog,
     Scope::Palette,
     Scope::Unlock,

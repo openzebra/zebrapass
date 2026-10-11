@@ -266,9 +266,6 @@ pub const KEYMAP: &[Binding] = bindings! {
     Settings: ch('?') => Help;
     Settings: key(KeyCode::Esc) => Back, "close";
 
-    SettingsEdit: key(KeyCode::Enter) => Confirm, "keep";
-    SettingsEdit: key(KeyCode::Esc) => Back, "cancel";
-
     Dialog: key(KeyCode::Enter) => Confirm, "confirm";
     Dialog: key(KeyCode::Esc) => Back, "cancel";
     Dialog: key(KeyCode::Tab) => NextField, "field";

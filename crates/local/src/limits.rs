@@ -14,12 +14,8 @@ pub const CLIP_CLEAR_S: RangeInclusive<u8> = 5..=90;
 /// Accepted reveal auto-hide delay in seconds.
 pub const REVEAL_HIDE_S: RangeInclusive<u8> = 3..=30;
 
-/// Longest accepted sync server origin in bytes (`https://` + a DNS name +
-/// a port).
 /// Relay slots a vault may be told about.
 pub const RELAYS_MAX: usize = 4;
-
-pub const ORIGIN_MAX: usize = 8 + 253 + 6;
 
 /// Longest name of a shared vault in bytes.
 pub const SHARED_NAME_MAX: usize = 64;

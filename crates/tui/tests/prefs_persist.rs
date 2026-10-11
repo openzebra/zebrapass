@@ -13,7 +13,7 @@ mod common;
 
 use std::time::Duration;
 
-use local::{Prefs, SyncMode};
+use local::Prefs;
 use tui::cli::Config;
 use tui::cli::Flags;
 use tui::ui::theme::ThemeName;
@@ -26,13 +26,10 @@ use common::{app, app_with, make_vault, temp_dir, unlock, CAPS, PASSWORD};
 
 fn saved() -> Prefs {
     Prefs {
-        server_origin: Some("https://sync.example.com".into()),
-        server_key_pin: None,
         lock_after_s: 120,
         clip_clear_s: 10,
         reveal_hide_s: 3,
         theme: u8::from(ThemeName::StripesLight),
-        sync_mode: SyncMode::Manual,
         anim: false,
         ascii: true,
         focus_lock: true,

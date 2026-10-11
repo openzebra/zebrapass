@@ -1,7 +1,7 @@
 //! The settings table: every row, the section it lives in, what it says
 //! about itself, and how it changes a draft of the preferences.
 
-use local::{Prefs, SyncMode, CLIP_CLEAR_S, LOCK_AFTER_S, REVEAL_HIDE_S};
+use local::{Prefs, CLIP_CLEAR_S, LOCK_AFTER_S, REVEAL_HIDE_S};
 
 use crate::app::prefs::theme_of;
 use crate::ui::theme::ThemeName;
@@ -13,7 +13,7 @@ pub enum Section {
     Security,
     /// This device's factor.
     Device,
-    /// The sync server (not built yet).
+    /// Peer-to-peer sync state of this vault.
     Sync,
     /// Clipboard hygiene.
     Clipboard,
@@ -77,18 +77,20 @@ pub enum Row {
     DevicePin,
     /// Why there is no Secure Enclave here.
     SecureEnclave,
-    /// Off, manual, or automatic sync.
-    SyncMode,
-    /// Sync server origin.
-    ServerOrigin,
-    /// Pinned server key.
-    ServerPin,
-    /// Account client id fingerprint.
-    ClientId,
-    /// Device certificate state.
-    DeviceCert,
-    /// Try the server.
-    TestConnection,
+    /// Whether the node runs and where it listens.
+    SyncStatus,
+    /// When and how the last check-in ended.
+    LastCheckIn,
+    /// Peers known and reachable.
+    SyncPeers,
+    /// Saved relays and whether this node holds a slot.
+    SyncRelays,
+    /// The address this device offers other members.
+    SyncAdvertised,
+    /// Whether the node announces itself on the local network.
+    SyncBeacon,
+    /// Check in with the peers now.
+    SyncNow,
     /// Clipboard clear delay.
     ClipClear,
     /// Lock always clears the clipboard.
@@ -128,7 +130,7 @@ pub enum Row {
 }
 
 /// Every row with its section, in display order.
-pub const ROWS: [(Section, Row); 33] = [
+pub const ROWS: [(Section, Row); 34] = [
     (Section::Security, Row::AutoLock),
     (Section::Security, Row::FocusLock),
     (Section::Security, Row::RevealHide),
@@ -138,12 +140,13 @@ pub const ROWS: [(Section, Row); 33] = [
     (Section::Device, Row::DeviceFingerprint),
     (Section::Device, Row::DevicePin),
     (Section::Device, Row::SecureEnclave),
-    (Section::Sync, Row::SyncMode),
-    (Section::Sync, Row::ServerOrigin),
-    (Section::Sync, Row::ServerPin),
-    (Section::Sync, Row::ClientId),
-    (Section::Sync, Row::DeviceCert),
-    (Section::Sync, Row::TestConnection),
+    (Section::Sync, Row::SyncStatus),
+    (Section::Sync, Row::LastCheckIn),
+    (Section::Sync, Row::SyncPeers),
+    (Section::Sync, Row::SyncRelays),
+    (Section::Sync, Row::SyncAdvertised),
+    (Section::Sync, Row::SyncBeacon),
+    (Section::Sync, Row::SyncNow),
     (Section::Clipboard, Row::ClipClear),
     (Section::Clipboard, Row::ClipOnLock),
     (Section::Appearance, Row::Theme),
@@ -181,12 +184,13 @@ impl Row {
             Self::DeviceFingerprint => "Device fingerprint",
             Self::DevicePin => "Device PIN",
             Self::SecureEnclave => "Secure Enclave",
-            Self::SyncMode => "Sync",
-            Self::ServerOrigin => "Server",
-            Self::ServerPin => "Pinned server key",
-            Self::ClientId => "Client id",
-            Self::DeviceCert => "Device certificate",
-            Self::TestConnection => "Test connection",
+            Self::SyncStatus => "Status",
+            Self::LastCheckIn => "Last check-in",
+            Self::SyncPeers => "Peers",
+            Self::SyncRelays => "Relays",
+            Self::SyncAdvertised => "Advertised address",
+            Self::SyncBeacon => "Beacon",
+            Self::SyncNow => "Sync now",
             Self::ClipClear => "Clear clipboard after",
             Self::ClipOnLock => "Clear clipboard on lock",
             Self::Theme => "Theme",
@@ -221,12 +225,13 @@ impl Row {
             Self::DeviceFingerprint => "Compare this with the device list on another machine to know which wrap is which.",
             Self::DevicePin => "Argon2id stretches the PIN before it can open the key file. Enter changes the PIN; the vault is untouched.",
             Self::SecureEnclave => "Apple only lets signed apps use the Secure Enclave. A terminal app cannot, so the PIN file takes its place.",
-            Self::SyncMode => "Saved now, used once the sync server exists. Every upload is signed with ML-DSA.",
-            Self::ServerOrigin => "https://host[:port] only. Enter edits it; the client id is bound to the origin at first sync.",
-            Self::ServerPin => "The server's key is pinned on first contact; a different key later is refused. r clears the pin.",
-            Self::ClientId => "A one-way HKDF of the recovery seed. It names the account without revealing anything.",
-            Self::DeviceCert => "The account key certifies each device's ML-DSA key so the server can check uploads.",
-            Self::TestConnection => "Checks the server origin and its pinned key. Nothing is ever sent without a signature.",
+            Self::SyncStatus => "Peer-to-peer sync of this vault. l on the Share screen is the only switch between listening, fetch only and off.",
+            Self::LastCheckIn => "The latest check-in with your peers, and how it ended. Checks repeat on their own every 15 s.",
+            Self::SyncPeers => "Other devices and members this node knows, and how many are connected now.",
+            Self::SyncRelays => "Relay slots saved here. A relay only passes sealed traffic; it never holds your data.",
+            Self::SyncAdvertised => "The address this device offers other members when it sits behind a port forward. Set it on the Share screen.",
+            Self::SyncBeacon => "Whether this device announces itself to your other devices on the local network.",
+            Self::SyncNow => "Enter checks in with your peers once, right now.",
             Self::ClipClear => "Copied secrets are wiped from the clipboard after this long.",
             Self::ClipOnLock => "Locking always clears a secret this app copied. This one is not optional.",
             Self::Theme => "Previewed live. Saved per vault; --no-color and NO_COLOR always win.",
@@ -264,7 +269,6 @@ impl Row {
             Self::AutoLock
                 | Self::FocusLock
                 | Self::RevealHide
-                | Self::SyncMode
                 | Self::ClipClear
                 | Self::Theme
                 | Self::Animation
@@ -280,7 +284,6 @@ impl Row {
             Self::RevealHide => {
                 draft.reveal_hide_s = nudge(draft.reveal_hide_s, 1, forward, &REVEAL_HIDE_S);
             }
-            Self::SyncMode => draft.sync_mode = cycle(&SyncMode::ALL, draft.sync_mode, forward),
             Self::ClipClear => {
                 draft.clip_clear_s = nudge(draft.clip_clear_s, 5, forward, &CLIP_CLEAR_S);
             }
@@ -301,9 +304,6 @@ impl Row {
             Self::AutoLock => draft.lock_after_s = defaults.lock_after_s,
             Self::FocusLock => draft.focus_lock = defaults.focus_lock,
             Self::RevealHide => draft.reveal_hide_s = defaults.reveal_hide_s,
-            Self::SyncMode => draft.sync_mode = defaults.sync_mode,
-            Self::ServerOrigin => draft.server_origin = defaults.server_origin,
-            Self::ServerPin => draft.server_key_pin = defaults.server_key_pin,
             Self::ClipClear => draft.clip_clear_s = defaults.clip_clear_s,
             Self::Theme => draft.theme = defaults.theme,
             Self::Animation => draft.anim = defaults.anim,
@@ -314,14 +314,11 @@ impl Row {
 
     /// Whether the draft differs from `saved` in this row.
     #[must_use]
-    pub fn changed(self, draft: &Prefs, saved: &Prefs) -> bool {
+    pub const fn changed(self, draft: &Prefs, saved: &Prefs) -> bool {
         match self {
             Self::AutoLock => draft.lock_after_s != saved.lock_after_s,
             Self::FocusLock => draft.focus_lock != saved.focus_lock,
             Self::RevealHide => draft.reveal_hide_s != saved.reveal_hide_s,
-            Self::SyncMode => draft.sync_mode != saved.sync_mode,
-            Self::ServerOrigin => draft.server_origin != saved.server_origin,
-            Self::ServerPin => draft.server_key_pin != saved.server_key_pin,
             Self::ClipClear => draft.clip_clear_s != saved.clip_clear_s,
             Self::Theme => draft.theme != saved.theme,
             Self::Animation => draft.anim != saved.anim,

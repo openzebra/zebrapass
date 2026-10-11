@@ -269,6 +269,9 @@ impl Unlocked {
             self.apply_pulled(&pushed, ctx);
         }
         for event in events {
+            if let Some(p2p) = self.p2p.as_deref_mut() {
+                p2p.note_event(&event);
+            }
             match event {
                 Event::Fetched {
                     vault_id,

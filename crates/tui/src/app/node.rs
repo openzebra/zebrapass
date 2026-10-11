@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use local::{Listen, Offer, SyncIdentity};
-use p2p_net::{reachable_hints, BeaconConfig, BeaconIdentity, Service, SharedProvider};
+use p2p_net::{
+    reachable_hints, BeaconConfig, BeaconIdentity, Event, FetchError, Service, SharedProvider,
+};
 use session::MAX_HINTS;
 
 /// The port a node tries first, so an invitation stays valid across runs.
@@ -21,6 +23,30 @@ const MAX_DISCOVERED: usize = 8;
 pub const CHECK_EVERY: Duration = Duration::from_secs(15);
 
 const _: () = assert!(CHECK_EVERY.as_secs() >= 15, "no sub-15-second polling");
+
+/// How the latest check-in ended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckOutcome {
+    /// Revisions were traded.
+    Synced,
+    /// The members refused what this device sent, or sent what it refused.
+    RefusedChanges,
+    /// The members turned this device away.
+    TurnedAway,
+    /// No member could be reached.
+    Unreachable,
+    /// A member answered improperly.
+    Failed,
+}
+
+/// The latest check-in with the peers.
+#[derive(Clone, Copy, Debug)]
+pub struct CheckIn {
+    /// When it ended.
+    pub at: Instant,
+    /// How it ended.
+    pub outcome: CheckOutcome,
+}
 
 /// The running node and what it signs with. Dropping it stops the node and
 /// wipes the identity copy it holds.
@@ -49,6 +75,8 @@ pub struct P2p {
     pub holds: bool,
     /// The latest relay slot this node holds, when it holds one.
     pub relayed: Option<p2p_net::RelayHint>,
+    /// How the latest check-in ended; `None` before the first.
+    pub last_checkin: Option<CheckIn>,
     checked: Instant,
 }
 
@@ -102,6 +130,7 @@ impl P2p {
             relays: Vec::new(),
             holds: false,
             relayed: None,
+            last_checkin: None,
             checked: Instant::now(),
         });
         let hints = node.hints();
@@ -149,6 +178,24 @@ impl P2p {
         own.truncate(MAX_HINTS - 1);
         own.push(hint.to_string());
         self.provider.set_hints(own);
+    }
+
+    /// Record the outcome a node event reports, when it reports one.
+    pub fn note_event(&mut self, event: &Event) {
+        let outcome = match event {
+            Event::Synced { refused: 0, .. } | Event::PersonalPulled { .. } => CheckOutcome::Synced,
+            Event::Synced { .. } => CheckOutcome::RefusedChanges,
+            Event::FetchFailed { reason, .. } => match reason {
+                FetchError::Unreachable => CheckOutcome::Unreachable,
+                FetchError::Refused => CheckOutcome::TurnedAway,
+                FetchError::Failed => CheckOutcome::Failed,
+            },
+            _ => return,
+        };
+        self.last_checkin = Some(CheckIn {
+            at: Instant::now(),
+            outcome,
+        });
     }
 
     /// Remember an address another device announced; the newest few stay.

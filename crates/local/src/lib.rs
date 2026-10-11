@@ -43,15 +43,14 @@ pub use device_key::{
 };
 pub use last_seen::LastSeen;
 pub use limits::{
-    CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S, ORIGIN_MAX, PEERS_MAX,
-    PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX,
-    SHARED_NAME_MAX,
+    CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S, PEERS_MAX, PERSONAL_PEERS_MAX,
+    PERSONAL_PEER_MAX_LEN, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX, SHARED_NAME_MAX,
 };
 pub use listen::Listen;
 pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
 pub use peer_store::{load_peers, save_peers};
 pub use personal_peers::{load_personal_peers, remember_personal_peer, save_personal_peers};
-pub use prefs::{parse_origin, Prefs, SyncMode};
+pub use prefs::Prefs;
 pub use revocations::Revocations;
 pub use share_keys::{ShareKeys, SharePublics};
 pub use shared::{

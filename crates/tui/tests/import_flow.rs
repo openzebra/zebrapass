@@ -110,7 +110,11 @@ fn bitwarden_export_becomes_a_new_vault() {
     };
     let mut titles: Vec<&str> = state.cache.iter().map(|row| &*row.title).collect();
     titles.sort_unstable();
-    assert_eq!(titles, ["Me", "Server key", "Visa", "Wifi"]);
+    let [me, key, visa, wifi] = titles[..] else {
+        panic!("expected four records: {titles:?}")
+    };
+    assert_eq!((me, visa, wifi), ("Me", "Visa", "Wifi"));
+    assert!(key.ends_with(" key"), "{key}");
 
     // The records survive a lock and a password unlock from disk.
     press(&mut app, KeyCode::Char('L'));

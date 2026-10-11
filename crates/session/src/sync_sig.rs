@@ -5,6 +5,9 @@
 //! generation so a signature cannot be replayed across format changes or key
 //! epochs. The server verifies signatures but never sees plaintext: the
 //! signed ciphertext is the sealed frame.
+//!
+//! TODO(sync-server): dormant seam. No upload transport exists and none is
+//! planned (owner decision, 2026-10); the interface never exposes it.
 
 use zeroize::Zeroizing;
 
