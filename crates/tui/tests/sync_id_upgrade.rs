@@ -15,12 +15,12 @@
 mod common;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
 use seed::SeedPhrase;
 use session::write_record;
-use tui::app::flows::restore::RestoreField;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
@@ -30,11 +30,10 @@ use tui::App;
 use zeroize::Zeroizing;
 
 use common::{
-    app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
+    announce_on_the_network, app, app_with, beacon, config, free_udp_port, keep_to_this_device,
+    make_vault, press, render, restore_empty, temp_dir, type_text, unlock, wait_adopted, CAPS,
     PASSWORD,
 };
-
-const SECOND_PASSWORD: &str = "another-long-password-for-B-77";
 
 fn credential() -> Credential {
     Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec()))
@@ -108,11 +107,24 @@ fn open_share(app: &mut App) {
 
 /// An old-identity vault, unlocked on the share screen.
 fn unlocked_old(tag: &str) -> (App, String, PathBuf) {
+    unlocked_old_with(tag, None)
+}
+
+/// As [`unlocked_old`]; with a beacon config the device announces itself over
+/// it, so another device can find it.
+fn unlocked_old_with(tag: &str, announce: Option<p2p_net::BeaconConfig>) -> (App, String, PathBuf) {
     let base = temp_dir(tag);
     let words = make_vault(&base);
-    keep_to_this_device(&base);
+    let mut config = config(&base);
+    match announce {
+        Some(cfg) => {
+            announce_on_the_network(&base);
+            config.beacon = Some(cfg);
+        }
+        None => keep_to_this_device(&base),
+    }
     let file = old_vault(&base);
-    let mut app = app(&base);
+    let mut app = app_with(&config, &base, CAPS);
     unlock(&mut app, PASSWORD);
     open_share(&mut app);
     (app, words, file)
@@ -120,7 +132,9 @@ fn unlocked_old(tag: &str) -> (App, String, PathBuf) {
 
 #[test]
 fn an_old_identity_is_offered_an_upgrade_and_serves_nothing_until_it_is_done() {
-    let (mut first, words, file) = unlocked_old("up-first");
+    let (second_bind, first_bind) = (free_udp_port(), free_udp_port());
+    let (mut first, words, file) =
+        unlocked_old_with("up-first", Some(beacon(first_bind, second_bind)));
     assert!(state(&first).identity_is_old());
     assert!(
         state(&first).p2p.is_none(),
@@ -148,36 +162,16 @@ fn an_old_identity_is_offered_an_upgrade_and_serves_nothing_until_it_is_done() {
         !screen.contains("old format"),
         "the line is gone:\n{screen}"
     );
-    let address = state(&first)
-        .p2p
-        .as_ref()
-        .expect("the node runs now")
-        .service
-        .local_addr()
-        .expect("and listens")
-        .to_string();
+    assert!(state(&first).p2p.is_some(), "the node runs now");
 
-    // A second device restores over the network from it.
-    let mut second = app(&temp_dir("up-second"));
-    press(&mut second, KeyCode::Right);
-    press(&mut second, KeyCode::Enter);
-    press(&mut second, KeyCode::Enter);
-    assert_eq!(second.screen.name(), "restore");
-    type_phrase(&mut second, &words);
-    press(&mut second, KeyCode::Tab);
-    press(&mut second, KeyCode::Tab);
-    let Screen::Restore(restore) = &second.screen else {
-        panic!("not restore")
-    };
-    assert_eq!(restore.field, RestoreField::Address);
-    type_text(&mut second, &address);
-    press(&mut second, KeyCode::Enter);
-    type_text(&mut second, SECOND_PASSWORD);
-    press(&mut second, KeyCode::Tab);
-    type_text(&mut second, SECOND_PASSWORD);
-    press(&mut second, KeyCode::Enter);
-    wait(&mut second);
-    assert_eq!(second.screen.name(), "unlocked");
+    // A second device restores from the phrase alone and the vault finds it.
+    let mut second = restore_empty(
+        &temp_dir("up-second"),
+        &words,
+        PASSWORD,
+        beacon(second_bind, first_bind),
+    );
+    wait_adopted(&mut second, Duration::from_secs(60));
     let titles: Vec<String> = state(&second)
         .cache
         .iter()

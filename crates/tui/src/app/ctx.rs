@@ -30,6 +30,8 @@ pub enum Task {
     Create,
     /// Restoring a vault.
     Restore,
+    /// Bringing the account's vault from another device.
+    Adopt,
     /// Writing a record.
     Save,
     /// Rotating the vault key.
@@ -50,6 +52,7 @@ impl Task {
             Self::Unlock(_) => "Unlocking",
             Self::Create => "Creating your vault",
             Self::Restore => "Restoring your vault",
+            Self::Adopt => "Bringing your vault from another device",
             Self::Save => "Saving",
             Self::Rotate => "Rotating the vault key",
             Self::Factor => "Updating unlock factors",
@@ -63,7 +66,7 @@ impl Task {
     pub const fn cancellable(self) -> bool {
         matches!(
             self,
-            Self::Unlock(_) | Self::Create | Self::Restore | Self::Import
+            Self::Unlock(_) | Self::Create | Self::Restore | Self::Adopt | Self::Import
         )
     }
 }

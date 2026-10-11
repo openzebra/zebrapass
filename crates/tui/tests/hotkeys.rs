@@ -111,11 +111,7 @@ fn restore_tab_leaves_a_finished_phrase_and_shift_tab_returns() {
         "nothing to complete: next field"
     );
     press(&mut app, KeyCode::Tab);
-    assert_eq!(field(&app), RestoreField::Address);
-    press(&mut app, KeyCode::Tab);
     assert_eq!(field(&app), RestoreField::Name);
-    press(&mut app, KeyCode::BackTab);
-    assert_eq!(field(&app), RestoreField::Address);
     press(&mut app, KeyCode::BackTab);
     assert_eq!(field(&app), RestoreField::Source);
     press(&mut app, KeyCode::BackTab);

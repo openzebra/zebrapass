@@ -104,10 +104,9 @@ impl AlertState {
             Tone::Warn,
             "Restoring from the phrase replaces this device's rollback record.",
         );
-        Nav::To(Screen::Restore(Box::new(RestoreState::new(
-            Some(self.vault.paths.vault_file.clone()),
-            ctx,
-        ))))
+        Nav::To(Screen::Restore(Box::new(RestoreState::new(Some(
+            self.vault.paths.vault_file.clone(),
+        )))))
     }
 }
 

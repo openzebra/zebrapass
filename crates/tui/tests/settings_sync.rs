@@ -20,11 +20,9 @@ use tui::app::screen::Screen;
 use tui::App;
 
 use common::{
-    app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
-    PASSWORD,
+    announcing_device, app, beacon, free_udp_port, make_vault, press, render, restore_empty,
+    temp_dir, type_text, unlock, wait, wait_adopted, PASSWORD,
 };
-
-const SECOND_PASSWORD: &str = "another-long-password-for-B-77";
 
 fn state(app: &App) -> &Unlocked {
     let Screen::Unlocked(state) = &app.screen else {
@@ -66,31 +64,16 @@ fn choose(app: &mut App, want: Listen) {
     assert_eq!(state(app).listen_mode(), want);
 }
 
-fn type_phrase(app: &mut App, words: &str) {
-    for word in words.split(' ') {
-        type_text(app, word);
-        press(app, KeyCode::Char(' '));
-    }
-}
-
-/// A second device restored from the first one's phrase and listening
-/// address, left unlocked.
-fn restored_from(words: &str, address: &str, tag: &str) -> App {
-    let mut second = app(&temp_dir(tag));
-    press(&mut second, KeyCode::Right);
-    press(&mut second, KeyCode::Enter);
-    press(&mut second, KeyCode::Enter);
-    type_phrase(&mut second, words);
-    press(&mut second, KeyCode::Tab);
-    press(&mut second, KeyCode::Tab);
-    type_text(&mut second, address);
-    press(&mut second, KeyCode::Enter);
-    type_text(&mut second, SECOND_PASSWORD);
-    press(&mut second, KeyCode::Tab);
-    type_text(&mut second, SECOND_PASSWORD);
-    press(&mut second, KeyCode::Enter);
-    wait(&mut second);
-    assert_eq!(second.screen.name(), "unlocked");
+/// A second device restored from the first one's phrase with no file, left
+/// unlocked on the account's vault once the first device was found.
+fn restored_from(words: &str, tag: &str, second_bind: u16, first_bind: u16) -> App {
+    let mut second = restore_empty(
+        &temp_dir(tag),
+        words,
+        PASSWORD,
+        beacon(second_bind, first_bind),
+    );
+    wait_adopted(&mut second, Duration::from_secs(60));
     second
 }
 
@@ -137,21 +120,10 @@ fn sync_now_with_no_peers_checks_in_without_failing() {
 
 #[test]
 fn a_real_check_in_shows_its_outcome_and_sync_now_runs_another() {
-    let base = temp_dir("settings-sync-first");
-    let words = make_vault(&base);
-    keep_to_this_device(&base);
-    let mut first = app(&base);
-    unlock(&mut first, PASSWORD);
-    let address = state(&first)
-        .p2p
-        .as_ref()
-        .expect("the node runs")
-        .service
-        .local_addr()
-        .expect("the node listens")
-        .to_string();
-
-    let mut second = restored_from(&words, &address, "settings-sync-second");
+    let (second_bind, first_bind) = (free_udp_port(), free_udp_port());
+    let (_first, words, _) =
+        announcing_device("settings-sync-first", beacon(first_bind, second_bind), &[]);
+    let mut second = restored_from(&words, "settings-sync-second", second_bind, first_bind);
     choose(&mut second, Listen::Fetch);
     press(&mut second, KeyCode::Esc);
     assert!(

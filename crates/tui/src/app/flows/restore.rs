@@ -1,12 +1,12 @@
-//! Restore from phrase, with an optional vault file or device address.
+//! Restore from phrase, with an optional vault file.
 //!
-//! The file is only a bootstrap shortcut; the network always carries the data
-//! after unlock. Then this device's own factor is enrolled.
+//! The file is only a bootstrap shortcut. Without one this device starts an
+//! empty vault and the peer-to-peer network brings the account's vault in.
+//! Then this device's own factor is enrolled.
 
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
-use p2p_net::{BeaconConfig, BeaconListener};
 use seed::SeedPhrase;
 use session::KdfProfile;
 
@@ -23,17 +23,11 @@ use crate::secure::phrase_input::{secret_string, PhraseInput, Typed};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
-use crate::ui::widgets::toast::Tone;
+use crate::vault::adopt::Held;
 use crate::vault::create::{Enrollment, RestoreSource, RestoreVault};
 use crate::vault::factors::presence;
 use crate::vault::limits::{MAX_PATH_INPUT, MAX_VAULT_NAME};
 use crate::vault::open::read_directory;
-
-/// Longest address typed in: a bracketed IPv6 address with a port.
-const MAX_ADDRESS_INPUT: usize = 64;
-
-/// Devices found on the network that are kept as candidates.
-pub const MAX_FOUND: usize = 16;
 
 /// Reveal key of the last finished word.
 pub const REVEAL_LAST: RevealKey = RevealKey(20);
@@ -58,8 +52,6 @@ pub struct RestoreState {
     pub passphrase: SecretInput,
     /// Optional vault file path; empty means sync over the network.
     pub source: TextInput,
-    /// Optional address of another device of the account.
-    pub address: TextInput,
     /// Display name.
     pub name: TextInput,
     /// Focus.
@@ -78,30 +70,22 @@ pub struct RestoreState {
     pub source_factors: Option<usize>,
     /// Last problem.
     pub error: Option<&'static str>,
-    /// Addresses of other devices of the account found on this network, by
-    /// their beacons. Only candidates: nothing is dialed until the person
-    /// continues.
-    pub found: Vec<Box<str>>,
-    /// Listens for those beacons while the phrase in the form is valid.
-    listener: Option<BeaconListener>,
-    /// Where beacons are heard; `None` when the command line did not ask.
-    beacon: Option<BeaconConfig>,
-    /// The candidate last put in the address field.
-    picked: usize,
+    /// The password enrolled for an empty restore, kept so the account's
+    /// vault can be opened with it once another device is found.
+    pub held: Option<Held>,
 }
 
 impl RestoreState {
     /// Restore screen. The file field starts empty, so the network is the
     /// default path; only an explicit `source` pre-fills it.
     #[must_use]
-    pub fn new(source: Option<PathBuf>, ctx: &Ctx) -> Self {
+    pub fn new(source: Option<PathBuf>) -> Self {
         let path = source.map_or_else(String::new, |path| path.to_string_lossy().into_owned());
         let mut state = Self {
             step: RestoreStep::Phrase,
             phrase: PhraseInput::default(),
             passphrase: SecretInput::new(MAX_PASSPHRASE),
             source: TextInput::with_value(&path, MAX_PATH_INPUT),
-            address: TextInput::with_value("", MAX_ADDRESS_INPUT),
             name: TextInput::with_value("Personal", MAX_VAULT_NAME),
             field: RestoreField::Phrase,
             hide_current: false,
@@ -111,94 +95,18 @@ impl RestoreState {
             enroll: EnrollState::new(false),
             source_factors: None,
             error: None,
-            found: Vec::new(),
-            listener: None,
-            beacon: ctx.beacon,
-            picked: 0,
+            held: None,
         };
         state.check_source();
         state
     }
 
-    /// The address typed in, validated as an address this device may dial:
-    /// the advertise rules, with loopback allowed because the user chose it.
-    ///
-    /// # Errors
-    ///
-    /// A short reason to show as is.
-    pub fn peer_address(&self) -> Result<Box<str>, &'static str> {
-        local::parse_peer_address(self.address.value(), true)
-    }
-
-    /// Keep listening for beacons of the account the phrase in the form
-    /// belongs to, while it is a whole, valid phrase; otherwise stop and
-    /// forget what was found.
-    fn refresh_listener(&mut self) {
-        let seed = (self.beacon.is_some() && self.phrase.plausible())
-            .then(|| secret_string(self.passphrase.expose()))
-            .flatten()
-            .and_then(|passphrase| SeedPhrase::parse(&self.phrase.to_secret(), &passphrase).ok());
-        let (Some(seed), Some(config)) = (seed, self.beacon) else {
-            self.listener = None;
-            self.found.clear();
-            return;
-        };
-        if self
-            .listener
-            .as_ref()
-            .is_some_and(|l| l.is_for(seed.seed()))
-        {
-            return;
-        }
-        self.found.clear();
-        self.picked = 0;
-        self.listener = BeaconListener::start(seed.seed(), config).ok();
-    }
-
-    /// Run the timers of the screen and take in the beacons heard; `true`
-    /// when something needs drawing again.
+    /// Run the timers of the screen; `true` when something needs drawing
+    /// again.
     pub fn tick(&mut self, now: std::time::Instant, reveal_after: std::time::Duration) -> bool {
         let revealed = self.reveal.tick(now, reveal_after);
         let enrolled = self.enroll.reveal.tick(now, reveal_after);
-        let found = self.poll_beacons();
-        revealed || enrolled || found
-    }
-
-    /// Take in the beacons heard since the last call; `true` when the list
-    /// changed. Each address passes the parser the address field uses.
-    pub fn poll_beacons(&mut self) -> bool {
-        let (Some(listener), Some(config)) = (self.listener.as_ref(), self.beacon) else {
-            return false;
-        };
-        let before = self.found.len();
-        for address in listener.poll() {
-            let Ok(address) = local::parse_peer_address(&address.to_string(), config.loopback)
-            else {
-                continue;
-            };
-            if self.found.len() < MAX_FOUND && !self.found.contains(&address) {
-                self.found.push(address);
-            }
-        }
-        self.found.len() != before
-    }
-
-    /// Put the next found device in the address field. It is not used until
-    /// the person continues.
-    fn use_found(&mut self) {
-        if self.found.is_empty() {
-            return;
-        }
-        let at = if self.address.value() == self.found.get(self.picked).map_or("", |a| a) {
-            (self.picked + 1) % self.found.len()
-        } else {
-            self.picked.min(self.found.len() - 1)
-        };
-        if let Some(address) = self.found.get(at) {
-            self.address = TextInput::with_value(address, MAX_ADDRESS_INPUT);
-            self.picked = at;
-            self.error = None;
-        }
+        revealed || enrolled
     }
 
     /// A file path is typed in and it is not a vault file. An empty field is
@@ -229,16 +137,6 @@ impl RestoreState {
 
     /// Handle a key.
     pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
-        let edits_phrase = self.step == RestoreStep::Phrase
-            && matches!(self.field, RestoreField::Phrase | RestoreField::Passphrase);
-        let nav = self.handle_key(event, ctx);
-        if edits_phrase && self.step == RestoreStep::Phrase {
-            self.refresh_listener();
-        }
-        nav
-    }
-
-    fn handle_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         if self.step == RestoreStep::Enroll {
             return match self.enroll.on_key(event, ctx) {
                 EnrollEvent::Stay => Nav::Stay,
@@ -270,10 +168,7 @@ impl RestoreState {
         }
         let text_field = matches!(
             self.field,
-            RestoreField::Source
-                | RestoreField::Address
-                | RestoreField::Name
-                | RestoreField::Passphrase
+            RestoreField::Source | RestoreField::Name | RestoreField::Passphrase
         );
         match resolve(Scope::Restore, event) {
             // Space types into text fields; Tab still moves between them.
@@ -290,9 +185,6 @@ impl RestoreState {
                 if edit_text(&mut self.source, event) == Edit::Consumed {
                     self.check_source();
                 }
-            }
-            RestoreField::Address => {
-                edit_text(&mut self.address, event);
             }
             RestoreField::Name => {
                 edit_text(&mut self.name, event);
@@ -317,18 +209,13 @@ impl RestoreState {
                     }
                 }
                 self.phrase.space();
-                self.refresh_listener();
             }
             RestoreField::Passphrase => {
                 self.passphrase.insert_str(text);
-                self.refresh_listener();
             }
             RestoreField::Source => {
                 self.source.insert_str(text);
                 self.check_source();
-            }
-            RestoreField::Address => {
-                self.address.insert_str(text);
             }
             RestoreField::Name => {
                 self.name.insert_str(text);
@@ -364,7 +251,6 @@ impl RestoreState {
             Action::NextField | Action::PrevField => {
                 self.field = self.field.shift(action == Action::NextField);
             }
-            Action::RestoreFound => self.use_found(),
             Action::Confirm => self.enter_enroll(ctx),
             Action::Back => return Nav::To(crate::app::flows::gate::initial_screen(ctx)),
             _ => {}
@@ -389,12 +275,11 @@ impl RestoreState {
             self.error = Some("Give the vault a name.");
             return;
         }
-        let Some((source, existing)) = self.resolve_source(ctx) else {
+        let Some((source, existing)) = self.resolve_source() else {
             return;
         };
         self.resolved = Some(source);
         self.parsed = Some(Box::new(parsed));
-        self.listener = None;
         self.phrase.clear();
         self.passphrase.clear();
         self.error = None;
@@ -406,42 +291,28 @@ impl RestoreState {
     }
 
     /// Where the vault comes from, and whether its file already has a
-    /// password factor. A typed file wins over an address; with no file an
-    /// address is required, typed or heard from a beacon.
-    fn resolve_source(&mut self, ctx: &mut Ctx) -> Option<(RestoreSource, bool)> {
+    /// password factor. A typed file must be a vault; without one this
+    /// device starts empty and the network brings the vault in.
+    fn resolve_source(&mut self) -> Option<(RestoreSource, bool)> {
         let path = self.source.value().trim();
-        if !path.is_empty() {
-            let Ok(directory) = read_directory(Path::new(path)) else {
-                self.error = Some("No ZebraPass vault file at that path.");
-                return None;
-            };
-            let existing = presence(&directory, None).password;
-            return Some((RestoreSource::File(PathBuf::from(path)), existing));
+        if path.is_empty() {
+            return Some((RestoreSource::Empty, false));
         }
-        let address = if self.address.value().trim().is_empty() {
-            let Some(found) = self.found.get(self.picked).or_else(|| self.found.first()) else {
-                ctx.toast(
-                    Tone::Warn,
-                    "Give a device address, or let the beacon find one.",
-                );
-                return None;
-            };
-            found.clone()
-        } else {
-            match self.peer_address() {
-                Ok(address) => address,
-                Err(problem) => {
-                    self.error = Some(problem);
-                    return None;
-                }
-            }
+        let Ok(directory) = read_directory(Path::new(path)) else {
+            self.error = Some("No ZebraPass vault file at that path.");
+            return None;
         };
-        Some((RestoreSource::Network(address), false))
+        let existing = presence(&directory, None).password;
+        Some((RestoreSource::File(PathBuf::from(path)), existing))
     }
 
     fn finish(&mut self, factor: Enrollment, ctx: &mut Ctx) {
         let (Some(phrase), Some(source)) = (self.parsed.take(), self.resolved.take()) else {
             return;
+        };
+        self.held = match (&source, &factor) {
+            (RestoreSource::Empty, Enrollment::Password(password)) => Some(Held::new(password)),
+            _ => None,
         };
         let request = RestoreVault {
             phrase,

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use local::Paths;
 use session::KdfProfile;
 
+use crate::vault::adopt::{adopt, AdoptRequest};
 use crate::vault::create::{create, restore, NewVault, RestoreVault};
 use crate::vault::error::{describe, UnlockError};
 use crate::vault::open::{unlock_vault, Credential, Vault};
@@ -27,6 +28,9 @@ pub enum Job {
     Create(Box<NewVault>),
     /// Restore a vault.
     Restore(Box<RestoreVault>),
+    /// Fetch the account's vault from another device and replace the
+    /// placeholder.
+    Adopt(Box<AdoptRequest>),
     /// Run an op on an unlocked vault; the vault comes back in the result.
     Vault(Box<Vault>, Op),
     /// Read and parse another manager's export.
@@ -43,6 +47,8 @@ pub enum JobResult {
     Created(Result<Box<Vault>, String>),
     /// Restore outcome.
     Restored(Result<Box<Vault>, UnlockError>),
+    /// Adopt outcome.
+    Adopted(Result<Box<Vault>, UnlockError>),
     /// Op outcome with the vault handed back.
     Vault(Box<Vault>, Result<Outcome, String>),
     /// Parsed export; the error text holds no file contents.
@@ -56,6 +62,7 @@ impl std::fmt::Debug for JobResult {
             Self::Opened(_) => "JobResult::Opened",
             Self::Created(_) => "JobResult::Created",
             Self::Restored(_) => "JobResult::Restored",
+            Self::Adopted(_) => "JobResult::Adopted",
             Self::Vault(..) => "JobResult::Vault",
             Self::ImportParsed(_) => "JobResult::ImportParsed",
         })
@@ -132,6 +139,7 @@ fn run(job: Job) -> JobResult {
             JobResult::Created(create(*request).map_err(|error| describe(&error)))
         }
         Job::Restore(request) => JobResult::Restored(restore(*request)),
+        Job::Adopt(request) => JobResult::Adopted(adopt(&request)),
         Job::Vault(mut vault, op) => {
             let result = apply(&mut vault, op).map_err(|error| describe(&error));
             JobResult::Vault(vault, result)

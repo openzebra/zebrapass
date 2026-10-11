@@ -7,8 +7,6 @@ pub enum RestoreField {
     Phrase,
     /// Optional vault file path.
     Source,
-    /// Optional address of another device.
-    Address,
     /// Display name.
     Name,
     /// Optional 25th word.
@@ -16,13 +14,7 @@ pub enum RestoreField {
 }
 
 impl RestoreField {
-    const ORDER: [Self; 5] = [
-        Self::Phrase,
-        Self::Source,
-        Self::Address,
-        Self::Name,
-        Self::Passphrase,
-    ];
+    const ORDER: [Self; 4] = [Self::Phrase, Self::Source, Self::Name, Self::Passphrase];
 
     pub(super) fn shift(self, forward: bool) -> Self {
         let at = Self::ORDER

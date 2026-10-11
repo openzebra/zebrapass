@@ -61,8 +61,9 @@ pub struct NewVault {
 pub enum RestoreSource {
     /// A vault file on this machine: a backup or a copy from another device.
     File(PathBuf),
-    /// Another device of the same account, at this `ip:port`.
-    Network(Box<str>),
+    /// No file: an empty vault of this device's own, replaced by the
+    /// account's vault when another device is found on the network.
+    Empty,
 }
 
 /// A restore request.
@@ -131,10 +132,30 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
 pub fn restore(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
     match request.source.clone() {
         RestoreSource::File(source) => restore_file(request, &source),
-        RestoreSource::Network(address) => {
-            crate::vault::restore_net::restore_over_network(request, &address)
-        }
+        RestoreSource::Empty => restore_empty(request),
     }
+}
+
+fn restore_empty(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
+    let RestoreVault {
+        phrase,
+        name,
+        base,
+        profile,
+        factor,
+        ..
+    } = request;
+    let vault = create(NewVault {
+        phrase,
+        name,
+        base,
+        profile,
+        factor,
+        records: Vec::new(),
+    })
+    .map_err(|_| UnlockError::Io)?;
+    crate::vault::adopt::mark_placeholder(&vault.paths).map_err(|_| UnlockError::Io)?;
+    Ok(vault)
 }
 
 fn restore_file(request: RestoreVault, source: &Path) -> Result<Box<Vault>, UnlockError> {

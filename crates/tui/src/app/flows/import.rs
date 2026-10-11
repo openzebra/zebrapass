@@ -435,7 +435,7 @@ pub fn new_vault_nav(event: ImportEvent, source: Source, ctx: &mut Ctx) -> Nav {
     match event {
         ImportEvent::Stay => Nav::Stay,
         ImportEvent::Leave => Nav::To(initial_screen(ctx)),
-        ImportEvent::Phrase => Nav::To(Screen::Restore(Box::new(RestoreState::new(None, ctx)))),
+        ImportEvent::Phrase => Nav::To(Screen::Restore(Box::new(RestoreState::new(None)))),
         ImportEvent::Records(records) => Nav::To(Screen::Create(Box::new(
             CreateState::with_records(ctx, records, source.label()),
         ))),

@@ -178,8 +178,6 @@ actions! {
     CreateVault,
     /// Restore a vault, or import one from another manager.
     RestoreVault,
-    /// Use the next device found on this network.
-    RestoreFound,
     /// Change how CSV columns are read.
     EditColumns,
     /// Include or exclude the selected item.

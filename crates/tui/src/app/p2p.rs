@@ -61,11 +61,7 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
         .into_iter()
         .map(|reference| SharedItem::open(base, reference, &identity))
         .collect();
-    let listen = vault
-        .meta
-        .prefs
-        .as_ref()
-        .map_or_else(Listen::default, |prefs| prefs.p2p_listen);
+    let (listen, placeholder) = crate::app::personal::listen_mode(vault);
     let holds = vault
         .meta
         .prefs
@@ -91,9 +87,11 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
         None
     };
     if let Some(p2p) = p2p.as_deref() {
-        p2p.serve_personal(vault);
-        p2p.hold_saved();
-        crate::app::personal::pull_personal(p2p, vault);
+        if !placeholder {
+            p2p.serve_personal(vault);
+            p2p.hold_saved();
+            crate::app::personal::pull_personal(p2p, vault);
+        }
         for item in &shared {
             p2p.provider.serve(Arc::clone(&item.reference));
             fetch(p2p, item);
@@ -258,6 +256,7 @@ impl Unlocked {
         if self.vault.is_none() {
             return;
         }
+        self.try_adopt(ctx);
         self.check_in_due();
         self.finish_delivered_leaves(ctx);
         let Some(p2p) = self.p2p.as_ref() else {

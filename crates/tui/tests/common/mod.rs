@@ -95,6 +95,16 @@ pub fn keep_to_this_device(base: &Path) {
 
 /// As [`keep_to_this_device`], for a vault that opens with `password`.
 pub fn keep_to_this_device_with(base: &Path, password: &str) {
+    listen_with(base, password, local::Listen::Local);
+}
+
+/// Make the vault under `base`, opening with `password`, only dial out: no
+/// listener, so on one machine it cannot dial itself.
+pub fn fetch_only_with(base: &Path, password: &str) {
+    listen_with(base, password, local::Listen::Fetch);
+}
+
+fn listen_with(base: &Path, password: &str, listen: local::Listen) {
     use tui::vault::discover::discover;
     use tui::vault::open::{unlock_vault, Credential};
     use tui::vault::ops::{apply, Op};
@@ -102,7 +112,7 @@ pub fn keep_to_this_device_with(base: &Path, password: &str) {
     let password = Credential::Password(Zeroizing::new(password.as_bytes().to_vec()));
     let mut vault = unlock_vault(paths, password).unwrap();
     let prefs = local::Prefs {
-        p2p_listen: local::Listen::Local,
+        p2p_listen: listen,
         ..local::Prefs::default()
     };
     apply(&mut vault, Op::SavePrefs(Box::new(prefs))).unwrap();
@@ -238,4 +248,150 @@ pub fn pass_verify(app: &mut tui::App, wrong_first: bool) {
         }
         press(app, KeyCode::Enter);
     }
+}
+
+/// A UDP port nobody holds right now.
+pub fn free_udp_port() -> u16 {
+    std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Beacons sent to `send_to_port` and heard on `bind_port`, every 150 ms,
+/// carried over loopback unicast instead of multicast.
+pub fn beacon(bind_port: u16, send_to_port: u16) -> p2p_net::BeaconConfig {
+    p2p_net::BeaconConfig {
+        send_to: std::net::SocketAddr::from(([127, 0, 0, 1], send_to_port)),
+        bind: std::net::SocketAddr::from(([127, 0, 0, 1], bind_port)),
+        join: None,
+        every: Duration::from_millis(150),
+        loopback: true,
+    }
+}
+
+/// Save the beacon listening mode in the vault under `base`.
+pub fn announce_on_the_network(base: &Path) {
+    use tui::vault::discover::discover;
+    use tui::vault::open::{unlock_vault, Credential};
+    use tui::vault::ops::{apply, Op};
+    let paths = discover(base).first().unwrap().paths.clone();
+    let password = Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec()));
+    let mut vault = unlock_vault(paths, password).unwrap();
+    let prefs = local::Prefs {
+        p2p_listen: local::Listen::Beacon,
+        ..local::Prefs::default()
+    };
+    apply(&mut vault, Op::SavePrefs(Box::new(prefs))).unwrap();
+}
+
+/// A device that is unlocked and announces itself over `cfg`: returns its
+/// app and its phrase.
+pub fn announcing_device(
+    tag: &str,
+    cfg: p2p_net::BeaconConfig,
+    titles: &[&str],
+) -> (App, String, PathBuf) {
+    let base = temp_dir(tag);
+    let words = make_vault(&base);
+    add_records(&base, titles);
+    announce_on_the_network(&base);
+    let mut config = config(&base);
+    config.beacon = Some(cfg);
+    let mut first = app_with(&config, &base, CAPS);
+    unlock(&mut first, PASSWORD);
+    (first, words, base)
+}
+
+/// Welcome → restore chooser → the phrase restore.
+pub fn open_restore(app: &mut App) {
+    press(app, KeyCode::Right);
+    press(app, KeyCode::Enter);
+    press(app, KeyCode::Enter);
+    assert_eq!(app.screen.name(), "restore");
+}
+
+/// Type a space-separated phrase into the restore or unlock words grid.
+pub fn type_phrase(app: &mut App, words: &str) {
+    for word in words.split(' ') {
+        type_text(app, word);
+        press(app, KeyCode::Char(' '));
+    }
+}
+
+/// Restore `words` on a new device with no vault file, enrolling `password`.
+/// The device is left unlocked on its placeholder vault.
+pub fn restore_empty(base: &Path, words: &str, password: &str, cfg: p2p_net::BeaconConfig) -> App {
+    let mut config = config(base);
+    config.beacon = Some(cfg);
+    let mut second = app_with(&config, base, CAPS);
+    open_restore(&mut second);
+    type_phrase(&mut second, words);
+    press(&mut second, KeyCode::Enter);
+    type_text(&mut second, password);
+    press(&mut second, KeyCode::Tab);
+    type_text(&mut second, password);
+    press(&mut second, KeyCode::Enter);
+    wait(&mut second);
+    assert_eq!(second.screen.name(), "unlocked");
+    second
+}
+
+/// Whether the unlocked vault is still an empty stand-in.
+pub fn is_placeholder(app: &App) -> bool {
+    let Screen::Unlocked(state) = &app.screen else {
+        return false;
+    };
+    state
+        .vault
+        .as_ref()
+        .is_some_and(|vault| tui::vault::adopt::is_placeholder(&vault.paths))
+}
+
+/// Run timers until the placeholder has been replaced by the account's
+/// vault, or panic after `within`.
+pub fn wait_adopted(app: &mut App, within: Duration) {
+    let until = Instant::now() + within;
+    while Instant::now() < until {
+        tick(app, Duration::from_millis(50));
+        if app.screen.name() == "unlocked" && !is_placeholder(app) {
+            return;
+        }
+        app.wait_for_job(Duration::from_millis(50));
+    }
+    panic!("the vault never arrived");
+}
+
+/// Put records titled `titles` into the vault under `base` while no app has
+/// it open.
+pub fn add_records(base: &Path, titles: &[&str]) {
+    use tui::vault::discover::discover;
+    use tui::vault::open::{unlock_vault, Credential};
+    let paths = discover(base).first().unwrap().paths.clone();
+    let mut vault = unlock_vault(
+        paths,
+        Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
+    )
+    .unwrap();
+    for title in titles {
+        let mut doc = record::Document::new();
+        doc.set_text(record::TAG_TITLE, title);
+        session::write_record(&mut vault.session, &mut vault.file, None, &doc).unwrap();
+    }
+    vault.persist().unwrap();
+}
+
+/// Titles of the records in the unlocked vault, sorted.
+pub fn titles_of(app: &App) -> Vec<String> {
+    let Screen::Unlocked(state) = &app.screen else {
+        panic!("not unlocked: {}", app.screen.name())
+    };
+    let mut titles: Vec<String> = state
+        .cache
+        .iter()
+        .map(|row| row.title.to_string())
+        .collect();
+    titles.sort();
+    titles
 }

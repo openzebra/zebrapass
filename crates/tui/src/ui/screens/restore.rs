@@ -167,61 +167,51 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
         ctx,
     );
     draw_words(frame, grid, suggest, state, columns, ctx);
-    draw_sources(frame, [source_head, sources, source_status_row], state, ctx);
+    draw_source(frame, [source_head, sources, source_status_row], state, ctx);
     draw_details(frame, details, state, ctx);
     draw_footer(frame, footer, state, ctx);
     hint_bar(frame, hints, Scope::Restore, "", ctx);
 }
 
-/// The optional vault file and the optional device address, side by side.
-fn draw_sources(
+/// The optional vault file: empty means the network brings the vault.
+fn draw_source(
     frame: &mut Frame<'_>,
-    [head, boxes, status]: [Rect; 3],
+    [head, boxed_area, status]: [Rect; 3],
     state: &RestoreState,
     ctx: &Ctx,
 ) {
     let theme = &ctx.theme;
-    let columns = [Constraint::Percentage(50), Constraint::Percentage(50)];
-    let [file_head, address_head] = Layout::horizontal(columns).areas(head);
-    let [file_box, address_box] = Layout::horizontal(columns).areas(boxes);
-    let [file_status, address_status] = Layout::horizontal(columns).areas(status);
-    let label = |text: &'static str| Paragraph::new(Span::styled(text, theme.strong()));
-    frame.render_widget(label("  2  Vault file (optional)"), file_head);
-    frame.render_widget(
-        label(if address_head.width >= 40 {
-            "  Device address (optional with beacon)"
-        } else {
-            "  Device address (optional)"
-        }),
-        address_head,
+    section(
+        frame,
+        head,
+        "2",
+        "Vault file (optional)",
+        "empty → sync over the network",
+        ctx,
     );
-    let inset = |rect: Rect| Rect {
-        x: rect.x + 2,
-        width: rect.width.saturating_sub(4),
-        ..rect
+    let focus = state.field == RestoreField::Source;
+    let rect = Rect {
+        x: boxed_area.x + 2,
+        width: boxed_area.width.saturating_sub(4),
+        ..boxed_area
     };
-    for (rect, input, field) in [
-        (file_box, &state.source, RestoreField::Source),
-        (address_box, &state.address, RestoreField::Address),
-    ] {
-        let focus = state.field == field;
-        let rect = inset(rect);
-        boxed(
-            frame,
-            rect,
-            text_line(input, rect.width.saturating_sub(2), focus, theme),
-            focus,
-            theme,
-        );
-    }
-    frame.render_widget(Paragraph::new(file_hint(state, theme)), file_status);
-    frame.render_widget(Paragraph::new(address_hint(state, theme)), address_status);
+    boxed(
+        frame,
+        rect,
+        text_line(&state.source, rect.width.saturating_sub(2), focus, theme),
+        focus,
+        theme,
+    );
+    frame.render_widget(Paragraph::new(file_hint(state, theme)), status);
 }
 
 /// What is known about the vault file: nothing to say when it is empty.
 fn file_hint<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
     if state.source.value().trim().is_empty() {
-        return Span::styled("    empty → sync over the network", theme.muted());
+        return Span::styled(
+            "    your vault arrives from your other device once this one is unlocked",
+            theme.muted(),
+        );
     }
     state.source_factors.map_or_else(
         || {
@@ -240,27 +230,6 @@ fn file_hint<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
             )
         },
     )
-}
-
-/// What is known about the device address typed in, or heard.
-fn address_hint<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
-    if state.address.value().trim().is_empty() {
-        return if state.found.is_empty() {
-            Span::styled("    a device that is on and unlocked", theme.muted())
-        } else {
-            Span::styled(
-                format!(
-                    "    {} found  ·  ctrl-b puts one in the field",
-                    state.found.len()
-                ),
-                theme.accent(),
-            )
-        };
-    }
-    match state.peer_address() {
-        Ok(address) => Span::styled(format!("    {} {address}", theme.glyphs.ok), theme.accent()),
-        Err(problem) => Span::styled(format!("    {} {problem}", theme.glyphs.fail), theme.warn()),
-    }
 }
 
 /// `3 / 24 words` plus a short bar.

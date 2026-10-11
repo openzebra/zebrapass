@@ -1,6 +1,7 @@
-//! Restore with the phrase alone: the second device types the phrase and the
-//! address of the first, and the vault arrives over the peer-to-peer
-//! transport. Driven with real keystrokes against two apps on one machine.
+//! Restore with the phrase alone: the new device types the phrase and no
+//! vault file, starts an empty vault of its own, and the account's vault
+//! arrives over the peer-to-peer transport when the first device is found.
+//! Driven with real keystrokes against two apps on one machine.
 
 #![allow(
     clippy::multiple_crate_versions,
@@ -14,171 +15,90 @@
 
 mod common;
 
-use std::net::TcpListener;
-use std::path::Path;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
-use record::{Document, TAG_TITLE};
-use session::write_record;
-use tui::app::flows::restore::{RestoreField, RestoreStep};
+use tui::app::flows::restore::{RestoreField, RestoreState, RestoreStep};
 use tui::app::screen::Screen;
 use tui::vault::discover::discover;
-use tui::vault::open::{unlock_vault, Credential};
 use tui::App;
-use zeroize::Zeroizing;
 
 use common::{
-    app, ctrl, keep_to_this_device, keep_to_this_device_with, make_vault, press, render, temp_dir,
-    type_text, unlock, wait, PASSWORD,
+    add_records, announcing_device, app, beacon, ctrl, fetch_only_with, free_udp_port,
+    keep_to_this_device, make_vault, open_restore, press, render, restore_empty, temp_dir, tick,
+    titles_of, type_phrase, type_text, unlock, wait, wait_adopted, PASSWORD,
 };
 
 const SECOND_PASSWORD: &str = "another-long-password-for-B-77";
 
-fn titled(text: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set_text(TAG_TITLE, text);
-    doc
-}
-
-/// Put records into the vault under `base` while no app has it open.
-fn add_records(base: &Path, titles: &[&str]) {
-    let paths = discover(base).first().unwrap().paths.clone();
-    let mut vault = unlock_vault(
-        paths,
-        Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
-    )
-    .unwrap();
-    for title in titles {
-        write_record(&mut vault.session, &mut vault.file, None, &titled(title)).unwrap();
-    }
-    vault.persist().unwrap();
-}
-
-/// The first device: a vault with records, its node on this device only, and
-/// the app unlocked so the node runs. Returns the app, the phrase and the
-/// address the node listens at.
-fn first_device(tag: &str) -> (App, String, String) {
-    let base = temp_dir(tag);
-    let words = make_vault(&base);
-    keep_to_this_device(&base);
-    add_records(&base, &["wifi", "bank"]);
-    let mut first = app(&base);
-    unlock(&mut first, PASSWORD);
-    let address = listening(&first);
-    (first, words, address)
-}
-
-fn listening(app: &App) -> String {
-    let Screen::Unlocked(state) = &app.screen else {
-        panic!("not unlocked: {}", app.screen.name())
-    };
-    state
-        .p2p
-        .as_ref()
-        .expect("the node runs without a shared vault")
-        .service
-        .local_addr()
-        .expect("the node listens")
-        .to_string()
-}
-
-fn titles_of(app: &App) -> Vec<String> {
-    let Screen::Unlocked(state) = &app.screen else {
-        panic!("not unlocked: {}", app.screen.name())
-    };
-    let mut titles: Vec<String> = state
-        .cache
-        .iter()
-        .map(|row| row.title.to_string())
-        .collect();
-    titles.sort();
-    titles
-}
-
-/// Welcome → restore chooser → the phrase restore.
-fn open_restore(app: &mut App) {
-    press(app, KeyCode::Right);
-    press(app, KeyCode::Enter);
-    press(app, KeyCode::Enter);
-    assert_eq!(app.screen.name(), "restore");
-}
-
-fn type_phrase(app: &mut App, words: &str) {
-    for word in words.split(' ') {
-        type_text(app, word);
-        press(app, KeyCode::Char(' '));
-    }
-}
-
-fn restore_state(app: &App) -> &tui::app::flows::restore::RestoreState {
+fn restore_state(app: &App) -> &RestoreState {
     let Screen::Restore(state) = &app.screen else {
         panic!("not restore: {}", app.screen.name())
     };
     state
 }
 
-/// Put `address` in the network source and press Continue.
-fn set_address_and_continue(app: &mut App, address: &str) {
-    while restore_state(app).field != RestoreField::Phrase {
-        press(app, KeyCode::BackTab);
-    }
+fn enroll_password(app: &mut App, password: &str) {
+    type_text(app, password);
     press(app, KeyCode::Tab);
-    press(app, KeyCode::Tab);
-    assert_eq!(restore_state(app).field, RestoreField::Address);
-    for _ in 0..restore_state(app).address.value().len() {
-        press(app, KeyCode::Backspace);
-    }
-    type_text(app, address);
-    press(app, KeyCode::Enter);
-}
-
-/// Phrase, then the network source with `address`, then Continue.
-fn enter_phrase_and_address(app: &mut App, words: &str, address: &str) {
-    assert_eq!(restore_state(app).field, RestoreField::Phrase);
-    type_phrase(app, words);
-    set_address_and_continue(app, address);
-}
-
-fn enroll_password(app: &mut App) {
-    type_text(app, SECOND_PASSWORD);
-    press(app, KeyCode::Tab);
-    type_text(app, SECOND_PASSWORD);
+    type_text(app, password);
     press(app, KeyCode::Enter);
     wait(app);
 }
 
-#[test]
-fn the_share_screen_shows_the_address_to_type_on_a_new_device() {
-    let (mut first, _words, address) = first_device("net-show");
-    press(&mut first, KeyCode::Char('S'));
-    let screen = render(&first, 140, 50);
-    assert!(screen.contains("restore from"), "{screen}");
-    assert!(
-        screen.contains(&address),
-        "the address is the one the node listens at (this device only):\n{screen}"
-    );
+/// Type `text` into the file field, replacing what was there.
+fn set_file(app: &mut App, text: &str) {
+    while restore_state(app).field != RestoreField::Phrase {
+        press(app, KeyCode::BackTab);
+    }
+    press(app, KeyCode::Tab);
+    assert_eq!(restore_state(app).field, RestoreField::Source);
+    for _ in 0..restore_state(app).source.value().len() {
+        press(app, KeyCode::Backspace);
+    }
+    type_text(app, text);
 }
 
 #[test]
-fn the_phrase_and_an_address_bring_the_vault_to_a_new_device() {
-    let (first, words, address) = first_device("net-first");
-    let base = temp_dir("net-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    enter_phrase_and_address(&mut second, &words, &address);
-    assert_eq!(
-        second.screen.name(),
-        "restore",
-        "the factor step comes next"
-    );
-    enroll_password(&mut second);
+fn the_share_screen_shows_the_address_to_type_on_a_new_device() {
+    let base = temp_dir("net-show");
+    make_vault(&base);
+    keep_to_this_device(&base);
+    let mut first = app(&base);
+    unlock(&mut first, PASSWORD);
+    let Screen::Unlocked(state) = &first.screen else {
+        panic!("not unlocked")
+    };
+    let address = state
+        .p2p
+        .as_ref()
+        .expect("the node runs")
+        .service
+        .local_addr()
+        .expect("the node listens")
+        .to_string();
+    press(&mut first, KeyCode::Char('S'));
+    let screen = render(&first, 140, 50);
+    assert!(screen.contains("restore from"), "{screen}");
+    assert!(screen.contains(&address), "{screen}");
+}
 
-    assert_eq!(second.screen.name(), "unlocked");
+#[test]
+fn the_phrase_alone_brings_the_vault_and_a_later_record_arrives_at_the_next_check_in() {
+    let (second_bind, first_bind) = (free_udp_port(), free_udp_port());
+    let (mut first, words, _) = announcing_device(
+        "net-first",
+        beacon(first_bind, second_bind),
+        &["wifi", "bank"],
+    );
+    let base = temp_dir("net-second");
+    let mut second = restore_empty(&base, &words, PASSWORD, beacon(second_bind, first_bind));
+    wait_adopted(&mut second, Duration::from_secs(60));
     assert_eq!(titles_of(&second), ["bank", "wifi"]);
     assert_eq!(titles_of(&second), titles_of(&first));
 
-    // The second device is a vault of its own now: it locks and unlocks with
-    // the password it chose, and finds the first device again by itself.
+    // The second device is a vault of its own now, with the first device
+    // remembered and a rollback cursor at the adopted file.
     let paths = discover(&base).first().unwrap().paths.clone();
     assert!(paths.sync_identity().is_file());
     assert!(paths.peers_store().is_file(), "the address is remembered");
@@ -186,82 +106,33 @@ fn the_phrase_and_an_address_bring_the_vault_to_a_new_device() {
         panic!("not unlocked")
     };
     let vault = state.vault.as_ref().unwrap();
-    let cursor = vault.meta.seen.unwrap();
     assert_eq!(
-        cursor.generation,
-        vault.session.generation(),
-        "the rollback cursor is the adopted file"
+        vault.meta.seen.unwrap().generation,
+        vault.session.generation()
     );
+
+    // The first device gets a new record while the second is locked.
     press(&mut second, KeyCode::Char('L'));
-    press(&mut second, KeyCode::Enter);
-    assert_eq!(second.screen.name(), "unlock");
-    unlock(&mut second, SECOND_PASSWORD);
-    eprintln!("{}", render(&second, 120, 40));
-    assert_eq!(titles_of(&second), ["bank", "wifi"]);
-}
-
-#[test]
-fn a_wrong_address_says_so_and_a_second_try_with_the_right_one_works() {
-    let (_first, words, address) = first_device("net-retry-first");
-    let closed = {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().to_string()
-    };
-    let base = temp_dir("net-retry-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    enter_phrase_and_address(&mut second, &words, &closed);
-    enroll_password(&mut second);
-    assert_eq!(
-        second.screen.name(),
-        "restore",
-        "stays on the restore screen"
-    );
-    assert!(render(&second, 140, 50).contains("could not be reached"));
-    assert!(discover(&base).is_empty(), "nothing was written");
-
-    enter_phrase_and_address(&mut second, &words, &address);
-    enroll_password(&mut second);
-    assert_eq!(second.screen.name(), "unlocked");
-    assert_eq!(titles_of(&second), ["bank", "wifi"]);
-}
-
-#[test]
-fn a_phrase_of_another_account_is_turned_away() {
-    let (_first, _words, address) = first_device("net-foreign-first");
-    let stranger = make_vault(&temp_dir("net-foreign-other"));
-    let base = temp_dir("net-foreign-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    enter_phrase_and_address(&mut second, &stranger, &address);
-    enroll_password(&mut second);
-    assert_eq!(second.screen.name(), "restore");
-    assert!(render(&second, 140, 50).contains("turned this one away"));
-    assert!(discover(&base).is_empty());
-}
-
-#[test]
-fn an_address_nobody_may_dial_is_refused_on_the_screen() {
-    let base = temp_dir("net-bad-address");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    let (_first, words, _address) = first_device("net-bad-first");
-    type_phrase(&mut second, &words);
-    for refused in [
-        "169.254.169.254:80",
-        "0.0.0.0:7447",
-        "not an address",
-        "10.0.0.1",
-    ] {
-        set_address_and_continue(&mut second, refused);
-        assert_eq!(restore_state(&second).field, RestoreField::Address);
-        assert_eq!(
-            second.screen.name(),
-            "restore",
-            "{refused} must not reach the factor step"
-        );
-        assert!(restore_state(&second).error.is_some(), "{refused}");
+    fetch_only_with(&base, PASSWORD);
+    press(&mut first, KeyCode::Char('n'));
+    type_text(&mut first, "Mail");
+    for _ in 0..4 {
+        press(&mut first, KeyCode::Tab);
     }
+    type_text(&mut first, "S3cure-Pa55!word");
+    first.on_key(&ctrl('s'));
+    wait(&mut first);
+    assert_eq!(titles_of(&first), ["Mail", "bank", "wifi"]);
+
+    // Unlocking the second finds the first at the remembered address.
+    press(&mut second, KeyCode::Enter);
+    unlock(&mut second, PASSWORD);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while titles_of(&second).len() < 3 && Instant::now() < deadline {
+        tick(&mut second, Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(titles_of(&second), ["Mail", "bank", "wifi"]);
 }
 
 #[test]
@@ -280,30 +151,12 @@ fn restoring_from_a_file_still_works_as_before() {
     let mut second = app(&base);
     open_restore(&mut second);
     type_phrase(&mut second, &words);
-    press(&mut second, KeyCode::Tab);
-    assert_eq!(restore_state(&second).field, RestoreField::Source);
-    for _ in 0..restore_state(&second).source.value().len() {
-        press(&mut second, KeyCode::Backspace);
-    }
-    type_text(&mut second, &file.to_string_lossy());
+    set_file(&mut second, &file.to_string_lossy());
     assert!(!restore_state(&second).file_problem());
     press(&mut second, KeyCode::Enter);
-    enroll_password(&mut second);
+    enroll_password(&mut second, SECOND_PASSWORD);
     assert_eq!(second.screen.name(), "unlocked");
     assert_eq!(titles_of(&second), ["bank", "wifi"]);
-}
-
-/// Type `text` into the file field, replacing what was there.
-fn set_file(app: &mut App, text: &str) {
-    while restore_state(app).field != RestoreField::Phrase {
-        press(app, KeyCode::BackTab);
-    }
-    press(app, KeyCode::Tab);
-    assert_eq!(restore_state(app).field, RestoreField::Source);
-    for _ in 0..restore_state(app).source.value().len() {
-        press(app, KeyCode::Backspace);
-    }
-    type_text(app, text);
 }
 
 #[test]
@@ -317,12 +170,28 @@ fn an_empty_file_field_is_a_valid_state_and_says_it_syncs_over_the_network() {
     assert!(screen.contains("Vault file (optional)"), "{screen}");
     assert!(screen.contains("empty → sync over the network"), "{screen}");
     assert!(!screen.contains("no vault file at this path"), "{screen}");
-    assert!(!screen.contains("from a file"), "{screen}");
+    assert!(!screen.contains("Device address"), "{screen}");
+}
+
+#[test]
+fn an_empty_file_goes_on_to_the_factor_step_without_a_complaint() {
+    let words = make_vault(&temp_dir("net-no-file-other"));
+    let base = temp_dir("net-no-file");
+    let mut second = app(&base);
+    open_restore(&mut second);
+    type_phrase(&mut second, &words);
+    press(&mut second, KeyCode::Enter);
+    assert_eq!(restore_state(&second).step, RestoreStep::Enroll);
+    assert!(restore_state(&second).error.is_none());
+    assert!(
+        discover(&base).is_empty(),
+        "nothing is written before the factor"
+    );
 }
 
 #[test]
 fn a_wrong_non_empty_file_path_is_refused_on_the_screen() {
-    let (_first, words, _address) = first_device("net-wrong-path");
+    let words = make_vault(&temp_dir("net-wrong-path-other"));
     let base = temp_dir("net-wrong-path-second");
     let mut second = app(&base);
     open_restore(&mut second);
@@ -337,93 +206,4 @@ fn a_wrong_non_empty_file_path_is_refused_on_the_screen() {
         restore_state(&second).error,
         Some("No ZebraPass vault file at that path.")
     );
-}
-
-#[test]
-fn an_empty_file_and_no_address_toasts_and_starts_nothing() {
-    let (_first, words, _address) = first_device("net-no-address");
-    let base = temp_dir("net-no-address-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    type_phrase(&mut second, &words);
-    press(&mut second, KeyCode::Enter);
-    assert_eq!(restore_state(&second).step, RestoreStep::Phrase);
-    assert!(
-        restore_state(&second).error.is_none(),
-        "an empty field is never echoed"
-    );
-    assert!(
-        render(&second, 140, 50).contains("Give a device address, or let the beacon find one."),
-    );
-    assert!(discover(&base).is_empty());
-}
-
-#[test]
-fn a_file_and_an_address_together_use_the_file() {
-    let first_base = temp_dir("both-first");
-    let words = make_vault(&first_base);
-    add_records(&first_base, &["wifi", "bank"]);
-    let file = discover(&first_base)
-        .first()
-        .unwrap()
-        .paths
-        .vault_file
-        .clone();
-    let closed = {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().to_string()
-    };
-
-    let base = temp_dir("both-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    type_phrase(&mut second, &words);
-    set_file(&mut second, &file.to_string_lossy());
-    press(&mut second, KeyCode::Tab);
-    type_text(&mut second, &closed);
-    press(&mut second, KeyCode::Enter);
-    enroll_password(&mut second);
-    assert_eq!(second.screen.name(), "unlocked");
-    assert_eq!(titles_of(&second), ["bank", "wifi"]);
-}
-
-#[test]
-fn a_record_written_on_the_first_device_reaches_the_second_when_it_checks_in() {
-    let (mut first, words, address) = first_device("net-pull-first");
-    let base = temp_dir("net-pull-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    enter_phrase_and_address(&mut second, &words, &address);
-    enroll_password(&mut second);
-    assert_eq!(titles_of(&second), ["bank", "wifi"]);
-
-    // The first device gets a new record while the second is locked.
-    press(&mut second, KeyCode::Char('L'));
-    keep_to_this_device_with(&base, SECOND_PASSWORD);
-    press(&mut first, KeyCode::Char('n'));
-    type_text(&mut first, "Mail");
-    for _ in 0..4 {
-        press(&mut first, KeyCode::Tab);
-    }
-    type_text(&mut first, "S3cure-Pa55!word");
-    first.on_key(&ctrl('s'));
-    wait(&mut first);
-    assert_eq!(titles_of(&first), ["Mail", "bank", "wifi"]);
-
-    // Unlocking the second finds the first at the remembered address and
-    // takes the record it lacks, without the address being typed again.
-    press(&mut second, KeyCode::Enter);
-    unlock(&mut second, SECOND_PASSWORD);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while titles_of(&second).len() < 3 && std::time::Instant::now() < deadline {
-        common::settle(&mut second);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    assert_eq!(titles_of(&second), ["Mail", "bank", "wifi"]);
-
-    // It was saved: a fresh unlock still has it.
-    press(&mut second, KeyCode::Char('L'));
-    press(&mut second, KeyCode::Enter);
-    unlock(&mut second, SECOND_PASSWORD);
-    assert_eq!(titles_of(&second), ["Mail", "bank", "wifi"]);
 }

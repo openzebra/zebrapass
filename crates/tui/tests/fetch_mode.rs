@@ -22,135 +22,15 @@ use std::time::{Duration, Instant};
 use crossterm::event::KeyCode;
 use local::Listen;
 use p2p_net::{BeaconConfig, Relay, RelayLimits};
-use record::{Document, TAG_TITLE};
-use session::write_record;
-use tui::app::flows::restore::RestoreField;
 use tui::app::personal::wants_node;
 use tui::app::screen::Screen;
-use tui::vault::discover::discover;
-use tui::vault::open::{unlock_vault, Credential};
 use tui::App;
-use zeroize::Zeroizing;
 
 use common::{
-    app, app_with, config, keep_to_this_device, make_vault, press, render, temp_dir, type_text,
-    unlock, wait, CAPS, PASSWORD,
+    add_records, announcing_device, app_with, beacon, config, free_udp_port, keep_to_this_device,
+    make_vault, press, render, restore_empty, temp_dir, titles_of, type_text, unlock, wait,
+    wait_adopted, CAPS, PASSWORD,
 };
-
-const SECOND_PASSWORD: &str = "another-long-password-for-B-77";
-
-fn titled(text: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set_text(TAG_TITLE, text);
-    doc
-}
-
-/// Put records into the vault under `base` while no app has it open.
-fn add_records(base: &Path, titles: &[&str]) {
-    let paths = discover(base).first().unwrap().paths.clone();
-    let mut vault = unlock_vault(
-        paths,
-        Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
-    )
-    .unwrap();
-    for title in titles {
-        write_record(&mut vault.session, &mut vault.file, None, &titled(title)).unwrap();
-    }
-    vault.persist().unwrap();
-}
-
-/// The first device: a vault with records, its node on this device only, and
-/// the app unlocked so the node runs. Returns the app, the phrase and the
-/// address the node listens at.
-fn first_device(tag: &str) -> (App, String, String) {
-    let base = temp_dir(tag);
-    let words = make_vault(&base);
-    keep_to_this_device(&base);
-    add_records(&base, &["wifi", "bank"]);
-    let mut first = app(&base);
-    unlock(&mut first, PASSWORD);
-    let address = listening(&first);
-    (first, words, address)
-}
-
-fn listening(app: &App) -> String {
-    let Screen::Unlocked(state) = &app.screen else {
-        panic!("not unlocked: {}", app.screen.name())
-    };
-    state
-        .p2p
-        .as_ref()
-        .expect("the node runs without a shared vault")
-        .service
-        .local_addr()
-        .expect("the node listens")
-        .to_string()
-}
-
-fn titles_of(app: &App) -> Vec<String> {
-    let Screen::Unlocked(state) = &app.screen else {
-        panic!("not unlocked: {}", app.screen.name())
-    };
-    let mut titles: Vec<String> = state
-        .cache
-        .iter()
-        .map(|row| row.title.to_string())
-        .collect();
-    titles.sort();
-    titles
-}
-
-/// Welcome → restore chooser → the phrase restore.
-fn open_restore(app: &mut App) {
-    press(app, KeyCode::Right);
-    press(app, KeyCode::Enter);
-    press(app, KeyCode::Enter);
-    assert_eq!(app.screen.name(), "restore");
-}
-
-fn type_phrase(app: &mut App, words: &str) {
-    for word in words.split(' ') {
-        type_text(app, word);
-        press(app, KeyCode::Char(' '));
-    }
-}
-
-fn restore_state(app: &App) -> &tui::app::flows::restore::RestoreState {
-    let Screen::Restore(state) = &app.screen else {
-        panic!("not restore: {}", app.screen.name())
-    };
-    state
-}
-
-/// Put `address` in the network source and press Continue.
-fn set_address_and_continue(app: &mut App, address: &str) {
-    while restore_state(app).field != RestoreField::Phrase {
-        press(app, KeyCode::BackTab);
-    }
-    press(app, KeyCode::Tab);
-    press(app, KeyCode::Tab);
-    assert_eq!(restore_state(app).field, RestoreField::Address);
-    for _ in 0..restore_state(app).address.value().len() {
-        press(app, KeyCode::Backspace);
-    }
-    type_text(app, address);
-    press(app, KeyCode::Enter);
-}
-
-/// Phrase, then the network source with `address`, then Continue.
-fn enter_phrase_and_address(app: &mut App, words: &str, address: &str) {
-    assert_eq!(restore_state(app).field, RestoreField::Phrase);
-    type_phrase(app, words);
-    set_address_and_continue(app, address);
-}
-
-fn enroll_password(app: &mut App) {
-    type_text(app, SECOND_PASSWORD);
-    press(app, KeyCode::Tab);
-    type_text(app, SECOND_PASSWORD);
-    press(app, KeyCode::Enter);
-    wait(app);
-}
 
 /// Add `title` to the vault file under `base` while its app keeps running: the
 /// node serves what is on disk.
@@ -219,18 +99,19 @@ fn only_a_fetch_only_or_listening_device_wants_a_node_and_off_is_unchanged() {
 
 #[test]
 fn a_restored_device_set_to_fetch_only_still_pulls_what_the_peer_wrote_after() {
-    let (first, words, address) = first_device("fetch-first");
-    let first_base = state(&first).base.clone();
+    let (second_bind, first_bind) = (free_udp_port(), free_udp_port());
+    let (_first, words, first_base) = announcing_device(
+        "fetch-first",
+        beacon(first_bind, second_bind),
+        &["wifi", "bank"],
+    );
     let base = temp_dir("fetch-second");
-    let mut second = app(&base);
-    open_restore(&mut second);
-    enter_phrase_and_address(&mut second, &words, &address);
-    enroll_password(&mut second);
-    assert_eq!(second.screen.name(), "unlocked");
+    let mut second = restore_empty(&base, &words, PASSWORD, beacon(second_bind, first_bind));
+    wait_adopted(&mut second, Duration::from_secs(60));
     assert_eq!(
         titles_of(&second),
         ["bank", "wifi"],
-        "the restore dialed out"
+        "the vault was brought in"
     );
 
     choose(&mut second, Listen::Fetch);
@@ -248,7 +129,7 @@ fn a_restored_device_set_to_fetch_only_still_pulls_what_the_peer_wrote_after() {
     press(&mut second, KeyCode::Esc);
     press(&mut second, KeyCode::Char('L'));
     press(&mut second, KeyCode::Enter);
-    unlock(&mut second, SECOND_PASSWORD);
+    unlock(&mut second, PASSWORD);
     assert_eq!(
         state(&second).listen_mode(),
         Listen::Fetch,

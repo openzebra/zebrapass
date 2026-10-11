@@ -1,6 +1,6 @@
-//! What the second device checks before it makes a fetched file its vault:
-//! the file is the one the peer announced, it opens under the typed phrase
-//! with its commitment intact, and it is not older than what is held.
+//! What a placeholder checks before it makes a fetched file its vault: the
+//! file is the one the peer announced, it opens with the held password and
+//! its commitment intact, and it is not older than what is held.
 
 #![allow(
     clippy::multiple_crate_versions,
@@ -14,22 +14,22 @@
 mod common;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use local::SyncIdentity;
 use p2p_net::{Announce, PersonalFetch};
 use record::{Document, TAG_TITLE};
-use session::{list_records, write_record, KdfProfile, VaultFile};
-use tui::vault::create::{Enrollment, RestoreSource, RestoreVault};
+use session::{list_records, write_record, VaultFile};
+use tui::vault::adopt::{adopt_fetched, AdoptRequest};
 use tui::vault::discover::discover;
 use tui::vault::error::UnlockError;
 use tui::vault::open::{unlock_vault, Credential, Vault};
-use tui::vault::restore_net::adopt_fetched;
 use zeroize::Zeroizing;
 
 use common::{make_vault, phrase, temp_dir, PASSWORD};
 
-/// What the second device chooses; the first device's file has another.
-const OWN_PASSWORD: &str = "the-second-devices-own-password-9";
+/// A password the first device's file does not open with.
+const OTHER_PASSWORD: &str = "the-second-devices-own-password-9";
 
 struct Origin {
     words: String,
@@ -77,14 +77,16 @@ fn identity(words: &str) -> SyncIdentity {
     SyncIdentity::enroll(phrase.seed(), &client_id, [9; 16], u64::MAX).unwrap()
 }
 
-fn request(words: &str, base: &Path) -> RestoreVault {
-    RestoreVault {
-        phrase: Box::new(phrase(words)),
+fn request(words: &str, base: &Path, password: &str) -> AdoptRequest {
+    let phrase = phrase(words);
+    AdoptRequest {
+        placeholder: local::paths_for(base, &[0xAA; 16]),
+        identity: Arc::new(identity(words)),
+        client_id: kdf::client_id(phrase.seed()).unwrap(),
         name: String::from("Personal"),
-        base: base.to_path_buf(),
-        source: RestoreSource::Network(Box::from("127.0.0.1:1")),
-        profile: KdfProfile::Fast,
-        factor: Enrollment::Password(Zeroizing::new(OWN_PASSWORD.as_bytes().to_vec())),
+        password: Zeroizing::new(password.as_bytes().to_vec()),
+        addresses: Vec::new(),
+        loopback: true,
     }
 }
 
@@ -102,10 +104,20 @@ fn adopt(
     file: Vec<u8>,
     announce: Announce,
 ) -> Result<Box<Vault>, UnlockError> {
+    adopt_with(words, base, PASSWORD, file, announce)
+}
+
+fn adopt_with(
+    words: &str,
+    base: &Path,
+    password: &str,
+    file: Vec<u8>,
+    announce: Announce,
+) -> Result<Box<Vault>, UnlockError> {
     adopt_fetched(
-        request(words, base),
-        &identity(words),
+        &request(words, base, password),
         fetched(file, announce, words),
+        "127.0.0.1:1",
     )
 }
 
@@ -131,12 +143,27 @@ fn a_file_that_is_the_announced_vault_is_adopted_with_its_records() {
     assert!(vault.meta.seen.is_some());
     assert!(vault.paths.sync_identity().is_file());
     let password = |text: &str| Credential::Password(Zeroizing::new(text.as_bytes().to_vec()));
-    let reopened = unlock_vault(vault.paths.clone(), password(OWN_PASSWORD)).unwrap();
+    let reopened = unlock_vault(vault.paths.clone(), password(PASSWORD)).unwrap();
     assert_eq!(list_records(&reopened.session).unwrap().len(), 3);
     assert!(
-        unlock_vault(vault.paths.clone(), password(PASSWORD)).is_err(),
-        "the first device's password is not carried over: one password per file"
+        unlock_vault(vault.paths.clone(), password(OTHER_PASSWORD)).is_err(),
+        "the vault keeps the password it was sealed with"
     );
+}
+
+#[test]
+fn a_password_that_does_not_open_the_file_is_refused_and_leaves_nothing() {
+    let first = origin("adopt-wrong-password", 2);
+    let base = temp_dir("adopt-wrong-password-b");
+    let outcome = adopt_with(
+        &first.words,
+        &base,
+        OTHER_PASSWORD,
+        first.file.clone(),
+        first.announce,
+    );
+    assert_eq!(outcome.unwrap_err(), UnlockError::Denied);
+    nothing_on_disk(&base);
 }
 
 #[test]
@@ -155,7 +182,7 @@ fn a_flipped_byte_anywhere_in_the_file_is_refused_and_leaves_nothing() {
         assert!(
             matches!(
                 outcome,
-                Err(UnlockError::WrongVault | UnlockError::NotAVault)
+                Err(UnlockError::WrongVault | UnlockError::NotAVault | UnlockError::Denied)
             ),
             "byte {at}: {outcome:?}"
         );
@@ -168,12 +195,7 @@ fn a_file_of_another_vault_is_not_the_one_announced() {
     let first = origin("adopt-other-a", 1);
     let other = origin("adopt-other-b", 1);
     let base = temp_dir("adopt-other-c");
-    let outcome = adopt(&first.words, &base, other.file.clone(), first.announce);
-    assert_eq!(outcome.unwrap_err(), UnlockError::WrongVault);
-    nothing_on_disk(&base);
-
-    // Announced honestly, but it does not open under the typed phrase.
-    let outcome = adopt(&first.words, &base, other.file, other.announce);
+    let outcome = adopt(&first.words, &base, other.file, first.announce);
     assert_eq!(outcome.unwrap_err(), UnlockError::WrongVault);
     nothing_on_disk(&base);
 }
@@ -226,7 +248,7 @@ fn a_second_restore_with_an_older_file_is_refused_as_a_rollback() {
     );
     let reopened = unlock_vault(
         discover(&base)[0].paths.clone(),
-        Credential::Password(Zeroizing::new(OWN_PASSWORD.as_bytes().to_vec())),
+        Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
     )
     .unwrap();
     assert_eq!(list_records(&reopened.session).unwrap().len(), 3);

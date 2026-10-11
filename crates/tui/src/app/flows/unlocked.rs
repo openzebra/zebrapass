@@ -74,6 +74,11 @@ pub struct Unlocked {
     pub identity: Option<Arc<SyncIdentity>>,
     /// Where LAN beacons go and are heard, when the command line says.
     pub beacon: Option<p2p_net::BeaconConfig>,
+    /// The password that unlocked a placeholder vault, until the account's
+    /// vault has been brought in with it.
+    pub held: Option<crate::vault::adopt::Held>,
+    /// Devices known when the last attempt to bring the vault in began.
+    pub adopt_seen: usize,
     /// Where the vaults live on this device.
     pub base: PathBuf,
     /// Copy usage on this device, for list order.
@@ -122,6 +127,8 @@ impl Unlocked {
             p2p,
             identity,
             beacon,
+            held: None,
+            adopt_seen: 0,
             base,
             usage,
             view: View::Home,

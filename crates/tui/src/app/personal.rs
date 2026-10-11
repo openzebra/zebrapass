@@ -21,6 +21,23 @@ pub const fn wants_node(has_gate: bool, shared: usize, listen: Listen, holds: bo
     shared > 0 || (has_gate && (holds || !matches!(listen, Listen::Off)))
 }
 
+/// How the node of `vault` listens, and whether the vault is a placeholder.
+///
+/// A placeholder has to be found, and without an address the only way is to
+/// listen for beacons and announce in turn.
+#[must_use]
+pub fn listen_mode(vault: &Vault) -> (Listen, bool) {
+    if crate::vault::adopt::is_placeholder(&vault.paths) {
+        return (Listen::Beacon, true);
+    }
+    let listen = vault
+        .meta
+        .prefs
+        .as_ref()
+        .map_or_else(Listen::default, |prefs| prefs.p2p_listen);
+    (listen, false)
+}
+
 /// Ask another device of this account, at an address remembered next to the
 /// vault, for the record frames this device lacks, and send it the ones it
 /// lacks. Does nothing when no address is remembered.
