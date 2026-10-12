@@ -31,7 +31,8 @@ const TAGS: [u16; 9] = [
 const FLAG_ANIM: u8 = 1;
 const FLAG_ASCII: u8 = 1 << 1;
 const FLAG_FOCUS_LOCK: u8 = 1 << 2;
-const FLAGS_KNOWN: u8 = FLAG_ANIM | FLAG_ASCII | FLAG_FOCUS_LOCK;
+const FLAG_LISTEN_MIGRATED: u8 = 1 << 3;
+const FLAGS_KNOWN: u8 = FLAG_ANIM | FLAG_ASCII | FLAG_FOCUS_LOCK | FLAG_LISTEN_MIGRATED;
 
 /// Preferences of this device for one vault.
 #[allow(clippy::struct_excessive_bools, reason = "flags")]
@@ -51,6 +52,10 @@ pub struct Prefs {
     pub ascii: bool,
     /// Losing terminal focus locks the vault.
     pub focus_lock: bool,
+    /// A saved `Lan` was the listening default of older builds; the first
+    /// read after that upgrade flips it to [`Listen::Beacon`] and this flag
+    /// marks the choice as seen, so a later explicit `Lan` stays.
+    pub listen_migrated: bool,
     /// Where the sync node accepts connections.
     pub p2p_listen: Listen,
     /// The address, as `ip:port`, this device offers other members when it
@@ -74,6 +79,7 @@ impl Default for Prefs {
             anim: true,
             ascii: false,
             focus_lock: false,
+            listen_migrated: false,
             p2p_listen: Listen::Beacon,
             p2p_advertise: None,
             p2p_relays: Vec::new(),
@@ -162,8 +168,14 @@ impl Prefs {
         if p2p_relays.len() > RELAYS_MAX {
             return Err(out_of_range());
         }
-        let p2p_listen =
+        let mut listen_migrated = flags & FLAG_LISTEN_MIGRATED != 0;
+        let mut p2p_listen =
             byte(doc, TAG_PREF_P2P_LISTEN)?.map_or(Ok(defaults.p2p_listen), Listen::try_from)?;
+        if p2p_listen == Listen::Lan && !listen_migrated {
+            // `Lan` was the listening default of older builds.
+            p2p_listen = Listen::Beacon;
+            listen_migrated = true;
+        }
         let fetch_only = p2p_listen == Listen::Fetch;
         let p2p_hold = match byte(doc, TAG_PREF_P2P_HOLD)? {
             None | Some(0) => false,
@@ -178,6 +190,7 @@ impl Prefs {
             anim: flags & FLAG_ANIM != 0,
             ascii: flags & FLAG_ASCII != 0,
             focus_lock: flags & FLAG_FOCUS_LOCK != 0,
+            listen_migrated,
             p2p_listen,
             p2p_advertise,
             p2p_relays,
@@ -189,6 +202,11 @@ impl Prefs {
         (if self.anim { FLAG_ANIM } else { 0 })
             | (if self.ascii { FLAG_ASCII } else { 0 })
             | (if self.focus_lock { FLAG_FOCUS_LOCK } else { 0 })
+            | (if self.listen_migrated {
+                FLAG_LISTEN_MIGRATED
+            } else {
+                0
+            })
     }
 }
 
@@ -223,6 +241,7 @@ mod tests {
             anim: false,
             ascii: true,
             focus_lock: true,
+            listen_migrated: false,
             p2p_listen: Listen::Off,
             p2p_advertise: Some("93.184.216.34:7447".into()),
             p2p_relays: vec![format!("93.184.216.35:7447/{}", "ab".repeat(16)).into()],
@@ -274,6 +293,36 @@ mod tests {
             doc.set_data(tag, ValueType::Bytes, value);
             assert_eq!(Prefs::read(&doc).unwrap_err().to_string(), message);
         }
+    }
+
+    #[test]
+    fn a_lan_choice_saved_by_old_builds_becomes_beacon_once() {
+        let mut doc = written(&custom());
+        doc.set_data(
+            record::TAG_PREF_P2P_LISTEN,
+            ValueType::Bytes,
+            &[u8::from(Listen::Lan)],
+        );
+        let read = Prefs::read(&doc).unwrap().unwrap();
+        assert_eq!(read.p2p_listen, Listen::Beacon);
+        assert!(read.listen_migrated);
+
+        let read = Prefs::read(&written(&read)).unwrap().unwrap();
+        assert_eq!(read.p2p_listen, Listen::Beacon);
+
+        let mut explicit = Document::new();
+        explicit.set_data(
+            TAG_PREF_FLAGS,
+            ValueType::Bytes,
+            &[super::FLAG_LISTEN_MIGRATED],
+        );
+        explicit.set_data(
+            record::TAG_PREF_P2P_LISTEN,
+            ValueType::Bytes,
+            &[u8::from(Listen::Lan)],
+        );
+        let read = Prefs::read(&explicit).unwrap().unwrap();
+        assert_eq!(read.p2p_listen, Listen::Lan);
     }
 
     #[test]

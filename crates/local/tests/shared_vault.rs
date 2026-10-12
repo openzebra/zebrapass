@@ -315,6 +315,7 @@ fn the_listening_choice_survives_a_round_trip_and_cycles_through_all_five() {
         Listen::Fetch,
     ] {
         let prefs = Prefs {
+            listen_migrated: true,
             p2p_listen: listen,
             ..Prefs::default()
         };
