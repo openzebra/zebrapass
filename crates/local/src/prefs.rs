@@ -74,7 +74,7 @@ impl Default for Prefs {
             anim: true,
             ascii: false,
             focus_lock: false,
-            p2p_listen: Listen::Lan,
+            p2p_listen: Listen::Beacon,
             p2p_advertise: None,
             p2p_relays: Vec::new(),
             p2p_hold: false,

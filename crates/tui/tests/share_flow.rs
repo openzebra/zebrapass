@@ -184,14 +184,6 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     press(&mut alice, KeyCode::Enter);
     wait(&mut alice);
     let screen = render(&alice, 100, 30);
-    assert!(screen.contains("local network"), "{screen}");
-    assert!(
-        !screen.contains("announced"),
-        "the beacon is off by default"
-    );
-    press(&mut alice, KeyCode::Char('l'));
-    wait(&mut alice);
-    let screen = render(&alice, 100, 30);
     assert!(screen.contains("local network, announced"), "{screen}");
     assert!(
         state(&alice)
@@ -208,6 +200,16 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     let screen = render(&alice, 100, 30);
     assert!(screen.contains("this device only"), "{screen}");
     assert!(screen.contains("127.0.0.1"), "{screen}");
+    assert!(
+        state(&alice)
+            .p2p
+            .as_deref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_some(),
+        "this device only still listens on the loopback"
+    );
     press(&mut alice, KeyCode::Char('l'));
     wait(&mut alice);
     let screen = render(&alice, 100, 30);
@@ -234,7 +236,29 @@ fn the_listening_choice_cycles_and_is_always_visible() {
         .service
         .local_addr()
         .is_none());
-    // Adding someone needs an address they can reach.
+    press(&mut alice, KeyCode::Char('l'));
+    wait(&mut alice);
+    let screen = render(&alice, 100, 30);
+    assert!(screen.contains("local network"), "{screen}");
+    assert!(
+        !screen.contains("announced"),
+        "the beacon is off in the plain network mode"
+    );
+    press(&mut alice, KeyCode::Char('l'));
+    wait(&mut alice);
+    let screen = render(&alice, 100, 30);
+    assert!(screen.contains("local network, announced"), "{screen}");
+    assert!(
+        state(&alice)
+            .p2p
+            .as_deref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_some(),
+        "the beacon mode listens like the network mode"
+    );
+    // Adding someone needs an address they can reach; the beacon provides it.
     press(&mut alice, KeyCode::Char('a'));
-    assert!(matches!(share(&alice).step, Step::Overview));
+    assert!(matches!(share(&alice).step, Step::PasteCard));
 }

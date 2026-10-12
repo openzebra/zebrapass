@@ -9,10 +9,12 @@ pub enum Listen {
     /// On this device only (`127.0.0.1`).
     Local,
     /// On the local network (`0.0.0.0`).
-    #[default]
     Lan,
     /// On the local network, and announced there by a sealed beacon that
-    /// only the account's other devices can read.
+    /// only the account's other devices can read. The default: devices of
+    /// one account restored on different machines find each other without
+    /// any manual step.
+    #[default]
     Beacon,
     /// No listener, no beacon and no relay slot: the node only dials out,
     /// pulling and pushing at each check-in. For a device that cannot be
