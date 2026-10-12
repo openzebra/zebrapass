@@ -1,5 +1,6 @@
 //! One module per screen; [`draw`] dispatches on the screen state.
 
+pub mod addresses;
 pub mod alert;
 pub mod busy;
 pub mod ceremony;
@@ -18,15 +19,22 @@ pub mod import;
 pub mod import_mapping;
 pub mod import_preview;
 pub mod locked;
+pub mod p2p_info;
+pub mod p2p_status;
 pub mod restore;
 pub mod settings;
 pub mod sync;
+mod sync_confirm;
+mod sync_lines;
+mod sync_relay;
+mod sync_upgrade;
 pub mod unlock;
 pub mod welcome;
 
 use ratatui::widgets::Block;
 use ratatui::Frame;
 
+use crate::app::flows::dialog::Dialog;
 use crate::app::flows::palette::Overlay;
 use crate::app::flows::unlocked::View;
 use crate::app::screen::Screen;
@@ -57,7 +65,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 View::Editor(editor) => editor::draw(frame, area, state, editor, ctx),
                 View::Factors(factors) => factors::draw(frame, area, state, factors, ctx),
                 View::Devices(cursor) => devices::draw(frame, area, state, *cursor, ctx),
-                View::Sync => sync::draw(frame, area, state, ctx),
+                View::Sync(share) => sync::draw(frame, area, state, share, ctx),
                 View::Health(cursor) => health::draw(frame, area, state, *cursor, ctx),
                 View::History(history) => history::draw(frame, area, history, ctx),
                 View::Import(import) => import::draw(frame, area, import, ctx),
@@ -68,8 +76,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             if let Some(modal) = state.settings.as_deref() {
                 settings::draw(frame, area, state, modal, ctx);
             }
-            if let Some(dialog) = state.dialog.as_deref() {
-                dialog::draw(frame, area, dialog, ctx);
+            match state.dialog.as_deref() {
+                Some(Dialog::Addresses(list)) => addresses::draw(frame, area, list, state, ctx),
+                Some(Dialog::P2p(scroll)) => p2p_info::draw(frame, area, *scroll, state, ctx),
+                Some(dialog) => dialog::draw(frame, area, dialog, ctx),
+                None => {}
             }
         }
     }

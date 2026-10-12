@@ -1,6 +1,6 @@
 //! The settings modal: opens over Home, stages edits with a live preview,
-//! saves them into the vault's encrypted local metadata, refuses a bad
-//! server origin, asks before discarding, and searches across sections.
+//! saves them into the vault's encrypted local metadata, asks before
+//! discarding, and searches across sections.
 
 #![allow(
     clippy::multiple_crate_versions,
@@ -91,35 +91,6 @@ fn theme_previews_live_and_discard_restores_it() {
     assert!(!modal_open(&app));
     assert_eq!(app.ctx.theme.name, before);
     assert_eq!(before, ThemeName::StripesDark);
-}
-
-#[test]
-fn server_origin_must_be_https_host_and_port() {
-    let (mut app, _) = open_settings("settings-origin");
-    section(&mut app, 2);
-    press(&mut app, KeyCode::Down);
-    press(&mut app, KeyCode::Enter);
-    type_text(&mut app, "sync.example/path");
-    press(&mut app, KeyCode::Enter);
-    assert!(render(&app, 120, 40).contains("no path, query, or user name"));
-    for _ in 0.."/path".len() {
-        press(&mut app, KeyCode::Backspace);
-    }
-    press(&mut app, KeyCode::Enter);
-    let screen = render(&app, 120, 40);
-    assert!(screen.contains("https://sync.example"), "{screen}");
-    assert!(screen.contains("1 unsaved change"), "{screen}");
-}
-
-#[test]
-fn test_connection_fails_closed() {
-    let (mut app, _) = open_settings("settings-sync");
-    section(&mut app, 2);
-    for _ in 0..5 {
-        press(&mut app, KeyCode::Down);
-    }
-    press(&mut app, KeyCode::Enter);
-    assert!(render(&app, 120, 40).contains("not built yet: nothing was sent"));
 }
 
 #[test]

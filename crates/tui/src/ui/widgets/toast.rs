@@ -93,8 +93,8 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, ctx: &Ctx) {
     let glyphs = theme.glyphs;
     // Stay above the hint bar and inside the pane borders.
     let mut bottom = area.bottom().saturating_sub(2);
-    if let Some((label, left)) = ctx.clipboard.countdown(ctx.now) {
-        let total = ctx.clipboard.clear_after().as_secs_f64().max(1.0);
+    if let Some((label, left, total)) = ctx.clipboard.countdown(ctx.now) {
+        let total = total.as_secs_f64().max(1.0);
         let fraction = left.as_secs_f64() / total;
         let lines = vec![
             Line::from(vec![

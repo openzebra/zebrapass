@@ -7,7 +7,6 @@ use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog};
 use crate::app::flows::factors::{form, palette_action, FactorsState};
 use crate::app::flows::form::Form;
 use crate::app::flows::settings::rows::Row;
-use crate::app::flows::settings::Focus;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::screen::Nav;
 use crate::ui::widgets::toast::Tone;
@@ -61,7 +60,6 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         Row::AutoLock
         | Row::FocusLock
         | Row::RevealHide
-        | Row::SyncMode
         | Row::ClipClear
         | Row::Theme
         | Row::Animation
@@ -69,14 +67,6 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
             if let Some(modal) = state.settings.as_deref_mut() {
                 row.adjust(&mut modal.draft, true);
                 ctx.preview_look(&modal.draft);
-            }
-        }
-        Row::ServerOrigin => {
-            if let Some(modal) = state.settings.as_deref_mut() {
-                let current = modal.draft.server_origin.as_deref().unwrap_or("https://");
-                modal.edit.set(current);
-                modal.focus = Focus::Edit;
-                modal.error = None;
             }
         }
         Row::PasswordCost if found.password => form(state, Form::change_password()),
@@ -90,15 +80,8 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         }
         Row::DeviceStatus => form(state, Form::add_device()),
         Row::DevicePin if owned.is_some() => form(state, Form::change_pin()),
-        Row::ServerPin => ctx.toast(
-            Tone::Info,
-            "The server key is pinned on first contact; r clears the pin.",
-        ),
-        // TODO(sync-server): run the signed handshake against the origin.
-        Row::TestConnection => ctx.toast(
-            Tone::Warn,
-            "The sync server is not built yet: nothing was sent.",
-        ),
+        Row::SyncNow => state.sync_now(ctx),
+        Row::SyncDevices => state.open_addresses(false),
         Row::Name => form(state, Form::rename(&state.info.label)),
         Row::RotateKey => form(state, Form::rotate(found.password)),
         Row::ForgetDevice if owned.is_some() => {
@@ -116,8 +99,12 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         Row::Import => crate::app::flows::import_vault::open(state),
         Row::DeviceFingerprint
         | Row::SecureEnclave
-        | Row::ClientId
-        | Row::DeviceCert
+        | Row::SyncStatus
+        | Row::LastCheckIn
+        | Row::SyncPeers
+        | Row::SyncRelays
+        | Row::SyncAdvertised
+        | Row::SyncBeacon
         | Row::ClipOnLock
         | Row::Cipher
         | Row::Generation

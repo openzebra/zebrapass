@@ -128,8 +128,12 @@ version = "0.0.0"
 dependencies = [
  "container",
  "frame",
+ "kdf",
  "libfuzzer-sys",
+ "p2p-core",
+ "secret",
  "session",
+ "syncwire",
 ]
 
 [[package]]
@@ -180,32 +184,6 @@ checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
 dependencies = [
  "cmov",
  "subtle",
-]
-
-[[package]]
-name = "curve25519-dalek"
-version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5eed333089e2e1c1ac8c6c0398e5e2497b4c9926ca6d0365ed1e099afa5bc23"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "curve25519-dalek-derive",
- "fiat-crypto",
- "rustc_version",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "curve25519-dalek-derive"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -286,12 +264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fiat-crypto"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -301,9 +273,11 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 name = "frame"
 version = "0.1.0"
 dependencies = [
+ "aead",
  "aegis",
  "anyhow",
  "getrandom",
+ "kdf",
  "secret",
 ]
 
@@ -378,6 +352,7 @@ dependencies = [
  "hkdf",
  "secret",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -487,6 +462,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "p2p-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ec",
+ "frame",
+ "getrandom",
+ "hmac",
+ "kdf",
+ "pq",
+ "secret",
+ "session",
+ "sha2",
+ "syncwire",
+]
+
+[[package]]
 name = "password-hash"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -593,15 +585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustc_version"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
-dependencies = [
- "semver",
-]
-
-[[package]]
 name = "sec1"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -622,12 +605,6 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
-
-[[package]]
-name = "semver"
-version = "1.0.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "serde"
@@ -786,6 +763,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "syncwire"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "frame",
+ "session",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -822,18 +808,6 @@ dependencies = [
  "p256",
  "pq",
  "secret",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "x25519-dalek"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6"
-dependencies = [
- "curve25519-dalek",
- "rand_core",
  "zeroize",
 ]
 

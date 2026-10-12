@@ -8,21 +8,24 @@
 
 use record::{
     Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER,
-    TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_ORIGIN, TAG_PREF_SERVER_PIN, TAG_PREF_SYNC_MODE,
-    TAG_PREF_THEME,
+    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_HOLD, TAG_PREF_P2P_LISTEN, TAG_PREF_P2P_RELAYS,
+    TAG_PREF_REVEAL_HIDE, TAG_PREF_THEME,
 };
 
-use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, ORIGIN_MAX, REVEAL_HIDE_S};
+use crate::address::{parse_advertise, parse_relay_hint};
+use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, RELAYS_MAX, REVEAL_HIDE_S};
+use crate::listen::Listen;
 
-const TAGS: [u16; 8] = [
+const TAGS: [u16; 9] = [
     TAG_PREF_LOCK_AFTER,
     TAG_PREF_CLIP_CLEAR,
     TAG_PREF_REVEAL_HIDE,
     TAG_PREF_THEME,
     TAG_PREF_FLAGS,
-    TAG_PREF_SYNC_MODE,
-    TAG_PREF_SERVER_ORIGIN,
-    TAG_PREF_SERVER_PIN,
+    TAG_PREF_P2P_LISTEN,
+    TAG_PREF_P2P_ADVERTISE,
+    TAG_PREF_P2P_RELAYS,
+    TAG_PREF_P2P_HOLD,
 ];
 
 const FLAG_ANIM: u8 = 1;
@@ -30,51 +33,10 @@ const FLAG_ASCII: u8 = 1 << 1;
 const FLAG_FOCUS_LOCK: u8 = 1 << 2;
 const FLAGS_KNOWN: u8 = FLAG_ANIM | FLAG_ASCII | FLAG_FOCUS_LOCK;
 
-/// When records go to the sync server.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SyncMode {
-    /// Never.
-    #[default]
-    Off,
-    /// Only when asked.
-    Manual,
-    /// After every change.
-    Auto,
-}
-
-impl SyncMode {
-    /// Every mode, in display order.
-    pub const ALL: [Self; 3] = [Self::Off, Self::Manual, Self::Auto];
-}
-
-impl From<SyncMode> for u8 {
-    fn from(mode: SyncMode) -> Self {
-        match mode {
-            SyncMode::Off => 0,
-            SyncMode::Manual => 1,
-            SyncMode::Auto => 2,
-        }
-    }
-}
-
-impl TryFrom<u8> for SyncMode {
-    type Error = anyhow::Error;
-
-    fn try_from(byte: u8) -> anyhow::Result<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|mode| u8::from(*mode) == byte)
-            .ok_or_else(out_of_range)
-    }
-}
-
 /// Preferences of this device for one vault.
+#[allow(clippy::struct_excessive_bools, reason = "flags")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prefs {
-    /// Sync server origin, validated by [`parse_origin`].
-    pub server_origin: Option<Box<str>>,
-    /// Pinned fingerprint of the sync server's signing key.
-    pub server_key_pin: Option<[u8; 32]>,
     /// Auto-lock delay in seconds, within [`LOCK_AFTER_S`].
     pub lock_after_s: u16,
     /// Clipboard clear delay in seconds, within [`CLIP_CLEAR_S`].
@@ -83,29 +45,39 @@ pub struct Prefs {
     pub reveal_hide_s: u8,
     /// Color theme id; the interface maps unknown ids to its default.
     pub theme: u8,
-    /// Sync mode.
-    pub sync_mode: SyncMode,
     /// Animations run.
     pub anim: bool,
     /// ASCII glyphs instead of Unicode symbols.
     pub ascii: bool,
     /// Losing terminal focus locks the vault.
     pub focus_lock: bool,
+    /// Where the sync node accepts connections.
+    pub p2p_listen: Listen,
+    /// The address, as `ip:port`, this device offers other members when it
+    /// sits behind a port forward; validated by [`parse_advertise`].
+    pub p2p_advertise: Option<Box<str>>,
+    /// Relay slots, as `ip:port/slot`, this device was told about and may
+    /// dial through; each validated by [`parse_relay_hint`], at most four.
+    pub p2p_relays: Vec<Box<str>>,
+    /// This node holds a slot on the first saved relay and announces it; only
+    /// ever on while a relay is saved.
+    pub p2p_hold: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         Self {
-            server_origin: None,
-            server_key_pin: None,
             lock_after_s: 300,
             clip_clear_s: 20,
             reveal_hide_s: 5,
             theme: 0,
-            sync_mode: SyncMode::Off,
             anim: true,
             ascii: false,
             focus_lock: false,
+            p2p_listen: Listen::Beacon,
+            p2p_advertise: None,
+            p2p_relays: Vec::new(),
+            p2p_hold: false,
         }
     }
 }
@@ -127,15 +99,18 @@ impl Prefs {
         doc.set_data(TAG_PREF_THEME, ValueType::Bytes, &[self.theme]);
         doc.set_data(TAG_PREF_FLAGS, ValueType::Bytes, &[self.flags()]);
         doc.set_data(
-            TAG_PREF_SYNC_MODE,
+            TAG_PREF_P2P_LISTEN,
             ValueType::Bytes,
-            &[u8::from(self.sync_mode)],
+            &[u8::from(self.p2p_listen)],
         );
-        if let Some(origin) = self.server_origin.as_deref() {
-            doc.set_text(TAG_PREF_SERVER_ORIGIN, origin);
+        if let Some(address) = self.p2p_advertise.as_deref() {
+            doc.set_text(TAG_PREF_P2P_ADVERTISE, address);
         }
-        if let Some(pin) = self.server_key_pin.as_ref() {
-            doc.set_data(TAG_PREF_SERVER_PIN, ValueType::Bytes, pin);
+        if !self.p2p_relays.is_empty() {
+            doc.set_text(TAG_PREF_P2P_RELAYS, &self.p2p_relays.join("\n"));
+        }
+        if self.p2p_hold {
+            doc.set_data(TAG_PREF_P2P_HOLD, ValueType::Bytes, &[1]);
         }
     }
 
@@ -145,8 +120,8 @@ impl Prefs {
     /// # Errors
     ///
     /// `corrupted length` for a field of the wrong size;
-    /// `preference out of range` for a value outside its bounds or an
-    /// origin [`parse_origin`] refuses.
+    /// `preference out of range` for a value outside its bounds. Tags of
+    /// retired preferences are ignored.
     pub fn read(doc: &Document) -> anyhow::Result<Option<Self>> {
         if TAGS.iter().all(|tag| doc.get(*tag).is_none()) {
             return Ok(None);
@@ -170,24 +145,43 @@ impl Prefs {
         {
             return Err(out_of_range());
         }
-        let sync_mode =
-            byte(doc, TAG_PREF_SYNC_MODE)?.map_or(Ok(defaults.sync_mode), SyncMode::try_from)?;
-        let server_origin = doc
-            .text(TAG_PREF_SERVER_ORIGIN)?
-            .map(|origin| parse_origin(origin).map_err(|_| out_of_range()))
+        let p2p_advertise = doc
+            .text(TAG_PREF_P2P_ADVERTISE)?
+            .map(|address| parse_advertise(address).map_err(|_| out_of_range()))
             .transpose()?;
-        let server_key_pin = doc.data(TAG_PREF_SERVER_PIN)?.map(fixed).transpose()?;
+        let p2p_relays = doc
+            .text(TAG_PREF_P2P_RELAYS)?
+            .map(|lines| {
+                lines
+                    .split('\n')
+                    .map(|line| parse_relay_hint(line).map_err(|_| out_of_range()))
+                    .collect::<anyhow::Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        if p2p_relays.len() > RELAYS_MAX {
+            return Err(out_of_range());
+        }
+        let p2p_listen =
+            byte(doc, TAG_PREF_P2P_LISTEN)?.map_or(Ok(defaults.p2p_listen), Listen::try_from)?;
+        let fetch_only = p2p_listen == Listen::Fetch;
+        let p2p_hold = match byte(doc, TAG_PREF_P2P_HOLD)? {
+            None | Some(0) => false,
+            Some(1) if !p2p_relays.is_empty() && !fetch_only => true,
+            Some(_) => return Err(out_of_range()),
+        };
         Ok(Self {
-            server_origin,
-            server_key_pin,
             lock_after_s,
             clip_clear_s,
             reveal_hide_s,
             theme: byte(doc, TAG_PREF_THEME)?.unwrap_or(defaults.theme),
-            sync_mode,
             anim: flags & FLAG_ANIM != 0,
             ascii: flags & FLAG_ASCII != 0,
             focus_lock: flags & FLAG_FOCUS_LOCK != 0,
+            p2p_listen,
+            p2p_advertise,
+            p2p_relays,
+            p2p_hold,
         })
     }
 
@@ -196,60 +190,6 @@ impl Prefs {
             | (if self.ascii { FLAG_ASCII } else { 0 })
             | (if self.focus_lock { FLAG_FOCUS_LOCK } else { 0 })
     }
-}
-
-/// Validate a sync server origin: `https://host[:port]`, lowercased, with
-/// an optional trailing `/` dropped.
-///
-/// # Errors
-///
-/// A short reason the interface can show as is.
-pub fn parse_origin(input: &str) -> Result<Box<str>, &'static str> {
-    let trimmed = input.trim();
-    if trimmed.len() > ORIGIN_MAX {
-        return Err("That address is too long.");
-    }
-    let lowered = trimmed.to_ascii_lowercase();
-    let rest = lowered
-        .strip_prefix("https://")
-        .ok_or("Use an https:// address.")?;
-    let authority = rest.strip_suffix('/').unwrap_or(rest);
-    if authority.contains(['/', '?', '#', '@']) {
-        return Err("Only https://host[:port]: no path, query, or user name.");
-    }
-    let (host, port) = authority
-        .split_once(':')
-        .map_or((authority, None), |(host, port)| (host, Some(port)));
-    if !valid_host(host) {
-        return Err("That host name is not valid.");
-    }
-    if let Some(port) = port {
-        if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
-            return Err("That port is not valid.");
-        }
-        match port.parse::<u16>() {
-            Ok(value) if value > 0 => {}
-            _ => return Err("That port is not valid."),
-        }
-    }
-    let mut origin = String::with_capacity(8 + authority.len());
-    origin.push_str("https://");
-    origin.push_str(authority);
-    Ok(origin.into_boxed_str())
-}
-
-fn valid_host(host: &str) -> bool {
-    !host.is_empty()
-        && host.len() <= 253
-        && host.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        })
 }
 
 fn byte(doc: &Document, tag: u16) -> anyhow::Result<Option<u8>> {
@@ -272,21 +212,29 @@ mod tests {
 
     use record::{Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER};
 
-    use super::{parse_origin, Prefs, SyncMode};
+    use super::{Listen, Prefs};
 
     fn custom() -> Prefs {
         Prefs {
-            server_origin: Some("https://sync.example.com:8443".into()),
-            server_key_pin: Some([7; 32]),
             lock_after_s: 120,
             clip_clear_s: 10,
             reveal_hide_s: 3,
             theme: 2,
-            sync_mode: SyncMode::Manual,
             anim: false,
             ascii: true,
             focus_lock: true,
+            p2p_listen: Listen::Off,
+            p2p_advertise: Some("93.184.216.34:7447".into()),
+            p2p_relays: vec![format!("93.184.216.35:7447/{}", "ab".repeat(16)).into()],
+            p2p_hold: true,
         }
+    }
+
+    #[test]
+    fn a_saved_advertised_address_that_does_not_validate_is_an_error() {
+        let mut doc = written(&custom());
+        doc.set_text(record::TAG_PREF_P2P_ADVERTISE, "localhost:7447");
+        assert!(Prefs::read(&doc).is_err());
     }
 
     fn written(prefs: &Prefs) -> Document {
@@ -326,46 +274,26 @@ mod tests {
             doc.set_data(tag, ValueType::Bytes, value);
             assert_eq!(Prefs::read(&doc).unwrap_err().to_string(), message);
         }
-        let mut doc = written(&Prefs::default());
-        doc.set_data(record::TAG_PREF_SYNC_MODE, ValueType::Bytes, &[3]);
-        assert!(Prefs::read(&doc).is_err());
-        let mut doc = written(&Prefs::default());
-        doc.set_text(record::TAG_PREF_SERVER_ORIGIN, "http://plain.example");
-        assert!(Prefs::read(&doc).is_err());
     }
 
     #[test]
-    fn origins_are_https_host_and_port_only() {
-        assert_eq!(
-            parse_origin("  HTTPS://Sync.Example.com:8443/ ")
-                .unwrap()
-                .as_ref(),
-            "https://sync.example.com:8443"
-        );
-        assert_eq!(
-            parse_origin("https://vault.example").unwrap().as_ref(),
-            "https://vault.example"
-        );
-        let long = format!("https://{}.example", "a".repeat(300));
-        for bad in [
-            "",
-            "http://sync.example",
-            "sync.example",
-            "https://",
-            "https://user@sync.example",
-            "https://sync.example/path",
-            "https://sync.example?q=1",
-            "https://sync.example#x",
-            "https://-bad.example",
-            "https://bad..example",
-            "https://sync.example:0",
-            "https://sync.example:70000",
-            "https://sync.example:",
-            "https://sync.example:8a",
-            "https://sync_example.com",
-            long.as_str(),
+    fn retired_tags_are_ignored_and_not_written_back() {
+        let mut doc = written(&custom());
+        doc.set_data(record::TAG_PREF_SYNC_MODE, ValueType::Bytes, &[3]);
+        doc.set_text(record::TAG_PREF_SERVER_ORIGIN, "http://plain.example");
+        doc.set_data(record::TAG_PREF_SERVER_PIN, ValueType::Bytes, &[1]);
+        let read = Prefs::read(&doc).unwrap();
+        assert_eq!(read, Some(custom()));
+        let rewritten = written(&read.unwrap());
+        for tag in [
+            record::TAG_PREF_SYNC_MODE,
+            record::TAG_PREF_SERVER_ORIGIN,
+            record::TAG_PREF_SERVER_PIN,
         ] {
-            assert!(parse_origin(bad).is_err(), "{bad}");
+            assert!(rewritten.get(tag).is_none());
         }
+        let mut only = Document::new();
+        only.set_data(record::TAG_PREF_SYNC_MODE, ValueType::Bytes, &[2]);
+        assert_eq!(Prefs::read(&only).unwrap(), None);
     }
 }

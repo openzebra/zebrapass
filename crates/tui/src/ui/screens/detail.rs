@@ -1,7 +1,7 @@
 //! Record detail: text fields in clear, secrets as fixed-width stripes until
 //! revealed. Also used, read-only, for historical revisions.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
@@ -12,6 +12,7 @@ use crate::app::flows::unlocked::Unlocked;
 use crate::secure::reveal::RevealKey;
 use crate::secure::strength::estimate;
 use crate::secure::totp::Totp;
+use crate::ui::screens::p2p_status::strip as strip_text;
 use crate::ui::widgets::chrome::ago;
 use crate::ui::widgets::list::fit;
 use crate::ui::widgets::meter::strength_spans;
@@ -41,6 +42,17 @@ pub fn draw_pane(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx)
         .title(Span::styled(format!(" {back}{title} "), theme.strong()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let [strip, inner] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            fit(
+                &format!(" {}", strip_text(state, theme)),
+                usize::from(strip.width),
+            ),
+            theme.muted(),
+        )),
+        strip,
+    );
     match state.home.detail.as_deref() {
         Some(detail) => draw_rows(frame, inner, detail, focused, true, ctx),
         None => frame.render_widget(

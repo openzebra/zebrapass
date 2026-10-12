@@ -33,6 +33,7 @@ fn export(
     export_record(session, device, id, &client_id(&SEED).unwrap(), ORIGIN)
 }
 const ROOT_SEED: [u8; 32] = [0x07; 32];
+const CERT_DEVICE: [u8; 16] = [0x55; 16];
 
 fn round_trip() -> (VaultFile, session::Session) {
     // Unlocked through a device wrap so every written frame carries a
@@ -129,6 +130,7 @@ fn expired_cert_is_rejected() {
     let cert = issue_device_cert(
         &ROOT_SEED,
         &client_id(&SEED).unwrap(),
+        &CERT_DEVICE,
         &device_vk,
         NOW_MS - 1,
         1,
@@ -145,6 +147,7 @@ fn cert_tampering_is_rejected() {
     let cert = issue_device_cert(
         &ROOT_SEED,
         &client_id(&SEED).unwrap(),
+        &CERT_DEVICE,
         &device_vk,
         NOT_AFTER_MS,
         7,
@@ -163,6 +166,7 @@ fn cert_tampering_is_rejected() {
     let alt_vk = issue_device_cert(
         &alt_root,
         &client_id(&SEED).unwrap(),
+        &CERT_DEVICE,
         &device_vk,
         NOT_AFTER_MS,
         7,
@@ -175,6 +179,7 @@ fn cert_tampering_is_rejected() {
     let cert = issue_device_cert(
         &ROOT_SEED,
         &client_id(&SEED).unwrap(),
+        &CERT_DEVICE,
         &device_vk,
         NOT_AFTER_MS,
         7,
@@ -255,7 +260,7 @@ fn now_ms() -> u64 {
 fn trust<'a>(
     client: &'a [u8; 64],
     root_vk: &'a [u8; SYNC_VK_LEN],
-    devices: &'a [([u8; 16], DeviceCert)],
+    devices: &'a [DeviceCert],
 ) -> TrustedKeys<'a> {
     TrustedKeys {
         client_id: *client,
@@ -272,10 +277,9 @@ fn enroll(
     device: &DeviceSignKey,
     origin: [u8; 16],
     serial: u64,
-) -> ([u8; 16], DeviceCert) {
+) -> DeviceCert {
     let vk = device.verifying_key().unwrap();
-    let cert = issue_device_cert(root_seed, client, &vk, u64::MAX / 2, serial).unwrap();
-    (origin, cert)
+    issue_device_cert(root_seed, client, &origin, &vk, u64::MAX / 2, serial).unwrap()
 }
 
 /// The origin id the sender's frames actually carry: tests enroll the
@@ -297,7 +301,7 @@ fn valid_record_is_applied() {
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let sync_rec = export(&sender, &device, record_id).unwrap();
     let enrolled = [enroll(
-        &root.seed(),
+        root.seed(),
         &client,
         &device,
         origin_of(&sync_rec),
@@ -333,7 +337,7 @@ fn replayed_revision_is_rejected() {
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let sync_rec = export(&sender, &device, record_id).unwrap();
     let enrolled = [enroll(
-        &root.seed(),
+        root.seed(),
         &client,
         &device,
         origin_of(&sync_rec),
@@ -374,7 +378,7 @@ fn revoked_and_foreign_devices_are_rejected() {
     let mut rfile = rfile;
 
     // Revoked: the device is no longer in the cert table.
-    let empty: [([u8; 16], DeviceCert); 0] = [];
+    let empty: [DeviceCert; 0] = [];
     assert_eq!(
         accept_record(
             &mut receiver,
@@ -391,7 +395,7 @@ fn revoked_and_foreign_devices_are_rejected() {
     // Enrolled under a different account: rejected.
     let other_client = [9u8; 64];
     let wrong_account = [enroll(
-        &root.seed(),
+        root.seed(),
         &other_client,
         &device,
         origin_of(&sync_rec),
@@ -413,8 +417,7 @@ fn revoked_and_foreign_devices_are_rejected() {
     // A certificate that expired between issue and check.
     let expired = {
         let vk = device.verifying_key().unwrap();
-        let cert = issue_device_cert(&root.seed(), &client, &vk, 0, 1).unwrap();
-        (origin_of(&sync_rec), cert)
+        issue_device_cert(root.seed(), &client, &origin_of(&sync_rec), &vk, 0, 1).unwrap()
     };
     let expired_list = [expired];
     let mut keys = trust(&client, &root_vk, &expired_list);
@@ -428,7 +431,7 @@ fn revoked_and_foreign_devices_are_rejected() {
 
     // Honest enrollment still passes the trust gate and applies.
     let good = [enroll(
-        &root.seed(),
+        root.seed(),
         &client,
         &device,
         origin_of(&sync_rec),
@@ -455,13 +458,7 @@ fn forged_outer_fields_are_rejected() {
     let (mut sfile, mut sender) = round_trip();
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let honest = export(&sender, &device, record_id).unwrap();
-    let enrolled = [enroll(
-        &root.seed(),
-        &client,
-        &device,
-        origin_of(&honest),
-        1,
-    )];
+    let enrolled = [enroll(root.seed(), &client, &device, origin_of(&honest), 1)];
 
     // The frame is record 1's; the outer claim says record 2, revision 9.
     let forged = SyncRecord {
@@ -547,13 +544,7 @@ fn addressing_and_downgrade_are_rejected() {
     let rfile = VaultFile::new(sfile.as_bytes().to_vec());
     let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
     let honest = export(&sender, &device, record_id).unwrap();
-    let enrolled = [enroll(
-        &root.seed(),
-        &client,
-        &device,
-        origin_of(&honest),
-        1,
-    )];
+    let enrolled = [enroll(root.seed(), &client, &device, origin_of(&honest), 1)];
     let keys = trust(&client, &root_vk, &enrolled);
     let resign = |rec: SyncRecord| SyncRecord {
         signature: sign_record(&device, &rec).unwrap(),
@@ -589,7 +580,7 @@ fn addressing_and_downgrade_are_rejected() {
         ..honest
     };
     let msg = session::record_message(&legacy).unwrap();
-    legacy.signature = pq::sync_sign(&device.seed(), session::SYNC_CTX, &msg).unwrap();
+    legacy.signature = pq::sync_sign(device.seed(), session::SYNC_CTX, &msg).unwrap();
     verify_sync_record(&legacy, &device.verifying_key().unwrap(), &legacy.vault_id).unwrap();
     assert_eq!(
         accept_err(&legacy, &keys, &rfile),
@@ -613,4 +604,68 @@ fn prev_hash_chains_to_the_superseded_frame() {
     );
     assert_eq!(second.device_id, origin_of(&second));
     assert_eq!(second.msg_version, session::MSG_VERSION);
+}
+
+#[test]
+fn certificate_binds_the_device_id() {
+    let (_, root_vk) = root_key();
+    let (_, device_vk) = certified_device(0x40);
+    let cert = issue_device_cert(
+        &ROOT_SEED,
+        &client_id(&SEED).unwrap(),
+        &CERT_DEVICE,
+        &device_vk,
+        NOT_AFTER_MS,
+        3,
+    )
+    .unwrap();
+    cert.verify(&root_vk, NOW_MS).unwrap();
+    let mut moved = cert;
+    moved.device_id = [0x56; 16];
+    assert!(moved.verify(&root_vk, NOW_MS).is_err());
+}
+
+#[test]
+fn zero_device_id_is_never_certified() {
+    let (_, device_vk) = certified_device(0x41);
+    assert!(issue_device_cert(
+        &ROOT_SEED,
+        &client_id(&SEED).unwrap(),
+        &[0u8; 16],
+        &device_vk,
+        NOT_AFTER_MS,
+        3,
+    )
+    .is_err());
+}
+
+/// A certified device cannot speak for another device's origin: the frame
+/// origin must equal the certificate's signed device id.
+#[test]
+fn a_certificate_does_not_cover_another_devices_origin() {
+    let client = client_id(&SEED).unwrap();
+    let (device, _) = certified_device(0x42);
+    let (root, root_vk) = root_key();
+    let (mut sfile, mut sender) = round_trip();
+    let rfile = VaultFile::new(sfile.as_bytes().to_vec());
+    let record_id = write_record(&mut sender, &mut sfile, None, &demo_doc()).unwrap();
+    let sync_rec = export(&sender, &device, record_id).unwrap();
+    let mut receiver = unlock(&rfile, &UnlockCreds::master(&SEED), None).unwrap();
+    let mut rfile = rfile;
+
+    let mut other = origin_of(&sync_rec);
+    other[0] ^= 0xFF;
+    let impostor = [enroll(root.seed(), &client, &device, other, 1)];
+    assert_eq!(
+        accept_record(
+            &mut receiver,
+            &mut rfile,
+            &sync_rec,
+            &trust(&client, &root_vk, &impostor),
+            |_| None
+        )
+        .unwrap_err()
+        .to_string(),
+        "device not enrolled"
+    );
 }

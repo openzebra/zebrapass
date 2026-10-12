@@ -16,7 +16,7 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 5. **Sync is per record.** A single signed record frame goes to the server, never the whole vault.
 6. **Client ID** is `[u8; 64]`, derived one-way from the seed with HKDF-SHA512 and a domain-separated label.
 7. **Every upload is signed.** The server verifies it with public data only.
-8. The server transport and hardware keys are TODO. Their seams already exist, so extend them and never bypass them.
+8. Hardware keys are TODO; their seams already exist, so extend them and never bypass them. The sync server was removed by owner decision (2026-10): sync is peer-to-peer only. Its crypto seams stay dormant and no UI may expose them.
 
 ### 0.2 Workspace crates (dependency direction: top → bottom)
 

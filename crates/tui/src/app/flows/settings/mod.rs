@@ -8,8 +8,8 @@ pub mod apply;
 pub mod posture;
 pub mod rows;
 
-use crossterm::event::KeyEvent;
-use local::{Prefs, ORIGIN_MAX};
+use crossterm::event::{KeyCode, KeyEvent};
+use local::Prefs;
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
@@ -31,8 +31,6 @@ pub enum Focus {
     Rows,
     /// The search field.
     Filter,
-    /// A text setting being edited.
-    Edit,
 }
 
 /// Settings modal state.
@@ -50,10 +48,6 @@ pub struct SettingsModal {
     pub saved: Prefs,
     /// Search query across every section.
     pub filter: TextInput,
-    /// Text of the setting being edited.
-    pub edit: TextInput,
-    /// Why the last edit was refused.
-    pub error: Option<&'static str>,
 }
 
 impl SettingsModal {
@@ -68,8 +62,6 @@ impl SettingsModal {
             draft: saved.clone(),
             saved,
             filter: TextInput::new(MAX_QUERY),
-            edit: TextInput::new(ORIGIN_MAX),
-            error: None,
         }
     }
 
@@ -101,7 +93,6 @@ impl SettingsModal {
         match self.focus {
             Focus::Rows => Scope::Settings,
             Focus::Filter => Scope::Search,
-            Focus::Edit => Scope::SettingsEdit,
         }
     }
 
@@ -134,7 +125,6 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
     };
     match modal.focus {
         Focus::Filter => filter_key(modal, event),
-        Focus::Edit => edit_key(modal, event),
         Focus::Rows => return rows_key(state, event, ctx),
     }
     Nav::Stay
@@ -156,37 +146,17 @@ fn filter_key(modal: &mut SettingsModal, event: &KeyEvent) {
     }
 }
 
-fn edit_key(modal: &mut SettingsModal, event: &KeyEvent) {
-    match resolve(Scope::SettingsEdit, event) {
-        Some(Action::Back) => {
-            modal.focus = Focus::Rows;
-            modal.error = None;
-        }
-        Some(Action::Confirm) => {
-            let typed = modal.edit.value().trim();
-            if typed.is_empty() {
-                modal.draft.server_origin = None;
-                modal.focus = Focus::Rows;
-                modal.error = None;
-                return;
-            }
-            match local::parse_origin(typed) {
-                Ok(origin) => {
-                    modal.draft.server_origin = Some(origin);
-                    modal.focus = Focus::Rows;
-                    modal.error = None;
-                }
-                Err(reason) => modal.error = Some(reason),
-            }
-        }
-        _ => {
-            edit_text(&mut modal.edit, event);
-            modal.error = None;
-        }
-    }
-}
-
 fn rows_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
+    if event.code == KeyCode::Char('a')
+        && state
+            .settings
+            .as_deref()
+            .and_then(SettingsModal::row)
+            .is_some_and(|row| row == Row::SyncDevices)
+    {
+        state.open_addresses(true);
+        return Nav::Stay;
+    }
     let Some(action) = resolve(Scope::Settings, event) else {
         return Nav::Stay;
     };
@@ -234,9 +204,6 @@ pub fn on_paste(modal: &mut SettingsModal, text: &str) {
     match modal.focus {
         Focus::Filter => {
             modal.filter.insert_str(text);
-        }
-        Focus::Edit => {
-            modal.edit.insert_str(text);
         }
         Focus::Rows => {}
     }

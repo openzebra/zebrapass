@@ -5,19 +5,16 @@
 //! generation so a signature cannot be replayed across format changes or key
 //! epochs. The server verifies signatures but never sees plaintext: the
 //! signed ciphertext is the sealed frame.
+//!
+//! TODO(sync-server): dormant seam. No upload transport exists and none is
+//! planned (owner decision, 2026-10); the interface never exposes it.
 
 use zeroize::Zeroizing;
 
 pub use pq::{sync_verifying_key, DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_VK_LEN};
 
-#[allow(clippy::cast_possible_truncation)]
-const SYNC_VK_LEN_U16: u16 = {
-    assert!(SYNC_VK_LEN <= u16::MAX as usize);
-    SYNC_VK_LEN as u16
-};
-
 use crate::error::SessionError;
-use crate::sync_msg::{record_message, MSG_VERSION, MSG_VERSION_V1};
+use crate::sync_msg::{frame_parts, record_message, MSG_VERSION, MSG_VERSION_V1};
 
 /// Length prefix for the ciphertext tail of a version-1 message.
 ///
@@ -124,10 +121,15 @@ pub fn verify_record(
 }
 
 /// Per-device ML-DSA signing key. `seed` zeroizes on drop.
-#[derive(Debug)]
 pub struct DeviceSignKey {
     seed: Zeroizing<[u8; SYNC_SEED_LEN]>,
     key: pq::SigningKeyMirror,
+}
+
+impl std::fmt::Debug for DeviceSignKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSignKey").finish_non_exhaustive()
+    }
 }
 
 impl DeviceSignKey {
@@ -151,18 +153,26 @@ impl DeviceSignKey {
         pq::verifying_key_of(&self.key)
     }
 
-    /// Raw ML-DSA seed (already cloned; the source zeroizes independently).
+    /// Borrow the raw ML-DSA seed; no copy is made, so the only copy stays
+    /// in the zeroizing field.
     #[must_use]
-    pub fn seed(&self) -> [u8; SYNC_SEED_LEN] {
-        *self.seed
+    pub fn seed(&self) -> &[u8; SYNC_SEED_LEN] {
+        &self.seed
     }
 }
 
-/// A root-signed statement binding a device verifying key to an account.
+/// Domain prefix of every device certificate message.
+const DOMAIN_DEVICE_CERT: &[u8] = b"brby/v2/device-cert";
+
+/// A root-signed statement binding a device id and its verifying key to an
+/// account. The id is signed, so no unsigned table decides which device a
+/// key speaks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceCert {
     /// Account id (`kdf::client_id`), binds the cert to one account.
     pub client_id: [u8; 64],
+    /// Device the key belongs to; equals the origin its frames carry.
+    pub device_id: [u8; 16],
     /// ML-DSA-65 verifying key of the device.
     pub device_vk: [u8; SYNC_VK_LEN],
     /// Expiry in ms since the Unix epoch.
@@ -174,19 +184,21 @@ pub struct DeviceCert {
 }
 
 impl DeviceCert {
-    /// Bytes the root signs: L-prefixed fields, like [`record_message`].
-    #[must_use]
-    pub fn signed_message(&self) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(2 + 64 + 2 + SYNC_VK_LEN + 2 + 8 + 2 + 8);
-        msg.extend_from_slice(&64u16.to_le_bytes());
-        msg.extend_from_slice(&self.client_id);
-        msg.extend_from_slice(&SYNC_VK_LEN_U16.to_le_bytes());
-        msg.extend_from_slice(&self.device_vk);
-        msg.extend_from_slice(&8u16.to_le_bytes());
-        msg.extend_from_slice(&self.not_after_ms.to_le_bytes());
-        msg.extend_from_slice(&8u16.to_le_bytes());
-        msg.extend_from_slice(&self.serial.to_le_bytes());
-        msg
+    /// Bytes the root signs: a domain, then length-prefixed fields, like
+    /// [`record_message`].
+    ///
+    /// # Errors
+    ///
+    /// `sync field too long` when a part does not fit a `u16` length.
+    pub fn signed_message(&self) -> anyhow::Result<Vec<u8>> {
+        frame_parts(&[
+            DOMAIN_DEVICE_CERT,
+            &self.client_id,
+            &self.device_id,
+            &self.device_vk,
+            &self.not_after_ms.to_be_bytes(),
+            &self.serial.to_be_bytes(),
+        ])
     }
 
     /// Verify against the account root key at time `now_ms`.
@@ -199,13 +211,11 @@ impl DeviceCert {
         if now_ms > self.not_after_ms {
             return Err(anyhow::anyhow!("device cert expired"));
         }
-        pq::sync_verify(
-            root_vk,
-            DEVICE_CERT_CTX,
-            &self.signed_message(),
-            &self.signature,
-        )
-        .map_err(|_| anyhow::anyhow!("device cert rejected"))
+        let message = self
+            .signed_message()
+            .map_err(|_| anyhow::anyhow!("device cert rejected"))?;
+        pq::sync_verify(root_vk, DEVICE_CERT_CTX, &message, &self.signature)
+            .map_err(|_| anyhow::anyhow!("device cert rejected"))
     }
 }
 
@@ -213,22 +223,31 @@ impl DeviceCert {
 ///
 /// # Errors
 ///
-/// `sign failed` when ML-DSA signing fails.
+/// `zero origin` for an all-zero `device_id` (that origin is reserved for
+/// unregistered unlocks); `sign failed` when ML-DSA signing fails.
 pub fn issue_device_cert(
     root_seed: &[u8; SYNC_SEED_LEN],
     client_id: &[u8; 64],
+    device_id: &[u8; 16],
     device_vk: &[u8; SYNC_VK_LEN],
     not_after_ms: u64,
     serial: u64,
 ) -> Result<DeviceCert, SessionError> {
+    if device_id == &[0u8; 16] {
+        return Err(SessionError::ZeroOrigin);
+    }
     let cert = DeviceCert {
         client_id: *client_id,
+        device_id: *device_id,
         device_vk: *device_vk,
         not_after_ms,
         serial,
         signature: Vec::new(),
     };
-    let signature = pq::sync_sign(root_seed, DEVICE_CERT_CTX, &cert.signed_message())
+    let message = cert
+        .signed_message()
+        .map_err(|_| SessionError::SignFailed)?;
+    let signature = pq::sync_sign(root_seed, DEVICE_CERT_CTX, &message)
         .map_err(|_| SessionError::SignFailed)?;
     Ok(DeviceCert { signature, ..cert })
 }
@@ -364,7 +383,7 @@ mod tests {
             msg.len(),
             2 + 16 + 2 + 4 + 2 + 8 + 2 + 32 + 2 + 4 + 2 + 2 + 2 + 4 + 10
         );
-        let signature = pq::sync_sign(&device.seed(), pq::SYNC_CTX, &msg).unwrap();
+        let signature = pq::sync_sign(device.seed(), pq::SYNC_CTX, &msg).unwrap();
         let signed = SyncRecord {
             signature,
             ..legacy
@@ -396,7 +415,7 @@ mod tests {
         let device = DeviceSignKey::from_seed(&[8u8; 32]);
         let client = [3u8; 64];
         let vk = device.verifying_key().unwrap();
-        let cert = issue_device_cert(&root.seed(), &client, &vk, 1_000, 1).unwrap();
+        let cert = issue_device_cert(root.seed(), &client, &[4u8; 16], &vk, 1_000, 1).unwrap();
         cert.verify(&root.verifying_key().unwrap(), 999).unwrap();
         assert!(cert.verify(&root.verifying_key().unwrap(), 1_001).is_err());
 

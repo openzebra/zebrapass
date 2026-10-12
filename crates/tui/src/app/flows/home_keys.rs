@@ -12,7 +12,7 @@ use crate::app::flows::editor::EditorState;
 use crate::app::flows::factors::FactorsState;
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::history::HistoryState;
-use crate::app::flows::home::{filter_entries, Pane, RowKind};
+use crate::app::flows::home::{Pane, RowKind};
 use crate::app::flows::settings::SettingsModal;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{resolve, Scope};
@@ -64,6 +64,13 @@ fn width(ctx: &Ctx) -> Breakpoint {
 
 /// Handle an action on the home view (also used by the palette).
 pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
+    let changes_records = matches!(
+        action,
+        Action::NewRecord | Action::EditRecord | Action::DeleteRecord | Action::ToggleFavorite
+    );
+    if changes_records && !state.may_edit_here(ctx) {
+        return Nav::Stay;
+    }
     match action {
         Action::Up
         | Action::Down
@@ -97,7 +104,7 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
         Action::OpenHistory => history(state, ctx),
         Action::OpenFactors => state.view = View::Factors(FactorsState::default()),
         Action::OpenDevices => state.view = View::Devices(0),
-        Action::OpenSync => state.view = View::Sync,
+        Action::OpenSync => state.open_share(),
         Action::OpenHealth => match state.health {
             Some(_) => state.view = View::Health(0),
             None => state.run(Op::Health, Task::Health, ctx),
@@ -105,6 +112,7 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
         Action::OpenSettings => {
             state.settings = Some(Box::new(SettingsModal::open(state, ctx)));
         }
+        Action::OpenP2pInfo => state.dialog = Some(Box::new(Dialog::P2p(0))),
         Action::Lock => return Nav::Lock,
         Action::Quit => return Nav::Quit,
         _ => return crate::app::flows::factors::palette_action(state, action, ctx),
@@ -115,7 +123,7 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
 fn move_cursor(state: &mut Unlocked, action: Action) {
     match state.home.pane {
         Pane::Filters => {
-            let count = filter_entries(&state.cache, state.health.as_deref()).len();
+            let count = state.filters().len();
             state.home.filter_cursor = step(state.home.filter_cursor, action, count);
         }
         Pane::List => {
@@ -164,7 +172,7 @@ fn cycle_pane(state: &mut Unlocked, forward: bool, ctx: &Ctx) {
 fn confirm(state: &mut Unlocked, ctx: &mut Ctx) {
     match state.home.pane {
         Pane::Filters => {
-            let entries = filter_entries(&state.cache, state.health.as_deref());
+            let entries = state.filters();
             if let Some((filter, _)) = entries.into_iter().nth(state.home.filter_cursor) {
                 state.home.filter = filter;
                 state.home.pane = Pane::List;
@@ -316,9 +324,8 @@ fn edit(state: &mut Unlocked, ctx: &mut Ctx) {
         return;
     };
     let doc = state
-        .vault
-        .as_ref()
-        .and_then(|vault| session::open_record(&vault.session, id).ok());
+        .active_session()
+        .and_then(|session| session::open_record(session, id).ok());
     match doc {
         Some(doc) => state.view = View::Editor(Box::new(EditorState::edit(id, &doc))),
         None => ctx.toast(Tone::Danger, "This record did not open."),
@@ -345,22 +352,14 @@ fn favorite(state: &mut Unlocked, ctx: &mut Ctx) {
         return;
     };
     let Some(mut doc) = state
-        .vault
-        .as_ref()
-        .and_then(|vault| session::open_record(&vault.session, id).ok())
+        .active_session()
+        .and_then(|session| session::open_record(session, id).ok())
     else {
         return;
     };
     let on = custom_text(&doc, CUSTOM_FAVORITE) == Some("1");
     if set_custom_text(&mut doc, CUSTOM_FAVORITE, (!on).then_some("1")).is_ok() {
-        state.run(
-            Op::Write {
-                id: Some(id),
-                doc: Box::new(doc),
-            },
-            Task::Save,
-            ctx,
-        );
+        state.write_active(Some(id), Box::new(doc), ctx);
     }
 }
 
@@ -372,8 +371,8 @@ fn history(state: &mut Unlocked, ctx: &mut Ctx) {
         ctx.toast(Tone::Info, "Select a record first.");
         return;
     };
-    if let Some(vault) = state.vault.as_ref() {
-        match HistoryState::load(vault, id, title) {
+    if let Some(session) = state.active_session() {
+        match HistoryState::load(session, id, title) {
             Ok(history) => state.view = View::History(Box::new(history)),
             Err(_) => ctx.toast(Tone::Danger, "History did not open."),
         }

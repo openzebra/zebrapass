@@ -19,13 +19,18 @@ const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 pub enum CopyError {
     /// This terminal most likely ignores OSC 52 (or the feature is off).
     Unavailable,
+    /// More than terminals accept in one escape sequence.
+    TooLarge,
 }
+
+/// Most bytes one copy carries; terminals drop or cut longer sequences.
+const MAX_PAYLOAD: usize = 75_000;
 
 /// Clipboard state and the escape sequences waiting to be written.
 pub struct Clipboard {
     supported: bool,
     clear_after: Duration,
-    armed: Option<(Instant, &'static str)>,
+    armed: Option<(Instant, &'static str, Duration)>,
     outbox: Vec<Zeroizing<Vec<u8>>>,
 }
 
@@ -81,11 +86,30 @@ impl Clipboard {
         label: &'static str,
         now: Instant,
     ) -> Result<(), CopyError> {
+        self.copy_for(secret, label, now, self.clear_after)
+    }
+
+    /// As [`Clipboard::copy`], clearing after `clear_after` instead of the
+    /// usual delay.
+    ///
+    /// # Errors
+    ///
+    /// As [`Clipboard::copy`].
+    pub fn copy_for(
+        &mut self,
+        secret: &[u8],
+        label: &'static str,
+        now: Instant,
+        clear_after: Duration,
+    ) -> Result<(), CopyError> {
         if !self.supported {
             return Err(CopyError::Unavailable);
         }
+        if secret.len() > MAX_PAYLOAD {
+            return Err(CopyError::TooLarge);
+        }
         self.outbox.push(osc52(secret));
-        self.armed = Some((now, label));
+        self.armed = Some((now, label, clear_after));
         Ok(())
     }
 
@@ -103,21 +127,24 @@ impl Clipboard {
     /// Clear on timeout. Returns `true` when a clear was queued.
     pub fn tick(&mut self, now: Instant) -> bool {
         match self.armed {
-            Some((since, _)) if now.saturating_duration_since(since) >= self.clear_after => {
+            Some((since, _, clear_after))
+                if now.saturating_duration_since(since) >= clear_after =>
+            {
                 self.clear_if_armed()
             }
             _ => false,
         }
     }
 
-    /// Label of the armed copy and the time left before it clears.
+    /// Label of the armed copy, the time left before it clears and the delay
+    /// it was armed with.
     #[must_use]
-    pub fn countdown(&self, now: Instant) -> Option<(&'static str, Duration)> {
-        self.armed.map(|(since, label)| {
+    pub fn countdown(&self, now: Instant) -> Option<(&'static str, Duration, Duration)> {
+        self.armed.map(|(since, label, clear_after)| {
             (
                 label,
-                self.clear_after
-                    .saturating_sub(now.saturating_duration_since(since)),
+                clear_after.saturating_sub(now.saturating_duration_since(since)),
+                clear_after,
             )
         })
     }
@@ -182,7 +209,11 @@ pub fn osc52_likely(term: Option<&str>, term_program: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing, reason = "tests may index")]
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        reason = "tests may index and unwrap"
+    )]
 
     use std::time::{Duration, Instant};
 
@@ -217,6 +248,25 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].as_slice(), b"\x1b]52;c;\x07");
         assert!(!clip.clear_if_armed());
+    }
+
+    #[test]
+    fn a_copy_can_clear_sooner_or_later_than_the_usual_delay() {
+        let start = Instant::now();
+        let mut clip = Clipboard::new(true, Duration::from_secs(20));
+        clip.copy_for(b"phrase", "phrase", start, Duration::from_secs(25))
+            .unwrap_or(());
+        assert!(!clip.tick(start + Duration::from_secs(24)));
+        let (_, left, total) = clip.countdown(start + Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            (left, total),
+            (Duration::from_secs(20), Duration::from_secs(25))
+        );
+        assert!(clip.tick(start + Duration::from_secs(25)));
+        assert_eq!(
+            clip.take_outbox().pop().unwrap().as_slice(),
+            b"\x1b]52;c;\x07"
+        );
     }
 
     #[test]

@@ -18,6 +18,8 @@ pub const ROWS: usize = 5;
 pub const PER_ROW: usize = 5;
 /// Words in a new phrase.
 pub const WORDS: usize = 24;
+/// How long the copied phrase stays on the clipboard.
+pub const PHRASE_CLEAR: Duration = Duration::from_secs(25);
 /// Cards on the verify step.
 pub const CARDS: usize = 3;
 /// Choices per card.
@@ -36,6 +38,8 @@ pub enum CeremonyFocus {
     Grid,
     /// The "I wrote it down" checkbox: Space ticks it.
     Written,
+    /// The copy button: Space copies the phrase.
+    Copy,
     /// The continue button.
     Continue,
 }
@@ -43,8 +47,9 @@ pub enum CeremonyFocus {
 impl CeremonyFocus {
     const fn shift(self, forward: bool) -> Self {
         match (self, forward) {
-            (Self::Grid, true) | (Self::Continue, false) => Self::Written,
-            (Self::Written, true) | (Self::Grid, false) => Self::Continue,
+            (Self::Grid, true) | (Self::Copy, false) => Self::Written,
+            (Self::Written, true) | (Self::Continue, false) => Self::Copy,
+            (Self::Copy, true) | (Self::Grid, false) => Self::Continue,
             (Self::Continue, true) | (Self::Written, false) => Self::Grid,
         }
     }
@@ -74,7 +79,12 @@ impl Ceremony {
     }
 
     /// Handle an action; `true` means the step is done.
-    pub fn on_action(&mut self, action: Action, ctx: &mut Ctx) -> bool {
+    pub fn on_action(
+        &mut self,
+        action: Action,
+        phrase: Option<&SeedPhrase>,
+        ctx: &mut Ctx,
+    ) -> bool {
         match action {
             Action::NextField | Action::PrevField => {
                 self.focus = self.focus.shift(action == Action::NextField);
@@ -85,6 +95,8 @@ impl Ceremony {
             Action::Reveal if self.focus == CeremonyFocus::Written => {
                 self.written = !self.written;
             }
+            Action::Reveal if self.focus == CeremonyFocus::Copy => copy_phrase(phrase, ctx),
+            Action::CopyPhrase => copy_phrase(phrase, ctx),
             Action::Reveal if self.focus == CeremonyFocus::Continue => {}
             Action::Reveal => {
                 let key = RevealKey(u32::try_from(self.row).unwrap_or(0));
@@ -131,6 +143,17 @@ impl Ceremony {
                 ctx.redraw();
             }
         }
+    }
+}
+
+/// Put the phrase on the clipboard; it clears itself after [`PHRASE_CLEAR`].
+fn copy_phrase(phrase: Option<&SeedPhrase>, ctx: &mut Ctx) {
+    if let Some(phrase) = phrase {
+        ctx.copy_for(
+            phrase.phrase_normalized().as_bytes(),
+            "Recovery phrase",
+            PHRASE_CLEAR,
+        );
     }
 }
 

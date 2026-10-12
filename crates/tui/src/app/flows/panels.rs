@@ -6,7 +6,6 @@ use record::TAG_PASSWORD;
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::editor::{EditorState, Part};
-use crate::app::flows::factors::palette_action;
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::home::{Filter, Pane};
 use crate::app::flows::unlocked::{Unlocked, View};
@@ -35,24 +34,11 @@ pub fn health_rows(report: &HealthReport) -> Vec<HealthRow> {
     rows
 }
 
-/// Handle a key on the sync or health view.
+/// Handle a key on the health view.
 pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
     match state.view {
-        View::Sync => sync_key(state, event, ctx),
         View::Health(_) => health_key(state, event, ctx),
         _ => Nav::Stay,
-    }
-}
-
-fn sync_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
-    let Some(action) = resolve(Scope::Sync, event) else {
-        return Nav::Stay;
-    };
-    if action == Action::Back {
-        state.view = View::Home;
-        Nav::Stay
-    } else {
-        palette_action(state, action, ctx)
     }
 }
 

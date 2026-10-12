@@ -98,6 +98,43 @@ pub fn unlock(
         Some(id) => id,
         None => crate::create::fresh_device_id()?,
     };
+    open_with_key(file, &parsed, vk, origin_device, seen)
+}
+
+/// Open `file` with a vault key that is already known, stamping new frames
+/// with `origin_device`.
+///
+/// For a node that serves a vault it holds open: it keeps the key
+/// ([`Session::reopen_key`]) and opens the file afresh from disk for each
+/// request, with no wrap and so no password stretching. The commit is
+/// checked before the body is decrypted, exactly as in [`unlock`]; a wrong
+/// key is `commit mismatch`.
+///
+/// # Errors
+///
+/// As [`unlock`], for everything after the key is unwrapped.
+pub fn unlock_with_key(
+    file: &VaultFile,
+    key: &Secret<[u8; 32]>,
+    origin_device: [u8; 16],
+) -> anyhow::Result<Session> {
+    let parsed = file.parse()?;
+    open_with_key(
+        file,
+        &parsed,
+        Secret::new(*key.expose()),
+        origin_device,
+        None,
+    )
+}
+
+fn open_with_key(
+    file: &VaultFile,
+    parsed: &container::Parsed<'_>,
+    vk: Secret<[u8; 32]>,
+    origin_device: [u8; 16],
+    seen: Option<Seen>,
+) -> anyhow::Result<Session> {
     let (k_body, k_bmac, k_commit) = derive_vault_keys(vk.expose(), &parsed.header.vault_id)?;
     // A flipped body byte must surface as CommitMismatch, not BodyAuthFailed.
     // For `Frames` bodies the tag covers the fold digest, not the raw bytes,

@@ -32,6 +32,8 @@ pub enum ConfirmKind {
     Discard,
     /// Close settings and drop the staged changes.
     DiscardSettings,
+    /// Remove the typed device address at this place in the list.
+    RemoveDeviceAddress(usize),
 }
 
 /// A yes/no question.
@@ -65,6 +67,10 @@ pub enum Dialog {
     Form(Box<Form>),
     /// Add-factor menu with its cursor into [`EnrollFactor::ALL`].
     AddFactor(usize),
+    /// The device addresses typed by the owner.
+    Addresses(crate::app::flows::addresses::Addresses),
+    /// The peer-to-peer state, scrolled this many events back.
+    P2p(usize),
 }
 
 impl Dialog {
@@ -90,8 +96,14 @@ impl Dialog {
 
     /// Paste into the focused input.
     pub fn on_paste(&mut self, text: &str) {
-        if let Self::Form(form) = self {
-            form.on_paste(text);
+        match self {
+            Self::Form(form) => form.on_paste(text),
+            Self::Addresses(addresses) => {
+                if let Some(input) = addresses.input.as_mut() {
+                    input.insert_str(text.trim());
+                }
+            }
+            Self::Confirm(_) | Self::Info(_) | Self::AddFactor(_) | Self::P2p(_) => {}
         }
     }
 }
@@ -132,6 +144,16 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
                     }
                 }
                 KeyCode::Esc => state.dialog = None,
+                _ => {}
+            }
+            Nav::Stay
+        }
+        Dialog::Addresses(_) => crate::app::flows::addresses::on_key(state, event, ctx),
+        Dialog::P2p(scroll) => {
+            match event.code {
+                KeyCode::Up => *scroll += 1,
+                KeyCode::Down => *scroll = scroll.saturating_sub(1),
+                KeyCode::Esc | KeyCode::Enter => state.dialog = None,
                 _ => {}
             }
             Nav::Stay

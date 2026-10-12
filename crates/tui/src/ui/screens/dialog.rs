@@ -85,6 +85,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
                     | ConfirmKind::RemovePassword
                     | ConfirmKind::ClearHistory
                     | ConfirmKind::DiscardSettings
+                    | ConfirmKind::RemoveDeviceAddress(_)
             );
             let rect = fitted(area, &confirm.title, &confirm.body, 3);
             let body: Vec<String> = confirm
@@ -135,6 +136,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
                 .collect();
             frame.render_widget(Paragraph::new(lines), inner);
         }
+        Dialog::Addresses(_) | Dialog::P2p(_) => {}
         Dialog::Form(form) => draw_form(frame, area, form, ctx),
     }
 }

@@ -1,0 +1,133 @@
+#![allow(clippy::unwrap_used, reason = "tests may unwrap")]
+
+use local::{Prefs, RELAYS_MAX};
+use record::{Document, TAG_PREF_P2P_RELAYS};
+
+fn hint(n: u8) -> Box<str> {
+    format!("93.184.216.{n}:7447/{}", "cd".repeat(16)).into()
+}
+
+fn saved(prefs: &Prefs) -> Document {
+    let mut doc = Document::new();
+    prefs.write(&mut doc);
+    doc
+}
+
+#[test]
+fn relay_slots_survive_a_round_trip_in_order() {
+    let prefs = Prefs {
+        p2p_relays: vec![hint(1), hint(2), hint(3)],
+        ..Prefs::default()
+    };
+    let read = Prefs::read(&saved(&prefs)).unwrap().unwrap();
+    assert_eq!(read.p2p_relays, prefs.p2p_relays);
+    assert!(Prefs::read(&saved(&Prefs::default()))
+        .unwrap()
+        .unwrap()
+        .p2p_relays
+        .is_empty());
+}
+
+#[test]
+fn a_saved_relay_that_is_not_valid_is_a_load_error_not_a_default() {
+    let tagged = |text: &str| {
+        let mut doc = saved(&Prefs::default());
+        doc.set_text(TAG_PREF_P2P_RELAYS, text);
+        doc
+    };
+    assert!(Prefs::read(&tagged(&hint(1))).is_ok());
+    for bad in [
+        String::new(),
+        "garbage".to_owned(),
+        format!("{}\ngarbage", hint(1)),
+        format!("{}\n", hint(1)),
+        format!("169.254.169.254:80/{}", "cd".repeat(16)),
+        format!("93.184.216.1:7447/{}", "CD".repeat(16)),
+        (1..=u8::try_from(RELAYS_MAX + 1).unwrap())
+            .map(|n| hint(n).to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ] {
+        assert!(Prefs::read(&tagged(&bad)).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn a_vault_with_only_relays_saved_still_has_saved_preferences() {
+    let mut doc = Document::new();
+    doc.set_text(TAG_PREF_P2P_RELAYS, &hint(1));
+    let read = Prefs::read(&doc).unwrap().unwrap();
+    assert_eq!(read.p2p_relays, [hint(1)]);
+    assert_eq!(read.lock_after_s, Prefs::default().lock_after_s);
+}
+
+#[test]
+fn the_hold_switch_round_trips_and_only_exists_with_a_saved_relay() {
+    use record::TAG_PREF_P2P_HOLD;
+    let on = Prefs {
+        p2p_relays: vec![hint(1)],
+        p2p_hold: true,
+        ..Prefs::default()
+    };
+    assert!(Prefs::read(&saved(&on)).unwrap().unwrap().p2p_hold);
+    let off = Prefs {
+        p2p_relays: vec![hint(1)],
+        ..Prefs::default()
+    };
+    assert!(!Prefs::read(&saved(&off)).unwrap().unwrap().p2p_hold);
+    assert!(
+        !Prefs::read(&saved(&Prefs::default()))
+            .unwrap()
+            .unwrap()
+            .p2p_hold
+    );
+
+    let tagged = |relays: Option<&str>, value: &[u8]| {
+        let mut doc = saved(&Prefs::default());
+        if let Some(relays) = relays {
+            doc.set_text(TAG_PREF_P2P_RELAYS, relays);
+        }
+        doc.set_data(TAG_PREF_P2P_HOLD, record::ValueType::Bytes, value);
+        doc
+    };
+    assert!(Prefs::read(&tagged(Some(&hint(1)), &[1])).is_ok());
+    assert!(Prefs::read(&tagged(None, &[0])).is_ok());
+    for (relays, value) in [
+        (Some(hint(1).to_string()), vec![2u8]),
+        (Some(hint(1).to_string()), vec![]),
+        (Some(hint(1).to_string()), vec![1, 1]),
+        (None, vec![1]),
+    ] {
+        assert!(
+            Prefs::read(&tagged(relays.as_deref(), &value)).is_err(),
+            "{relays:?} {value:?}"
+        );
+    }
+}
+
+#[test]
+fn a_saved_hold_together_with_fetch_only_is_a_load_error() {
+    use local::Listen;
+    let hold = |listen: Listen| Prefs {
+        p2p_relays: vec![hint(1)],
+        p2p_hold: true,
+        p2p_listen: listen,
+        ..Prefs::default()
+    };
+    for listen in [Listen::Lan, Listen::Beacon, Listen::Local, Listen::Off] {
+        assert!(Prefs::read(&saved(&hold(listen))).is_ok(), "{listen:?}");
+    }
+    assert!(
+        Prefs::read(&saved(&hold(Listen::Fetch))).is_err(),
+        "fetch only holds no slot, so a saved hold contradicts it"
+    );
+    let fetch = Prefs {
+        p2p_listen: Listen::Fetch,
+        p2p_relays: vec![hint(1)],
+        ..Prefs::default()
+    };
+    assert_eq!(
+        Prefs::read(&saved(&fetch)).unwrap().unwrap().p2p_listen,
+        Listen::Fetch
+    );
+}

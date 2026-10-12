@@ -96,6 +96,8 @@ actions! {
     OpenHealth,
     /// Settings.
     OpenSettings,
+    /// Peer-to-peer state and event log.
+    OpenP2pInfo,
     /// Reset the selected setting to its default.
     ResetSetting,
     /// Reset every setting of the section.
@@ -114,6 +116,8 @@ actions! {
     Reroll,
     /// Copy the generated value.
     CopyGenerated,
+    /// Copy the new recovery phrase.
+    CopyPhrase,
     /// Next generator mode.
     NextMode,
     /// Toggle a-z.
@@ -182,6 +186,34 @@ actions! {
     ToggleInclude,
     /// Include or exclude every item.
     ToggleAll,
+    /// Make a shared vault.
+    ShareNew,
+    /// Add a person to the selected shared vault.
+    ShareAdd,
+    /// Join a shared vault from an invitation.
+    ShareJoin,
+    /// Fetch a waiting shared vault again, now.
+    ShareRetry,
+    /// Cycle where this device's node listens.
+    ShareListen,
+    /// Remove a person from the selected shared vault.
+    ShareRemove,
+    /// Change what a person may do in the selected shared vault.
+    ShareRole,
+    /// Leave the selected shared vault, or forget it.
+    ShareLeave,
+    /// Replace the key of the selected shared vault.
+    ShareRekey,
+    /// Set the public address this device offers other members.
+    ShareAdvertise,
+    /// Offer the address a member saw this device at.
+    ShareFillObserved,
+    /// Upgrade this device's sync identity.
+    ShareUpgrade,
+    /// Paste a relay address.
+    ShareRelay,
+    /// Announce me through the saved relay.
+    ShareHold,
 }
 
 /// Where a palette entry is listed.
@@ -252,6 +284,7 @@ pub const PALETTE: &[(Action, &str, Section)] = &[
     (Action::ToggleAnimation, "Toggle animations", Section::View),
     (Action::ToggleAscii, "Toggle ASCII glyphs", Section::View),
     (Action::OpenSettings, "Settings", Section::View),
+    (Action::OpenP2pInfo, "Peer-to-peer info", Section::View),
     (Action::Help, "Keyboard shortcuts", Section::View),
     (Action::CreateVault, "Create a new vault", Section::Session),
     (

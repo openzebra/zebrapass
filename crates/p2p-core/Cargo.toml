@@ -1,0 +1,24 @@
+[package]
+name = "p2p-core"
+version = "0.1.0"
+description = "Post-quantum peer handshake and secure channel for device sync; no I/O."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ec = { path = "../ec" }
+frame = { path = "../frame" }
+getrandom.workspace = true
+hmac.workspace = true
+kdf = { path = "../kdf" }
+pq = { path = "../pq" }
+secret = { path = "../secret" }
+session = { path = "../session" }
+sha2.workspace = true
+syncwire = { path = "../syncwire" }
+
+[lints]
+workspace = true

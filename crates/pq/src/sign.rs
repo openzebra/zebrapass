@@ -15,7 +15,27 @@ use zeroize::Zeroizing;
 /// Sync record writes: `record_message` payloads sign under this context.
 pub const SYNC_CTX: &[u8] = b"zebrapass/sync/record/v1";
 /// Device certificates: [`crate::sign_device_cert`] signs under this context.
-pub const DEVICE_CERT_CTX: &[u8] = b"zebrapass/device-cert/v1";
+pub const DEVICE_CERT_CTX: &[u8] = b"zebrapass/device-cert/v2";
+
+/// Device revocations: [`crate::sync_sign`] signs them under this context.
+pub const REVOKE_CTX: &[u8] = b"zebrapass/revoke/v1";
+
+/// Shared-vault member log entries sign under this context.
+pub const MEMBER_LOG_CTX: &[u8] = b"zebrapass/member-log/v1";
+
+/// Revision attestations of shared vaults sign under this context.
+pub const REVISION_CTX: &[u8] = b"zebrapass/revision/v1";
+
+/// Contact cards sign under this context.
+pub const CONTACT_CTX: &[u8] = b"zebrapass/contact-card/v1";
+
+/// Shared-vault invitations sign under this context.
+pub const INVITE_CTX: &[u8] = b"zebrapass/invitation/v1";
+
+/// Signing context of the peer-to-peer handshake authentication signature.
+pub const P2P_AUTH_CTX: &[u8] = b"zebrapass/p2p-auth/v1";
+/// Signing context of a device's signed list of addresses it can be reached at.
+pub const PEER_CTX: &[u8] = b"zebrapass/peer-record/v1";
 /// ML-DSA-65 seed length.
 pub const SYNC_SEED_LEN: usize = 32;
 /// ML-DSA-65 verifying key length.
@@ -101,8 +121,13 @@ pub fn sync_verifying_key(seed: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Opaque ML-DSA signing key for session-side device keys.
-#[derive(Debug)]
 pub struct SigningKeyMirror(SigningKey<MlDsa65>);
+
+impl std::fmt::Debug for SigningKeyMirror {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningKeyMirror").finish_non_exhaustive()
+    }
+}
 
 /// Build a device signing key from a fixed 32-byte seed. Infallible: the
 /// length is fixed by the type.

@@ -42,6 +42,8 @@ fn explanation(kind: UnlockError) -> Vec<String> {
         | UnlockError::NeedsPassword
         | UnlockError::NeedsHwKey
         | UnlockError::NotAVault
+        | UnlockError::Peer(_)
+        | UnlockError::WrongVault
         | UnlockError::Io => vec![String::from(kind.message())],
     }
 }

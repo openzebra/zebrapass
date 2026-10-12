@@ -172,9 +172,7 @@ fn details(view: &FactorView) -> Dialog {
             "This machine has no key file for it: it belongs to another device.",
         ));
     }
-    body.push(String::from(
-        "Device certificates: none on file (sync server TODO).",
-    ));
+    body.push(String::from("Device certificates are kept in sync.id."));
     Dialog::Info(Info {
         title: factor_label(view),
         body,
@@ -188,7 +186,7 @@ fn enroll_guide() -> Dialog {
             String::from("1. Copy the vault file to the new device (or sync it)."),
             String::from("2. On that device: Restore from phrase, point at the file."),
             String::from("3. It enrolls its own unlock factor; nothing is shared."),
-            String::from("QR pairing and server sync are not built yet."),
+            String::from("QR pairing is not built yet."),
         ],
     })
 }

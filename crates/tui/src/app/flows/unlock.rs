@@ -18,6 +18,7 @@ use crate::secure::phrase_input::{secret_string, PhraseInput};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::widgets::toast::Tone;
+use crate::vault::adopt::{is_placeholder, Held};
 use crate::vault::device;
 use crate::vault::discover::VaultRef;
 use crate::vault::error::UnlockError;
@@ -82,6 +83,9 @@ pub struct UnlockState {
     pub picker: Option<usize>,
     /// Reveal of the password field.
     pub reveal: RevealGuard,
+    /// The password just submitted for a placeholder vault, kept for the
+    /// session so the account's vault can be opened with it once found.
+    pub held: Option<Held>,
 }
 
 /// Reveal key of the password field.
@@ -106,6 +110,7 @@ impl UnlockState {
             error: None,
             picker: None,
             reveal: RevealGuard::default(),
+            held: None,
         };
         state.select(current);
         state
@@ -341,6 +346,10 @@ impl UnlockState {
                 }
                 Credential::Device(self.pin.take())
             }
+        };
+        self.held = match &credential {
+            Credential::Password(password) if is_placeholder(&paths) => Some(Held::new(password)),
+            _ => None,
         };
         self.reveal_off(ctx);
         let cost = match self.mode {

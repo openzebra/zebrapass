@@ -33,6 +33,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Ceremony: key(KeyCode::Up) => Up, "row";
     Ceremony: key(KeyCode::Down) => Down;
     Ceremony: ch('x') => ToggleWritten, "written";
+    Ceremony: ch('c') => CopyPhrase, "copy 25 s";
     Ceremony: key(KeyCode::Enter) => Confirm, "continue";
     Ceremony: key(KeyCode::Esc) => Back, "cancel vault";
 
@@ -156,6 +157,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Home: ch('S') => OpenSync;
     Home: ch('H') => OpenHealth;
     Home: ch(',') => OpenSettings, "settings";
+    Home: ctrl('i') => OpenP2pInfo, "info";
     Home: ch('L') => Lock, "lock";
     Home: ch('?') => Help, "help";
     Home: ch('q') => Quit, "quit";
@@ -171,6 +173,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Editor: key(KeyCode::Down) => NextField;
     Editor: key(KeyCode::Up) => PrevField;
     Editor: ctrl('s') => Save, "save";
+    Editor: key(KeyCode::Enter) => Save;
     Editor: ctrl('r') => RevealField, "reveal";
     Editor: ctrl('g') => GenerateInto, "generate";
     Editor: ctrl('n') => AddField, "add field";
@@ -208,8 +211,32 @@ pub const KEYMAP: &[Binding] = bindings! {
     Devices: ch('?') => Help;
     Devices: key(KeyCode::Esc) => Back, "back";
 
+    Sync: key(KeyCode::Enter) => Confirm, "copy my key";
+    Sync: ch('n') => ShareNew, "new";
+    Sync: ch('a') => ShareAdd, "add";
+    Sync: ch('x') => ShareRemove, "remove";
+    Sync: ch('c') => ShareRole, "role";
+    Sync: ch('d') => ShareLeave, "leave";
+    Sync: ch('k') => ShareRekey, "new key";
+    Sync: ch('p') => ShareAdvertise, "public address";
+    Sync: ch('o') => ShareFillObserved, "use seen address";
+    Sync: ch('u') => ShareUpgrade, "upgrade identity";
+    Sync: ch('v') => ShareRelay, "add relay";
+    Sync: ch('t') => ShareHold, "announce via relay";
+    Sync: ch('j') => ShareJoin, "join";
+    Sync: ch('r') => ShareRetry, "retry";
+    Sync: ch('l') => ShareListen, "listen";
+    Sync: key(KeyCode::Up) => Up;
+    Sync: key(KeyCode::Down) => Down;
     Sync: ch('?') => Help;
     Sync: key(KeyCode::Esc) => Back, "back";
+
+    Share: key(KeyCode::Enter) => Confirm, "continue";
+    Share: key(KeyCode::Up) => Up, "pick";
+    Share: key(KeyCode::Down) => Down;
+    Share: key(KeyCode::Left) => Left, "role";
+    Share: key(KeyCode::Right) => Right;
+    Share: key(KeyCode::Esc) => Back, "back";
 
     Health: key(KeyCode::Up) => Up;
     Health: key(KeyCode::Down) => Down;
@@ -238,9 +265,6 @@ pub const KEYMAP: &[Binding] = bindings! {
     Settings: ch('R') => ResetSection;
     Settings: ch('?') => Help;
     Settings: key(KeyCode::Esc) => Back, "close";
-
-    SettingsEdit: key(KeyCode::Enter) => Confirm, "keep";
-    SettingsEdit: key(KeyCode::Esc) => Back, "cancel";
 
     Dialog: key(KeyCode::Enter) => Confirm, "confirm";
     Dialog: key(KeyCode::Esc) => Back, "cancel";

@@ -1,5 +1,5 @@
 //! Restore from phrase: masked word grid with autocomplete, passphrase,
-//! vault file, and name. Then the enroll step.
+//! optional vault file and device address, and name. Then the enroll step.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -145,7 +145,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
     frame.render_widget(block, card);
     let columns = slot_columns(inner.width.saturating_sub(6));
     let grid_rows = u16::try_from(MAX_WORDS.div_ceil(columns)).unwrap_or(24);
-    let [phrase_head, grid, suggest, _, file_head, file, file_status, _, details, footer] =
+    let [phrase_head, grid, suggest, _, source_head, sources, source_status_row, details, footer] =
         Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(grid_rows + 2),
@@ -153,7 +153,6 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(3),
-            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(4),
             Constraint::Min(3),
@@ -168,33 +167,53 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
         ctx,
     );
     draw_words(frame, grid, suggest, state, columns, ctx);
+    draw_source(frame, [source_head, sources, source_status_row], state, ctx);
+    draw_details(frame, details, state, ctx);
+    draw_footer(frame, footer, state, ctx);
+    hint_bar(frame, hints, Scope::Restore, "", ctx);
+}
+
+/// The optional vault file: empty means the network brings the vault.
+fn draw_source(
+    frame: &mut Frame<'_>,
+    [head, boxed_area, status]: [Rect; 3],
+    state: &RestoreState,
+    ctx: &Ctx,
+) {
+    let theme = &ctx.theme;
     section(
         frame,
-        file_head,
+        head,
         "2",
-        "Vault file",
-        "backup or copy from another device",
+        "Vault file (optional)",
+        "empty → sync over the network",
         ctx,
     );
-    let file_focus = state.field == RestoreField::Source;
-    let file_rect = Rect {
-        x: file.x + 2,
-        width: file.width.saturating_sub(4),
-        ..file
+    let focus = state.field == RestoreField::Source;
+    let rect = Rect {
+        x: boxed_area.x + 2,
+        width: boxed_area.width.saturating_sub(4),
+        ..boxed_area
     };
     boxed(
         frame,
-        file_rect,
-        text_line(
-            &state.source,
-            file_rect.width.saturating_sub(2),
-            file_focus,
-            theme,
-        ),
-        file_focus,
+        rect,
+        text_line(&state.source, rect.width.saturating_sub(2), focus, theme),
+        focus,
         theme,
     );
-    let status = state.source_factors.map_or_else(
+    frame.render_widget(Paragraph::new(file_hint(state, theme)), status);
+}
+
+/// What is known about the vault file: nothing to say when it is empty.
+fn file_hint<'a>(state: &RestoreState, theme: &Theme) -> Span<'a> {
+    if state.source.value().trim().is_empty() {
+        return Span::styled(
+            "    your vault arrives from your other device once this one is unlocked",
+            theme.muted(),
+        );
+    }
+    state.source_factors.map_or_else(
         || {
             Span::styled(
                 format!("    {} no vault file at this path", theme.glyphs.fail),
@@ -210,11 +229,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
                 theme.accent(),
             )
         },
-    );
-    frame.render_widget(Paragraph::new(status), file_status);
-    draw_details(frame, details, state, ctx);
-    draw_footer(frame, footer, state, ctx);
-    hint_bar(frame, hints, Scope::Restore, "", ctx);
+    )
 }
 
 /// `3 / 24 words` plus a short bar.
@@ -374,7 +389,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ct
             },
         );
     }
-    let ready = state.phrase.plausible() && state.source_factors.is_some();
+    let ready = state.phrase.plausible();
     let rect = Rect {
         x: action.x + 1,
         width: action.width.saturating_sub(3),

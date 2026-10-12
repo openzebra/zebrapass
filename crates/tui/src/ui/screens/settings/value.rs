@@ -2,7 +2,6 @@
 //! fact comes from the draft, the public vault info, or the services.
 
 use kdf::KdfProfile;
-use local::SyncMode;
 use session::Factor;
 
 use crate::app::ctx::Ctx;
@@ -14,6 +13,8 @@ use crate::app::prefs::theme_of;
 use crate::ui::widgets::chrome::checkbox;
 use crate::ui::widgets::fingerprint::{grouped_hex, stripe_print};
 use crate::vault::factors::presence;
+
+use super::sync_value::sync_value;
 
 /// Text of `row`'s value.
 #[must_use]
@@ -47,22 +48,17 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
             .device
             .map_or_else(|| String::from("—"), |device| profile_text(device.profile)),
         Row::SecureEnclave => String::from("not for terminal apps"),
-        Row::SyncMode => format!("{} · server not built yet", sync_text(draft.sync_mode)),
-        Row::ServerOrigin => draft
-            .server_origin
-            .as_deref()
-            .map_or_else(|| String::from("not set"), str::to_owned),
-        Row::ServerPin => draft.server_key_pin.map_or_else(
-            || String::from("pinned on first contact"),
-            |pin| grouped_hex(pin.get(..8).unwrap_or_default(), 2),
-        ),
-        Row::ClientId => grouped_hex(info.client_id.get(..8).unwrap_or_default(), 2),
-        Row::DeviceCert => String::from("none on file"),
-        Row::TestConnection
-        | Row::RotateKey
-        | Row::ForgetDevice
-        | Row::ClearHistory
-        | Row::Import => String::from("Enter"),
+        Row::SyncStatus
+        | Row::LastCheckIn
+        | Row::SyncPeers
+        | Row::SyncDevices
+        | Row::SyncRelays
+        | Row::SyncAdvertised
+        | Row::SyncBeacon
+        | Row::SyncNow => sync_value(row, state, ctx),
+        Row::RotateKey | Row::ForgetDevice | Row::ClearHistory | Row::Import => {
+            String::from("Enter")
+        }
         Row::ClipClear => format!("{} s", draft.clip_clear_s),
         Row::ClipOnLock => String::from("always"),
         Row::Theme if ctx.no_color => format!("{} (NO_COLOR wins)", theme_of(draft.theme).label()),
@@ -121,14 +117,6 @@ fn profile_text(profile: KdfProfile) -> String {
         "Argon2id {} MiB ({name}) · Enter changes",
         profile.m_kib() / 1024
     )
-}
-
-const fn sync_text(mode: SyncMode) -> &'static str {
-    match mode {
-        SyncMode::Off => "off",
-        SyncMode::Manual => "manual",
-        SyncMode::Auto => "automatic",
-    }
 }
 
 /// `30 s`, `5 min`, `1 h`.

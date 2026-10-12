@@ -100,6 +100,14 @@ fn steps(task: Task, glyphs: &Glyphs) -> Vec<(String, String)> {
             ),
             pair("Recording rollback cursor", String::from("local.meta")),
         ],
+        Task::Adopt => vec![
+            pair("Fetching the vault", String::from("peer to peer")),
+            pair(
+                "Unwrapping vault key",
+                format!("{} → {}", glyphs.kek, glyphs.vk),
+            ),
+            pair("Verifying commitment", String::from("HMAC before decrypt")),
+        ],
         Task::Rotate => vec![
             pair("Drawing a new vault key", String::from("OS CSPRNG")),
             pair("Re-sealing every frame", String::from("per-record keys")),

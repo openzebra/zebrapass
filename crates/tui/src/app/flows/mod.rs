@@ -1,5 +1,6 @@
 //! Per-screen state and key handling. Drawing lives in `ui::screens`.
 
+pub mod addresses;
 pub mod ceremony;
 pub mod create;
 pub mod dialog;
@@ -18,9 +19,22 @@ pub mod home_keys;
 pub mod import;
 pub mod import_mapping;
 pub mod import_vault;
+pub mod info;
 pub mod palette;
 pub mod panels;
 pub mod restore;
+mod restore_field;
 pub mod settings;
+pub mod share;
+pub mod share_advertise;
+pub mod share_file;
+pub mod share_leave;
+pub mod share_ops;
+pub mod share_rekey;
+pub mod share_relay;
+pub mod share_remove;
+pub mod share_role;
+pub mod share_upgrade;
+pub mod shared_edit;
 pub mod unlock;
 pub mod unlocked;

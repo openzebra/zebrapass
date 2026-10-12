@@ -2,11 +2,15 @@
 //! actions mutate state, `view` draws state. `view` does no IO.
 
 pub mod action;
+mod adoption;
 pub mod ctx;
 pub mod event;
 pub mod flows;
 pub mod idle;
 pub mod keymap;
+pub mod node;
+pub mod p2p;
+pub mod personal;
 pub mod prefs;
 pub mod screen;
 pub mod worker;
@@ -213,7 +217,7 @@ impl App {
             Screen::Restore(state) => state.on_paste(text),
             Screen::Import(state) => state.on_paste(text),
             Screen::Unlock(state) => state.on_paste(text),
-            Screen::Unlocked(state) => state.on_paste(text),
+            Screen::Unlocked(state) => state.on_paste(text, &mut self.ctx),
             Screen::Welcome(_) | Screen::Alert(_) | Screen::Locked(_) => {}
         }
     }
@@ -342,7 +346,7 @@ impl App {
             }
             Screen::Restore(state) => {
                 let after = self.ctx.reveal_after;
-                if state.reveal.tick(now, after) || state.enroll.reveal.tick(now, after) {
+                if state.tick(now, after) {
                     self.ctx.redraw();
                 }
                 Nav::Stay
@@ -393,8 +397,9 @@ impl App {
                         self.ctx.apply_prefs(prefs);
                     }
                     let vaults = std::mem::take(&mut state.vaults);
-                    let current = state.current;
-                    self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current)));
+                    let (current, beacon) = (state.current, self.ctx.beacon);
+                    let unlocked = Unlocked::new(vault, vaults, current, beacon);
+                    self.screen = Screen::Unlocked(Box::new(unlocked.with_held(state.held.take())));
                     self.ctx.idle.touch(self.ctx.now);
                     self.ctx.redraw();
                 }
@@ -434,14 +439,26 @@ impl App {
                 Err(message) => state.failed(&message, &mut self.ctx),
             },
             (JobResult::Restored(outcome), Screen::Restore(state)) if waited => match outcome {
-                Ok(vault) => self.opened(vault, "Vault restored on this device."),
+                Ok(vault) => {
+                    let held = state.held.take();
+                    self.opened_holding(vault, "Vault restored on this device.", held);
+                }
                 Err(UnlockError::Io) => {
                     state.failed("Couldn't write the restored vault on this device.");
                 }
+                Err(
+                    error @ (UnlockError::Peer(_)
+                    | UnlockError::WrongVault
+                    | UnlockError::Rollback { .. }
+                    | UnlockError::Conflict { .. }),
+                ) => state.failed(error.message()),
                 Err(_) => state.failed("Couldn't unlock that vault file with this phrase."),
             },
-            // Anything else was cancelled or outlived its screen: dropping it
-            // here wipes whatever it carries.
+            (JobResult::Adopted(outcome), Screen::Unlocked(state)) if waited => match outcome {
+                Ok(vault) => self.opened(vault, "Your vault arrived from your other device."),
+                Err(error) => state.adopt_failed(error, &mut self.ctx),
+            },
+            // Cancelled or outlived its screen: dropping it wipes what it carries.
             (_, _) => {}
         }
     }
@@ -455,7 +472,8 @@ impl App {
         if let Some(prefs) = vault.meta.prefs.as_ref() {
             self.ctx.apply_prefs(prefs);
         }
-        self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current)));
+        let beacon = self.ctx.beacon;
+        self.screen = Screen::Unlocked(Box::new(Unlocked::new(vault, vaults, current, beacon)));
         self.ctx.idle.touch(self.ctx.now);
         self.ctx.toast(Tone::Success, message.to_owned());
         self.ctx.redraw();

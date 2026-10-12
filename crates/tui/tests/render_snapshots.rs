@@ -91,11 +91,15 @@ fn create_wizard_steps_render() {
         .unwrap()
         .phrase_normalized()
         .to_owned();
-    for word in phrase.split(' ') {
+    // A single word can equal a word of the interface ("phrase"); three in a
+    // row cannot, so that is what must never be on screen while masked.
+    let words: Vec<&str> = phrase.split(' ').collect();
+    for run in words.windows(3) {
+        let shown = format!(" {} {} {} ", run[0], run[1], run[2]);
         for screen in &screens {
             assert!(
-                !screen.contains(&format!(" {word} ")),
-                "phrase word {word} visible while masked"
+                !screen.contains(&shown),
+                "phrase words {shown:?} visible while masked"
             );
         }
     }
@@ -166,7 +170,7 @@ fn unlocked_views_render_at_every_size() {
     let views: [(char, &str); 6] = [
         ('F', "Constellation"),
         ('D', "Devices"),
-        ('S', "Sync"),
+        ('S', "your key"),
         (',', "Settings"),
         ('h', "History"),
         ('g', "Generator"),

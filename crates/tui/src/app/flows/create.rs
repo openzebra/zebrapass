@@ -191,7 +191,7 @@ impl CreateState {
                     ctx.redraw();
                     return Nav::Stay;
                 }
-                if self.ceremony.on_action(action, ctx) {
+                if self.ceremony.on_action(action, self.phrase.as_deref(), ctx) {
                     self.start_verify(ctx);
                 } else if action == Action::Confirm {
                     ctx.toast(

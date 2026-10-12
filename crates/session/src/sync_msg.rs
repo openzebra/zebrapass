@@ -52,6 +52,15 @@ fn message_v2(record: &SyncRecord) -> anyhow::Result<Vec<u8>> {
         &record.msg_version.to_be_bytes(),
         &record.key_generation.to_be_bytes(),
     ];
+    frame_parts(&parts)
+}
+
+/// Concatenate `parts`, each framed as `u16 BE len ‖ bytes`.
+///
+/// # Errors
+///
+/// `sync field too long` when a part does not fit a `u16` length.
+pub fn frame_parts(parts: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
     let capacity = parts.iter().map(|part| 2 + part.len()).sum();
     parts
         .iter()

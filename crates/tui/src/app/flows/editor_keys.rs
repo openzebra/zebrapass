@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use record::{Document, ValueType, TAG_TITLE};
 
 use crate::app::action::Action;
-use crate::app::ctx::{Ctx, Task};
+use crate::app::ctx::Ctx;
 use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog};
 use crate::app::flows::editing::{edit_secret, edit_text, printable, Edit};
 use crate::app::flows::editor::{EditorState, Part, Slot, Value, ADD_KINDS};
@@ -14,7 +14,6 @@ use crate::app::keymap::{resolve, Scope};
 use crate::app::screen::Nav;
 use crate::secure::reveal::RevealKey;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::ops::Op;
 use crate::vault::records::{set_custom_text, CUSTOM_FAVORITE, CUSTOM_TAGS};
 
 /// Handle a key in the editor.
@@ -40,6 +39,16 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
             KeyCode::Esc => editor.add_menu = None,
             _ => {}
         }
+        return Nav::Stay;
+    }
+    let on_toggle = event.code == KeyCode::Enter
+        && matches!(
+            editor.focused(),
+            Some((index, Part::Value))
+                if matches!(editor.fields.get(index).map(|f| &f.value), Some(Value::Toggle(_)))
+        );
+    if on_toggle {
+        type_into(editor, event, ctx);
         return Nav::Stay;
     }
     match resolve(Scope::Editor, event) {
@@ -154,6 +163,10 @@ fn save(state: &mut Unlocked, ctx: &mut Ctx) {
     let View::Editor(editor) = &state.view else {
         return;
     };
+    if !editor.dirty && editor.id.is_some() {
+        close(state, ctx);
+        return;
+    }
     let title_empty = editor
         .fields
         .iter()
@@ -173,9 +186,9 @@ fn save(state: &mut Unlocked, ctx: &mut Ctx) {
         ctx.toast(Tone::Warn, "Custom fields need a name.");
         return;
     }
-    let base = match (editor.id, state.vault.as_ref()) {
-        (Some(id), Some(vault)) => {
-            let Ok(doc) = session::open_record(&vault.session, id) else {
+    let base = match (editor.id, state.active_session()) {
+        (Some(id), Some(session)) => {
+            let Ok(doc) = session::open_record(session, id) else {
                 ctx.toast(Tone::Danger, "The record did not open; nothing saved.");
                 return;
             };
@@ -186,14 +199,7 @@ fn save(state: &mut Unlocked, ctx: &mut Ctx) {
     match build(editor, base) {
         Ok(doc) => {
             let id = editor.id;
-            state.run(
-                Op::Write {
-                    id,
-                    doc: Box::new(doc),
-                },
-                Task::Save,
-                ctx,
-            );
+            state.write_active(id, Box::new(doc), ctx);
         }
         Err(error) => ctx.toast(Tone::Danger, format!("Not saved: {error}")),
     }

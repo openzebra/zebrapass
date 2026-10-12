@@ -30,6 +30,8 @@ pub enum Task {
     Create,
     /// Restoring a vault.
     Restore,
+    /// Bringing the account's vault from another device.
+    Adopt,
     /// Writing a record.
     Save,
     /// Rotating the vault key.
@@ -50,6 +52,7 @@ impl Task {
             Self::Unlock(_) => "Unlocking",
             Self::Create => "Creating your vault",
             Self::Restore => "Restoring your vault",
+            Self::Adopt => "Bringing your vault from another device",
             Self::Save => "Saving",
             Self::Rotate => "Rotating the vault key",
             Self::Factor => "Updating unlock factors",
@@ -63,7 +66,7 @@ impl Task {
     pub const fn cancellable(self) -> bool {
         matches!(
             self,
-            Self::Unlock(_) | Self::Create | Self::Restore | Self::Import
+            Self::Unlock(_) | Self::Create | Self::Restore | Self::Adopt | Self::Import
         )
     }
 }
@@ -117,6 +120,8 @@ pub struct Ctx {
     pub full_redraw: bool,
     /// Terminal size `(columns, rows)`.
     pub size: (u16, u16),
+    /// Where LAN beacons go and are heard; see [`crate::cli::Config::beacon`].
+    pub beacon: Option<p2p_net::BeaconConfig>,
 }
 
 impl Ctx {
@@ -148,6 +153,7 @@ impl Ctx {
             kdf_fast: None,
             full_redraw: false,
             size: (120, 40),
+            beacon: config.beacon,
         })
     }
 
@@ -174,13 +180,31 @@ impl Ctx {
 
     /// Copy a secret with the clear timer, and say so; `true` when copied.
     pub fn copy(&mut self, secret: &[u8], label: &'static str) -> bool {
-        match self.clipboard.copy(secret, label, self.now) {
+        let result = self.clipboard.copy(secret, label, self.now);
+        self.copied(result)
+    }
+
+    /// As [`Ctx::copy`], clearing after `clear_after` instead of the usual
+    /// delay.
+    pub fn copy_for(&mut self, secret: &[u8], label: &'static str, clear_after: Duration) -> bool {
+        let result = self
+            .clipboard
+            .copy_for(secret, label, self.now, clear_after);
+        self.copied(result)
+    }
+
+    fn copied(&mut self, result: Result<(), CopyError>) -> bool {
+        match result {
             Ok(()) => true,
             Err(CopyError::Unavailable) => {
                 self.toast(
                     Tone::Warn,
                     "Clipboard unavailable in this terminal. Use Space to reveal.",
                 );
+                false
+            }
+            Err(CopyError::TooLarge) => {
+                self.toast(Tone::Warn, "Too large for the terminal clipboard.");
                 false
             }
         }

@@ -1,5 +1,6 @@
 //! Create wizard steps 2 and 3: the phrase one row at a time, then three
-//! picks to prove it was written down. There is no copy action here.
+//! picks to prove it was written down. The phrase can be copied once, and the
+//! clipboard clears itself after 25 s.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -7,7 +8,9 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::ceremony::{words, CeremonyFocus, Verify, CARDS, PER_ROW, ROWS};
+use crate::app::flows::ceremony::{
+    words, CeremonyFocus, Verify, CARDS, PER_ROW, PHRASE_CLEAR, ROWS,
+};
 use crate::app::flows::create::{CreateState, Step};
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
@@ -231,8 +234,12 @@ fn draw_footer(frame: &mut Frame<'_>, footer: Rect, state: &CreateState, ctx: &C
     };
     let focused = ceremony.focus == CeremonyFocus::Written;
     let pointer = if focused { theme.glyphs.pointer } else { " " };
-    let [text, action] =
-        Layout::horizontal([Constraint::Min(20), Constraint::Length(18)]).areas(footer);
+    let [text, copy, action] = Layout::horizontal([
+        Constraint::Min(20),
+        Constraint::Length(16),
+        Constraint::Length(18),
+    ])
+    .areas(footer);
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
@@ -254,15 +261,23 @@ fn draw_footer(frame: &mut Frame<'_>, footer: Rect, state: &CreateState, ctx: &C
         .wrap(ratatui::widgets::Wrap { trim: false }),
         text,
     );
-    let rect = Rect {
-        x: action.x + 2,
-        width: action.width.saturating_sub(4),
-        height: 3.min(action.height),
-        ..action
+    let inset = |area: Rect| Rect {
+        x: area.x + 2,
+        width: area.width.saturating_sub(4),
+        height: 3.min(area.height),
+        ..area
     };
     button(
         frame,
-        rect,
+        inset(copy),
+        &format!("Copy {} s", PHRASE_CLEAR.as_secs()),
+        false,
+        ceremony.focus == CeremonyFocus::Copy,
+        theme,
+    );
+    button(
+        frame,
+        inset(action),
         "Continue →",
         ceremony.written,
         ceremony.focus == CeremonyFocus::Continue,

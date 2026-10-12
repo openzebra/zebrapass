@@ -148,13 +148,19 @@ impl Summary {
 pub fn build_cache(session: &Session) -> anyhow::Result<Box<[Summary]>> {
     Ok(session::list_records(session)?
         .iter()
-        .map(|row| {
-            session::open_record(session, row.id).map_or_else(
-                |_| Summary::unreadable(row.id, row.revision, row.timestamp_ms),
-                |doc| Summary::of(row.id, row.revision, row.timestamp_ms, &doc),
-            )
+        .filter_map(|row| match session::open_record(session, row.id) {
+            Ok(doc) if is_shared_reference(&doc) => None,
+            Ok(doc) => Some(Summary::of(row.id, row.revision, row.timestamp_ms, &doc)),
+            Err(_) => Some(Summary::unreadable(row.id, row.revision, row.timestamp_ms)),
         })
         .collect())
+}
+
+/// Whether `doc` is the record that points at a shared vault: those are not
+/// logins or notes and never appear in the list.
+#[must_use]
+pub fn is_shared_reference(doc: &Document) -> bool {
+    doc.data(record::TAG_SHARED_MARK).ok().flatten() == Some(&[1u8][..])
 }
 
 /// Text of the custom field named `name`.
