@@ -188,12 +188,12 @@ fn the_shared_vault_appears_and_fills_in_when_the_sync_completes() {
         "the reference is not a login"
     );
     let screen = render(&bob_app, 120, 40);
-    assert!(screen.contains("Shared"), "{screen}");
+    assert!(screen.contains("SHARED"), "{screen}");
     assert!(screen.contains("Family"), "{screen}");
     let row = |screen: &str| {
         screen
             .lines()
-            .skip_while(|line| !line.contains(" Shared"))
+            .skip_while(|line| !line.contains(" SHARED"))
             .find(|line| line.contains("Family"))
             .unwrap_or_default()
             .to_owned()

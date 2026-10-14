@@ -102,12 +102,17 @@ impl EventLog {
                 format!("fetch failed: {reason}")
             }
         };
+        self.push_line(text);
+    }
+
+    /// Append a custom status line to the log.
+    pub fn push_line(&mut self, text: impl Into<Box<str>>) {
         if self.lines.len() >= LOG_CAP {
             self.lines.pop_front();
         }
         self.lines.push_back(LogLine {
             at_ms: crate::vault::create::unix_ms(),
-            text: text.into_boxed_str(),
+            text: text.into(),
         });
     }
 }

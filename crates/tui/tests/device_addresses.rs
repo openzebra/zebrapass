@@ -164,16 +164,17 @@ fn a_foreign_account_at_the_address_is_turned_away_at_the_handshake() {
 }
 
 #[test]
-fn the_guidance_is_one_line_while_a_restored_vault_is_empty() {
-    let (_a, b, _) = pair("da-guidance");
+fn the_restore_sync_modal_opens_on_empty_restore_and_can_be_cancelled() {
+    let (_a, mut b, _) = pair("da-guidance");
     for width in [80, 140] {
         let screen = render(&b, width, 30);
-        let lines: Vec<&str> = screen
-            .lines()
-            .filter(|line| line.contains("Settings → Sync"))
-            .collect();
-        assert_eq!(lines.len(), 1, "{width}: {screen}");
-        assert!(lines[0].trim_end().chars().count() <= usize::from(width));
+        assert!(screen.contains("p2p sync // restore"), "{width}: {screen}");
+        assert!(
+            !screen.contains("Sync starts when this device finds your other one"),
+            "{width}: {screen}"
+        );
     }
-    assert!(render(&b, 140, 30).contains("Sync starts when this device finds your other one"));
+    press(&mut b, KeyCode::Char('c'));
+    assert!(!is_placeholder(&b), "cancelling promotes the vault");
+    assert!(!render(&b, 140, 30).contains("p2p sync // restore"));
 }

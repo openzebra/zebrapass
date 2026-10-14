@@ -345,6 +345,7 @@ impl Unlocked {
                 Event::Listening(_) => {}
             }
         }
+        self.try_adopt(ctx);
     }
 
     fn arrived(

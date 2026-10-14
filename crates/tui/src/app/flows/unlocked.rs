@@ -354,6 +354,7 @@ impl Unlocked {
                 // A write made from the share screen is the reference to a
                 // shared vault: stay there, and select nothing.
                 let on_share = matches!(self.view, View::Sync(_));
+                self.promote_if_placeholder();
                 self.refresh();
                 if !on_share {
                     self.view = View::Home;
@@ -424,6 +425,9 @@ impl Unlocked {
                 ctx.toast(Tone::Warn, "Recovery wrap dropped from this copy.");
             }
             Outcome::Imported(merged) => {
+                if !merged.ids.is_empty() {
+                    self.promote_if_placeholder();
+                }
                 crate::app::flows::import_vault::done(self, &merged, ctx);
             }
             Outcome::Health(report) => {
@@ -449,9 +453,7 @@ impl Unlocked {
         self.load_detail();
     }
 
-    /// Count a copy from the open record, keep it selected as the list
-    /// reorders, and save the usage on this device. While a job holds the
-    /// vault, the count is saved with the next write.
+    /// Count a copy from the open record, keep it selected, and save usage.
     pub fn note_use(&mut self, ctx: &mut Ctx) {
         let Some(id) = self.home.detail.as_ref().map(|detail| detail.id) else {
             return;
@@ -469,15 +471,11 @@ impl Unlocked {
         }
     }
 
-    /// Forget usage of deleted records. An empty cache (possibly a failed
-    /// rebuild) forgets nothing.
     fn prune_usage(&mut self) {
-        let cache = &self.cache;
-        if cache.is_empty() {
-            return;
+        if !self.cache.is_empty() {
+            self.usage
+                .retain(|id| self.cache.iter().any(|summary| summary.id == id));
         }
-        self.usage
-            .retain(|id| cache.iter().any(|summary| summary.id == id));
     }
 
     /// Select record `id` if it is visible.

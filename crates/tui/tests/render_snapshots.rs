@@ -165,7 +165,7 @@ fn unlocked_views_render_at_every_size() {
         wide.contains("Filters") && wide.contains("GitHub") && wide.contains("octocat"),
         "{wide}"
     );
-    assert_all(&render_all(&app), &["GitHub", "unlocked"]);
+    assert_all(&render_all(&app), &["GitHub", "CAS-0xA005"]);
 
     let views: [(char, &str); 6] = [
         ('F', "Constellation"),

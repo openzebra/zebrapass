@@ -1,15 +1,13 @@
-//! The settings modal.
-//!
-//! Posture meter and search on top, the section rail on the left (a
-//! one-line switcher when narrow), rows with staged values, the reason
-//! behind the selected row, and the unsaved count.
+//! The settings modal: posture meter and search on top, horizontal tab bar
+//! (`[SEC] [DEV] [NET] [CLIP] [UI] [VAULT] [OPS] [SYS]`), rows with staged
+//! values, and the unsaved count.
 
 mod sync_value;
 mod value;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
@@ -22,10 +20,6 @@ use crate::ui::widgets::chrome::{modal as modal_frame, row_style};
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::meter::bar;
 
-/// Below this inner width the rail folds into a one-line switcher.
-const RAIL_MIN_WIDTH: u16 = 70;
-/// Rail width in the wide layout.
-const RAIL_WIDTH: u16 = 18;
 /// Label column width.
 const LABEL_WIDTH: usize = 28;
 
@@ -35,45 +29,38 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, modal: &Setting
     let rect = centered(
         area,
         area.width.saturating_sub(4).min(100),
-        area.height.saturating_sub(2).min(21),
+        area.height.saturating_sub(2).min(19),
     );
     let inner = modal_frame(frame, rect, "Settings", theme);
-    let [top, _, body, why, footer] = Layout::vertical([
+    let [top, tabs, rule, rows_area, footer] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(3),
-        Constraint::Length(3),
         Constraint::Length(1),
     ])
     .areas(inner);
     draw_top(frame, top, state, modal, ctx);
-    let rows_area = if inner.width >= RAIL_MIN_WIDTH {
-        let [rail, _, rows] = Layout::horizontal([
-            Constraint::Length(RAIL_WIDTH),
-            Constraint::Length(1),
-            Constraint::Min(10),
-        ])
-        .areas(body);
-        draw_rail(frame, rail, modal, theme);
-        rows
-    } else {
-        let [switcher, rows] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(body);
-        draw_switcher(frame, switcher, modal, theme);
-        rows
-    };
+    draw_tabs(frame, tabs, modal, theme);
+    let fill = if theme.ascii { "-" } else { "─" };
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            fill.repeat(usize::from(rule.width)),
+            theme.muted(),
+        )),
+        rule,
+    );
     draw_rows(frame, rows_area, state, modal, ctx);
-    draw_why(frame, why, modal, theme);
     draw_status(frame, footer, modal, theme);
 }
 
-/// Unsaved count and how to settle it; the screen's hint bar has the keys.
+/// Unsaved count and how to settle it.
 fn draw_status(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Theme) {
     let line = match modal.unsaved() {
-        0 => Line::from(Span::styled(
-            " saved · stored encrypted with this vault",
-            theme.muted(),
-        )),
+        0 => Line::from(vec![
+            Span::styled(" saved · stored encrypted with this vault", theme.muted()),
+            Span::styled("   [Tab] section  [←→] adjust  [Esc] close", theme.muted()),
+        ]),
         count => {
             let plural = if count == 1 { "" } else { "s" };
             Line::from(vec![
@@ -113,7 +100,7 @@ fn draw_top(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, modal: &Setting
         );
         Line::from(spans)
     } else {
-        Line::from(Span::styled(" / search every setting", theme.muted()))
+        Line::from(Span::styled(" / filter", theme.muted()))
     };
     frame.render_widget(Paragraph::new(search_line), search);
     let style = match posture.score {
@@ -124,50 +111,29 @@ fn draw_top(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, modal: &Setting
     frame.render_widget(Paragraph::new(Span::styled(meter, style)), right);
 }
 
-fn draw_rail(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Theme) {
+fn draw_tabs(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Theme) {
     let searching = !modal.filter.is_empty();
     let hits = modal.visible();
     let changed: Vec<Section> = changes(&modal.draft, &modal.saved)
         .map(Row::section)
         .collect();
-    let lines: Vec<Line<'_>> = Section::ALL
-        .iter()
-        .map(|section| {
-            let current = !searching && *section == modal.section;
-            let lit = !searching || hits.iter().any(|row| row.section() == *section);
-            let pointer = if current { theme.glyphs.pointer } else { " " };
-            let style = if current {
-                row_style(true, theme)
-            } else if lit {
-                theme.text()
-            } else {
-                theme.muted()
-            };
-            let mut spans = vec![Span::styled(
-                format!(" {pointer} {}", section.label()),
-                style,
-            )];
-            if changed.contains(section) {
-                spans.push(Span::styled(format!(" {}", theme.glyphs.dot), theme.warn()));
-            }
-            Line::from(spans)
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), area);
-}
-
-fn draw_switcher(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Theme) {
-    let text = if modal.filter.is_empty() {
-        let (left, right) = if theme.ascii {
-            ("<", ">")
+    let mut spans = Vec::with_capacity(Section::ALL.len() * 3);
+    spans.push(Span::raw(" "));
+    for section in Section::ALL {
+        let current = !searching && section == modal.section;
+        let lit = !searching || hits.iter().any(|row| row.section() == section);
+        let style = if current {
+            row_style(true, theme).patch(theme.accent())
+        } else if lit {
+            theme.text()
         } else {
-            ("‹", "›")
+            theme.muted()
         };
-        format!(" {left} {} {right}  Tab", modal.section.label())
-    } else {
-        format!(" {} matches", modal.visible().len())
-    };
-    frame.render_widget(Paragraph::new(Span::styled(text, theme.accent())), area);
+        let dirty = if changed.contains(&section) { "*" } else { "" };
+        spans.push(Span::styled(format!("[{}{dirty}]", section.label()), style));
+        spans.push(Span::raw(" "));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_rows(
@@ -180,7 +146,7 @@ fn draw_rows(
     let theme = &ctx.theme;
     let rows = modal.visible();
     if rows.is_empty() {
-        let line = Span::styled("  No setting matches that search.", theme.muted());
+        let line = Span::styled("  0 matches.", theme.muted());
         frame.render_widget(Paragraph::new(line), area);
         return;
     }
@@ -255,38 +221,4 @@ fn keep_tail(text: &str, width: usize) -> String {
     }
     let tail: String = text.chars().skip(count - (width - 1)).collect();
     format!("…{tail}")
-}
-
-fn draw_why(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Theme) {
-    let area = Rect {
-        x: area.x.saturating_add(1),
-        width: area.width.saturating_sub(2),
-        ..area
-    };
-    let mut lines = Vec::with_capacity(3);
-    if let Some(row) = modal.row() {
-        lines.push(Line::from(Span::styled(row.why(), theme.muted())));
-        if row == Row::Theme {
-            lines.push(swatch(theme));
-        }
-    }
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-}
-
-/// The live theme's palette, one block per role.
-fn swatch(theme: &Theme) -> Line<'static> {
-    let block = if theme.ascii { "##" } else { "██" };
-    Line::from(
-        [
-            theme.text(),
-            theme.accent(),
-            theme.zebra(),
-            theme.pq(),
-            theme.warn(),
-            theme.danger(),
-        ]
-        .into_iter()
-        .flat_map(|style| [Span::styled(block, style), Span::raw(" ")])
-        .collect::<Vec<_>>(),
-    )
 }

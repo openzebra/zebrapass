@@ -40,18 +40,18 @@ impl Section {
         Self::About,
     ];
 
-    /// Rail label.
+    /// Tab label.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Security => "Security",
-            Self::Device => "This device",
-            Self::Sync => "Sync",
-            Self::Clipboard => "Clipboard",
-            Self::Appearance => "Appearance",
-            Self::Vault => "Vault",
-            Self::Danger => "Danger zone",
-            Self::About => "About",
+            Self::Security => "SEC",
+            Self::Device => "DEV",
+            Self::Sync => "NET",
+            Self::Clipboard => "CLIP",
+            Self::Appearance => "UI",
+            Self::Vault => "VAULT",
+            Self::Danger => "OPS",
+            Self::About => "SYS",
         }
     }
 }

@@ -331,9 +331,9 @@ fn home_has_no_import_key_and_a_slim_hint_bar() {
     ] {
         assert!(!home.contains(gone), "hint bar still shows {gone}: {home}");
     }
-    assert!(home.contains(", settings"), "{home}");
+    assert!(home.contains("[,] settings"), "{home}");
     press(&mut app, KeyCode::Char('i'));
-    assert_eq!(open_view_step(&app), None, "i no longer opens the wizard");
+    assert_eq!(open_view_step(&app), None, "i opens p2p net, not import");
 }
 
 /// Welcome → import → CSV → `file` → Enter.

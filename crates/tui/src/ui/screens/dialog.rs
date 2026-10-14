@@ -136,7 +136,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, dialog: &Dialog, ctx: &Ctx) {
                 .collect();
             frame.render_widget(Paragraph::new(lines), inner);
         }
-        Dialog::Addresses(_) | Dialog::P2p(_) => {}
+        Dialog::Addresses(_) | Dialog::P2p(_) | Dialog::RestoreSync(_) => {}
         Dialog::Form(form) => draw_form(frame, area, form, ctx),
     }
 }

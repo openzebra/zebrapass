@@ -71,6 +71,8 @@ pub enum Dialog {
     Addresses(crate::app::flows::addresses::Addresses),
     /// The peer-to-peer state, scrolled this many events back.
     P2p(usize),
+    /// Waiting for another device to sync the vault after an empty restore.
+    RestoreSync(usize),
 }
 
 impl Dialog {
@@ -103,7 +105,11 @@ impl Dialog {
                     input.insert_str(text.trim());
                 }
             }
-            Self::Confirm(_) | Self::Info(_) | Self::AddFactor(_) | Self::P2p(_) => {}
+            Self::Confirm(_)
+            | Self::Info(_)
+            | Self::AddFactor(_)
+            | Self::P2p(_)
+            | Self::RestoreSync(_) => {}
         }
     }
 }
@@ -158,6 +164,24 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
             }
             Nav::Stay
         }
+        Dialog::RestoreSync(scroll) => match event.code {
+            KeyCode::Up => {
+                *scroll += 1;
+                Nav::Stay
+            }
+            KeyCode::Down => {
+                *scroll = scroll.saturating_sub(1);
+                Nav::Stay
+            }
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('c') => {
+                state.cancel_adopt(ctx);
+                Nav::Stay
+            }
+            _ => {
+                state.dialog = None;
+                state.on_key(event, ctx)
+            }
+        },
         Dialog::Form(_) => form_key(state, event, ctx),
     }
 }

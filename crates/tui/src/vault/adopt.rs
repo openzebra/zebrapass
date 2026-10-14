@@ -48,6 +48,12 @@ pub fn mark_placeholder(paths: &Paths) -> anyhow::Result<()> {
     local::write_atomic(&paths.vault_dir().join(MARKER), b"")
 }
 
+/// Remove the placeholder marker at `paths` so the vault is served as the
+/// account's personal vault.
+pub fn unmark_placeholder(paths: &Paths) {
+    let _ = std::fs::remove_file(paths.vault_dir().join(MARKER));
+}
+
 /// A password kept for the session, wiped on drop, never printed.
 pub struct Held(Zeroizing<Vec<u8>>);
 

@@ -43,7 +43,10 @@ fn dot_colour(app: &App) -> Color {
     terminal.draw(|frame| app.view(frame)).unwrap();
     let buffer = terminal.backend().buffer();
     let row: String = (0..120).map(|x| buffer[(x, 0)].symbol()).collect();
-    assert!(row.trim_end().ends_with("Ctrl+I"), "{row}");
+    assert!(
+        !row.contains("Ctrl+I") && !row.contains("unlocked"),
+        "{row}"
+    );
     let x = u16::try_from(
         row.chars()
             .position(|c| c.to_string() == app.ctx.theme.glyphs.on)
@@ -159,16 +162,19 @@ fn the_log_and_the_screens_hold_no_record_title() {
         b,
         CheckOutcome::Synced
     )));
-    b.on_key(&ctrl('i'));
+    press(&mut b, KeyCode::Char('i'));
     for app in [&a, &b] {
         for title in ["wifi", "bank"] {
             assert!(!log_text(app).contains(title), "{}", log_text(app));
         }
     }
     let screen = render(&b, 120, 40);
+    assert!(screen.contains("p2p net"), "{screen}");
+    assert!(screen.contains("TCP/ZPMX:7447"), "{screen}");
+    assert!(screen.contains("QUIC:off"), "{screen}");
     let dialog: Vec<&str> = screen
         .lines()
-        .skip_while(|line| !line.contains("Peer-to-peer"))
+        .skip_while(|line| !line.contains("p2p net"))
         .collect();
     assert!(dialog
         .iter()

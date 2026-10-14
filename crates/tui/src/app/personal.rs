@@ -28,7 +28,11 @@ pub const fn wants_node(has_gate: bool, shared: usize, listen: Listen, holds: bo
 #[must_use]
 pub fn listen_mode(vault: &Vault) -> (Listen, bool) {
     if crate::vault::adopt::is_placeholder(&vault.paths) {
-        return (Listen::Beacon, true);
+        if session::list_records(&vault.session).is_ok_and(|list| !list.is_empty()) {
+            crate::vault::adopt::unmark_placeholder(&vault.paths);
+        } else {
+            return (Listen::Beacon, true);
+        }
     }
     let listen = vault
         .meta

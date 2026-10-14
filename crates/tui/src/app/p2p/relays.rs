@@ -97,5 +97,6 @@ pub fn on_discovered(
             }
         }
     }
+    unlocked.try_adopt(ctx);
     ctx.redraw();
 }

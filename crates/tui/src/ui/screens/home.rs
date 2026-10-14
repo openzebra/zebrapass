@@ -1,5 +1,5 @@
-//! Vault home: header with the auto-lock countdown, then three panes (wide),
-//! two panes (medium), or a stack (narrow).
+//! Vault home: 2-panel top deck (telemetry + action bar), then three panes
+//! (wide), two panes (medium), or a stack (narrow).
 
 use std::time::Duration;
 
@@ -13,14 +13,14 @@ use crate::app::ctx::Ctx;
 use crate::app::flows::home::{Filter, Pane};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
-use crate::ui::layout::{body_and_hints, Breakpoint};
+use crate::ui::layout::Breakpoint;
 use crate::ui::screens::detail;
-use crate::ui::screens::p2p_status::summary;
-use crate::ui::widgets::chrome::{hint_bar, row_style};
+use crate::ui::screens::p2p_status::{peers_text, summary};
+use crate::ui::widgets::chrome::row_style;
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::list;
 
-/// The unlocked header: vault, state, countdown, PQ badge.
+/// The unlocked header: vault, optional subview title, countdown, status dot.
 pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, ctx: &Ctx) {
     let theme = &ctx.theme;
     let left = ctx.idle.remaining(ctx.now);
@@ -31,24 +31,36 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
     };
     let head = format!(" {} {} ", theme.glyphs.vk, state.info.label);
     let rest = if title.is_empty() {
-        String::from(" unlocked ")
+        format!(
+            " CAS-0xA005 · gen {} · {} rec ",
+            state.info.generation,
+            state.cache.len()
+        )
     } else {
         format!(" {title} ")
     };
     let countdown = format!(" {} {} ", theme.glyphs.rotate, clock(left));
     let fill = if theme.ascii { "-" } else { "─" };
-    let (sync_text, sync_style) = link_indicator(state, ctx);
-    let light = summary(state, theme).light;
-    let used = 9
-        + head.chars().count()
+    let p2p_sum = summary(state, theme);
+    let (sync_text, sync_style) = link_indicator(state, &p2p_sum, ctx);
+    let light = p2p_sum.light;
+    let used = head.chars().count()
+        + 1
         + rest.chars().count()
-        + countdown.chars().count()
         + sync_text.chars().count()
-        + 6;
+        + countdown.chars().count()
+        + 3;
     let line = Line::from(vec![
         Span::styled(head, theme.strong()),
         Span::styled(fill, theme.muted()),
-        Span::styled(rest, theme.accent()),
+        Span::styled(
+            rest,
+            if title.is_empty() {
+                theme.muted()
+            } else {
+                theme.accent()
+            },
+        ),
         Span::styled(
             fill.repeat(usize::from(area.width).saturating_sub(used)),
             theme.muted(),
@@ -57,44 +69,72 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
         Span::styled(countdown, countdown_style),
         Span::styled(fill, theme.muted()),
         Span::styled(format!(" {}", theme.glyphs.on), light.style(theme)),
-        Span::styled(" Ctrl+I", theme.muted()),
     ]);
     frame.render_widget(Paragraph::new(line).style(theme.base()), area);
 }
 
-/// The peer-to-peer indicator of the header: syncing, peers connected, or
-/// waiting. Empty while no node runs.
-fn link_indicator(state: &Unlocked, ctx: &Ctx) -> (String, Style) {
+fn link_indicator(
+    state: &Unlocked,
+    p2p_sum: &crate::ui::screens::p2p_status::Summary,
+    ctx: &Ctx,
+) -> (String, Style) {
     let theme = &ctx.theme;
     let Some(p2p) = state.p2p.as_ref() else {
-        return (String::new(), theme.muted());
+        return (String::from(" p2p:off "), theme.muted());
     };
     let status = p2p.service.status();
     let glyph = theme.glyphs.sync;
     if status.fetching > 0 {
-        (format!(" {glyph} syncing "), theme.warn())
+        (format!(" {glyph} sync "), theme.warn())
     } else if status.peers > 0 {
-        let noun = if status.peers == 1 { "peer" } else { "peers" };
-        (format!(" {glyph} {} {noun} ", status.peers), theme.accent())
+        (format!(" {glyph} {}p ", status.peers), theme.accent())
     } else {
-        (format!(" {glyph} no peers "), theme.muted())
+        (format!(" {} ", peers_text(p2p_sum)), theme.muted())
     }
 }
 
-const GUIDANCE: &str = "Sync starts when this device finds your other one — same network with its Beacon on, or add its address in Settings → Sync.";
-const GUIDANCE_SHORT: &str =
-    "No peer yet: its Beacon on this network, or add its address in Settings → Sync.";
-
-/// One line for a restored vault that has no records yet: how the other
-/// device is found. The long form when it fits, the short one otherwise.
-fn guidance(state: &Unlocked, width: u16) -> Option<&'static str> {
-    if state.held.is_none() || !state.cache.is_empty() {
-        return None;
+fn draw_action_bar(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    if state.home.searching {
+        let line = Line::from(vec![
+            Span::styled(" SEARCH ", theme.accent()),
+            Span::styled(" [Enter] done  [Esc] clear  [↑↓] move", theme.muted()),
+        ]);
+        frame.render_widget(Paragraph::new(line).style(theme.base()), area);
+        return;
     }
-    let room = usize::from(width).saturating_sub(1);
-    [GUIDANCE, GUIDANCE_SHORT]
-        .into_iter()
-        .find(|text| text.chars().count() <= room)
+    let sep = if theme.ascii { " | " } else { " │ " };
+    let btn = |k: &'static str, label: &'static str| {
+        [
+            Span::styled(format!(" [{k}]"), theme.accent()),
+            Span::styled(format!(" {label} "), theme.text()),
+        ]
+    };
+    let mut spans = Vec::with_capacity(24);
+    for pair in [btn("n", "NEW"), btn("E", "EDIT"), btn("d", "DEL")] {
+        spans.extend(pair);
+    }
+    spans.push(Span::styled(sep, theme.muted()));
+    for pair in [
+        btn("g", "RNG"),
+        btn("i", "P2P"),
+        btn("S", "SHARE"),
+        btn("F", "KEYS"),
+        btn("D", "DEV"),
+        btn("H", "AUDIT"),
+    ] {
+        spans.extend(pair);
+    }
+    spans.push(Span::styled(sep, theme.muted()));
+    for pair in [
+        btn(",", "settings"),
+        btn("L", "LOCK"),
+        btn("?", "HELP"),
+        btn("q", "QUIT"),
+    ] {
+        spans.extend(pair);
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.base()), area);
 }
 
 fn pane_block<'a>(title: Line<'a>, focused: bool, ctx: &Ctx) -> Block<'a> {
@@ -112,18 +152,14 @@ fn pane_block<'a>(title: Line<'a>, focused: bool, ctx: &Ctx) -> Block<'a> {
 
 /// Draw the home view.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
-    let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
+    let [top, actions, body] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(area);
     header(frame, top, state, "", ctx);
-    let [body, hints] = body_and_hints(rest);
-    let body = guidance(state, area.width).map_or(body, |text| {
-        let [body, line] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(body);
-        frame.render_widget(
-            Paragraph::new(Span::styled(format!(" {text}"), ctx.theme.muted())),
-            line,
-        );
-        body
-    });
+    draw_action_bar(frame, actions, state, ctx);
     match Breakpoint::from(area.width) {
         Breakpoint::Wide => {
             let [filters, records, detail_area] = Layout::horizontal([
@@ -150,8 +186,6 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
             }
         }
     }
-    let scope = state.scope();
-    hint_bar(frame, hints, scope, "", ctx);
 }
 
 fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
@@ -165,24 +199,26 @@ fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) 
     );
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let rule = if theme.ascii { "-" } else { "─" };
+    let sep_width = usize::from(inner.width).saturating_sub(2);
     let mut lines = Vec::new();
-    let mut section = "";
+    let mut section = "CAT";
     for (index, (filter, count)) in state.filters().iter().enumerate() {
         let (glyph, heading) = match filter {
-            Filter::Favorites => (glyphs.star, ""),
-            Filter::All => (glyphs.login, ""),
-            Filter::Logins => (glyphs.password, ""),
-            Filter::Notes => (glyphs.note, ""),
-            Filter::Totp => (glyphs.clock, ""),
-            Filter::Weak | Filter::Reused | Filter::Old => (glyphs.attention, "Health"),
-            Filter::Tag(_) => ("#", "Tags"),
-            Filter::Shared(..) => (glyphs.sync, "Shared"),
+            Filter::Favorites => (glyphs.star, "CAT"),
+            Filter::All => (glyphs.login, "CAT"),
+            Filter::Logins => (glyphs.password, "CAT"),
+            Filter::Notes => (glyphs.note, "CAT"),
+            Filter::Totp => (glyphs.clock, "CAT"),
+            Filter::Weak | Filter::Reused | Filter::Old => (glyphs.attention, "AUDIT"),
+            Filter::Tag(_) => ("#", "TAGS"),
+            Filter::Shared(..) => (glyphs.sync, "SHARED"),
         };
         if heading != section {
             section = heading;
-            lines.push(Line::from(""));
+            let fill = rule.repeat(sep_width.saturating_sub(heading.len() + 2));
             lines.push(Line::from(Span::styled(
-                format!(" {heading}"),
+                format!(" {heading} {fill}"),
                 theme.muted(),
             )));
         }
@@ -211,6 +247,14 @@ fn draw_filters(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) 
             ),
             Span::styled(count_text, theme.muted()),
         ]));
+    }
+    if state.shared.is_empty() {
+        let fill = rule.repeat(sep_width.saturating_sub(8));
+        lines.push(Line::from(Span::styled(
+            format!(" SHARED {fill}"),
+            theme.muted(),
+        )));
+        lines.push(Line::from(Span::styled("   [S] mount/join", theme.muted())));
     }
     frame.render_widget(Paragraph::new(lines), inner);
 }
@@ -244,15 +288,22 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
         Constraint::Length(u16::try_from(counts.len() + 1).unwrap_or(12)),
     ])
     .areas(search);
-    frame.render_widget(
-        Paragraph::new(text_line(
-            &state.home.query,
-            query.width,
-            state.home.searching,
-            theme,
-        )),
-        query,
-    );
+    if !state.home.searching && state.home.query.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(" / search", theme.muted())),
+            query,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(text_line(
+                &state.home.query,
+                query.width,
+                state.home.searching,
+                theme,
+            )),
+            query,
+        );
+    }
     frame.render_widget(Paragraph::new(Span::styled(counts, theme.muted())), count);
     let rule = if theme.ascii { "-" } else { "─" };
     frame.render_widget(

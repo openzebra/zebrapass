@@ -128,6 +128,9 @@ fn a_placeholder_that_already_holds_a_record_is_never_replaced() {
         tick(&mut second, Duration::from_millis(50));
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(is_placeholder(&second));
+    assert!(
+        !is_placeholder(&second),
+        "adding a record promotes the vault"
+    );
     assert_eq!(titles_of(&second), ["Mine"]);
 }

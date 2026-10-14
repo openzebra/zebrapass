@@ -79,6 +79,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             match state.dialog.as_deref() {
                 Some(Dialog::Addresses(list)) => addresses::draw(frame, area, list, state, ctx),
                 Some(Dialog::P2p(scroll)) => p2p_info::draw(frame, area, *scroll, state, ctx),
+                Some(Dialog::RestoreSync(scroll)) => {
+                    p2p_info::draw_restore_sync(frame, area, *scroll, state, ctx);
+                }
                 Some(dialog) => dialog::draw(frame, area, dialog, ctx),
                 None => {}
             }

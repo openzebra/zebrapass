@@ -47,14 +47,14 @@ impl Filter {
     #[must_use]
     pub fn label(&self) -> String {
         match self {
-            Self::All => String::from("All"),
-            Self::Favorites => String::from("Favorites"),
-            Self::Logins => String::from("Logins"),
-            Self::Notes => String::from("Notes"),
-            Self::Totp => String::from("With TOTP"),
-            Self::Weak => String::from("Weak"),
-            Self::Reused => String::from("Reused"),
-            Self::Old => String::from("Old (>1y)"),
+            Self::All => String::from("ALL"),
+            Self::Favorites => String::from("FAV"),
+            Self::Logins => String::from("LOGIN"),
+            Self::Notes => String::from("NOTE"),
+            Self::Totp => String::from("TOTP"),
+            Self::Weak => String::from("WEAK"),
+            Self::Reused => String::from("REUSE"),
+            Self::Old => String::from("OLD"),
             Self::Tag(tag) => format!("#{tag}"),
             Self::Shared(_, name) => name.to_string(),
         }

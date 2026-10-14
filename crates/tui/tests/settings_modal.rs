@@ -30,7 +30,7 @@ fn open_settings(tag: &str) -> (App, std::path::PathBuf) {
     assert_eq!(app.screen.name(), "unlocked");
     let home = render(&app, 180, 40);
     assert!(
-        home.contains(", settings"),
+        home.contains("[,] settings"),
         "Home advertises settings: {home}"
     );
     type_text(&mut app, ",");
@@ -58,7 +58,7 @@ fn comma_opens_the_modal_at_every_size() {
     }
     let wide = render(&app, 140, 40);
     assert!(wide.contains("posture"), "{wide}");
-    assert!(wide.contains("Danger zone"), "{wide}");
+    assert!(wide.contains("[OPS]"), "{wide}");
 }
 
 #[test]
