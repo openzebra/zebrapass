@@ -52,7 +52,12 @@ pub fn fetch_personal(
     address: &str,
     loopback: bool,
 ) -> Result<PersonalFetch, FetchError> {
-    let target: SocketAddr = address.parse().map_err(|_| FetchError::Unreachable)?;
+    let target: SocketAddr = address
+        .parse::<syncwire::RelayHint>()
+        .ok()
+        .map(|hint| hint.relay)
+        .or_else(|| address.parse::<SocketAddr>().ok())
+        .ok_or(FetchError::Unreachable)?;
     let dialing = Dialing {
         policy: Policy { loopback },
         trusted: vec![target],

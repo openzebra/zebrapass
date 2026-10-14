@@ -317,3 +317,75 @@ fn a_relay_hint_in_a_beacon_passes_the_address_rules_like_any_other_address() {
         "link-local is dropped"
     );
 }
+
+#[test]
+fn two_different_accounts_sharing_a_vault_discover_each_other_via_shared_beacons() {
+    struct SharedNode {
+        identity: Arc<SyncIdentity>,
+        shared_seed: [u8; 64],
+        shared_id: [u8; 16],
+    }
+
+    impl Provider for SharedNode {
+        fn views(&self) -> Vec<VaultView> {
+            personal_view(&self.identity, dialing())
+                .into_iter()
+                .collect()
+        }
+        fn log(&self, _: &[u8; 16]) -> Option<Vec<u8>> {
+            None
+        }
+        fn snapshot_source(&self, _: &[u8; 16]) -> Option<SnapshotSource> {
+            None
+        }
+        fn beacon_targets(&self) -> Vec<(Secret<[u8; 32]>, [u8; 16])> {
+            vec![(
+                kdf::shared_beacon_key(&self.shared_seed, &self.shared_id).unwrap(),
+                self.shared_id,
+            )]
+        }
+    }
+
+    let (pa, pb) = (free_udp_port(), free_udp_port());
+    let shared_seed = [0x55; 64];
+    let shared_id = [0x99; 16];
+    let seed_a = [0x11; 64];
+    let seed_b = [0x22; 64];
+
+    let id_a = device(&seed_a, 1);
+    let prov_a = Arc::new(SharedNode {
+        identity: Arc::clone(&id_a),
+        shared_seed,
+        shared_id,
+    });
+    let svc_a = Service::start(Some("127.0.0.1:0"), Arc::clone(&prov_a)).unwrap();
+    let tcp_a = svc_a.local_addr().unwrap();
+    svc_a
+        .start_beacon(
+            prov_a,
+            BeaconIdentity::new(&gate(&seed_a), [1; 16]).unwrap(),
+            config(pa, pb, true),
+        )
+        .unwrap();
+
+    let id_b = device(&seed_b, 2);
+    let prov_b = Arc::new(SharedNode {
+        identity: Arc::clone(&id_b),
+        shared_seed,
+        shared_id,
+    });
+    let svc_b = Service::start(Some("127.0.0.1:0"), Arc::clone(&prov_b)).unwrap();
+    svc_b
+        .start_beacon(
+            prov_b,
+            BeaconIdentity::new(&gate(&seed_b), [2; 16]).unwrap(),
+            config(pb, pa, true),
+        )
+        .unwrap();
+
+    let (found, vaults) = discovered_with_relays(&svc_b, Duration::from_secs(10), |_| true)
+        .map(|(addr, v, _)| (addr, v))
+        .expect("User 2 discovered User 1 via shared vault beacon");
+    assert_eq!(found, tcp_a);
+    assert_eq!(vaults, [shared_id]);
+}

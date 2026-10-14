@@ -1,0 +1,1896 @@
+# Embedded Nostr & P2P geographic relay directory.
+
+[[relays]]
+url = "relay.gulugulu.moe:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relayone.soundhsa.com:443"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "nostr-relay.xbytez.io:443"
+lat = 50.6924
+lon = 3.20113
+
+[[relays]]
+url = "dm-test-strfry-discovery.samt.st"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.jmoose.rocks:443"
+lat = 32.7767
+lon = -96.797
+
+[[relays]]
+url = "relay5.bitransfer.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.stakey.net:443"
+lat = 52.6485
+lon = 4.73787
+
+[[relays]]
+url = "relay2.angor.io"
+lat = 48.1046
+lon = 11.6002
+
+[[relays]]
+url = "nostr.mom:443"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.binaryrobot.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.dreamith.to"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.lightning.pub:443"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "nostr.dzo-hadar.ts.net"
+lat = 35.6764
+lon = 139.65
+
+[[relays]]
+url = "dm-test-nostr-rs-42-disabled.samt.st"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.veganostr.com:443"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostr.unkn0wn.world"
+lat = 47.4464
+lon = 8.21073
+
+[[relays]]
+url = "articles.layer3.news:443"
+lat = 37.3387
+lon = -121.885
+
+[[relays]]
+url = "relay.vrtmrz.net"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "bread.nostrsms.com"
+lat = 40.8218
+lon = -74.45
+
+[[relays]]
+url = "relay.angor.io"
+lat = 48.1046
+lon = 11.6002
+
+[[relays]]
+url = "nostr.islandarea.net:443"
+lat = 35.4669
+lon = -97.6473
+
+[[relays]]
+url = "nos.lol:443"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr.takasaki.dev"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nip85.nosfabrica.com"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "temp.iris.to"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr2.girino.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.44billion.net"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.wasabiwallet.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.bnos.space"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.hivetalk.org"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "articles.layer3.news"
+lat = 37.3387
+lon = -121.885
+
+[[relays]]
+url = "relay.nostr.space"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.trevena.info"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.monostr.com"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr-rs-relay-ishosta.phamthanh.me"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "syb.lol"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr-relay.xbytez.io"
+lat = 50.6924
+lon = 3.20113
+
+[[relays]]
+url = "relay.s-w.art"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.paulstephenborile.com:443"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "nostr2.girino.org:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relayone.geektank.ai:443"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "no.str.cr:443"
+lat = 8.96171
+lon = -83.5246
+
+[[relays]]
+url = "relay.olas.app"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostr.liberty.fans"
+lat = 36.8767
+lon = -89.5879
+
+[[relays]]
+url = "relay.agentry.com"
+lat = 42.8864
+lon = -78.8784
+
+[[relays]]
+url = "relay.bitmacro.cloud"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "cs-relay.nostrdev.com:443"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.gulugulu.moe"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.oxtr.dev:443"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "bitchat.nostr1.com"
+lat = 40.7057
+lon = -74.0136
+
+[[relays]]
+url = "relay.directsponsor.net"
+lat = 42.8864
+lon = -78.8784
+
+[[relays]]
+url = "relay.satmaxt.xyz:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.wavlake.com:443"
+lat = 41.2619
+lon = -95.8608
+
+[[relays]]
+url = "nrs-02.darkcloudarcade.com"
+lat = 39.9526
+lon = -75.1652
+
+[[relays]]
+url = "nostr.computingcache.com"
+lat = 45.5341
+lon = -122.956
+
+[[relays]]
+url = "relay.duck1123.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostrue.com"
+lat = 40.8054
+lon = -74.0241
+
+[[relays]]
+url = "relay.twentyone.ist"
+lat = 43.7696
+lon = -79.3309
+
+[[relays]]
+url = "relay.klabo.world"
+lat = 47.674
+lon = -122.122
+
+[[relays]]
+url = "vault.iris.to"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.ditto.pub:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.aarpia.com"
+lat = 37.3986
+lon = -121.964
+
+[[relays]]
+url = "relay.chorus.community"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.solomonstr.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.fountain.fm:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.tdw.gg"
+lat = 34.0549
+lon = -118.243
+
+[[relays]]
+url = "relay.shadowbip.com"
+lat = 54.352
+lon = 18.6466
+
+[[relays]]
+url = "relay.ltgnet.work:8443"
+lat = 51.0511
+lon = -114.075
+
+[[relays]]
+url = "relay.fiatdenier.com"
+lat = 43.7787
+lon = -79.5393
+
+[[relays]]
+url = "nostr.pbfs.io:443"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.froth.zone"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostrelay.circum.space:443"
+lat = 52.2245
+lon = 8.826
+
+[[relays]]
+url = "relay.pyramid.li"
+lat = 47.4093
+lon = 8.46503
+
+[[relays]]
+url = "nostr-relay.corb.net:443"
+lat = 39.6478
+lon = -104.988
+
+[[relays]]
+url = "nostr-relay.corb.net"
+lat = 39.6478
+lon = -104.988
+
+[[relays]]
+url = "nostr.nestoris.online"
+lat = 55.568
+lon = 37.5853
+
+[[relays]]
+url = "nostr.pbfs.io"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr.pro.aw"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay-us.zombi.cloudrodion.com"
+lat = 40.7862
+lon = -74.0743
+
+[[relays]]
+url = "relay.edufeed.org:443"
+lat = 49.4521
+lon = 11.0767
+
+[[relays]]
+url = "relay.fountain.fm"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.easycryptosend.it"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "groups.beginningend.com"
+lat = 35.2227
+lon = -97.4786
+
+[[relays]]
+url = "relay-na1.metanomalist.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "r.senx.io"
+lat = 50.6924
+lon = 3.20113
+
+[[relays]]
+url = "wheat.oslim.dev"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.cypherguide.org"
+lat = 1.32123
+lon = 103.695
+
+[[relays]]
+url = "hasky.chat"
+lat = 40.7862
+lon = -74.0743
+
+[[relays]]
+url = "testnet.samt.st"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.sharegap.net"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.nostrhub.fr"
+lat = 48.1045
+lon = 11.6004
+
+[[relays]]
+url = "relay01.lnfi.network"
+lat = 35.6764
+lon = 139.65
+
+[[relays]]
+url = "relay.mappingbitcoin.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.pornstr.net"
+lat = 53.3498
+lon = -6.26031
+
+[[relays]]
+url = "infinity-signal-relay.digitalforlifeagency.workers.dev"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "offchain.pub"
+lat = 39.1585
+lon = -94.5728
+
+[[relays]]
+url = "nostr.christiansass.de"
+lat = 48.2418
+lon = 10.3632
+
+[[relays]]
+url = "inbox.scuba323.com"
+lat = 40.8218
+lon = -74.45
+
+[[relays]]
+url = "nostrrelay.taylorperron.com"
+lat = 45.5029
+lon = -73.5723
+
+[[relays]]
+url = "relay.snort.social"
+lat = 53.3498
+lon = -6.26031
+
+[[relays]]
+url = "yabu.me"
+lat = 35.6096
+lon = 139.73
+
+[[relays]]
+url = "nostr.purpura.cloud"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr-01.yakihonne.com:443"
+lat = 1.32123
+lon = 103.695
+
+[[relays]]
+url = "staging.yabu.me"
+lat = 35.6096
+lon = 139.73
+
+[[relays]]
+url = "relay.satsmarkt.club"
+lat = 52.3676
+lon = 4.90414
+
+[[relays]]
+url = "freelay.sovbit.host"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "relay.openspecs.uid.ovh"
+lat = 50.9871
+lon = 2.12554
+
+[[relays]]
+url = "relay.qstr.app"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.beginningend.com"
+lat = 35.2227
+lon = -97.4786
+
+[[relays]]
+url = "nostr.davenov.com"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.tapestry.ninja"
+lat = 40.8054
+lon = -74.0241
+
+[[relays]]
+url = "nostr.chaima.info:443"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "nostr.myshosholoza.co.za"
+lat = 52.3676
+lon = 4.90414
+
+[[relays]]
+url = "relay.edufeed.org"
+lat = 49.4521
+lon = 11.0767
+
+[[relays]]
+url = "relay.plebeian.market:443"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.ohstr.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "strfry.shock.network"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "relay.nostr.com"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "social.amanah.eblessing.co"
+lat = 48.1046
+lon = 11.6002
+
+[[relays]]
+url = "nostras.app"
+lat = 38.7946
+lon = -106.535
+
+[[relays]]
+url = "nostr-kyomu-haskell.onrender.com"
+lat = 37.7775
+lon = -122.397
+
+[[relays]]
+url = "nostr.fullstackcash.net"
+lat = 45.5201
+lon = -122.99
+
+[[relays]]
+url = "relay.getsafebox.app:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relayone.soundhsa.com"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "offchain.pub:443"
+lat = 39.1585
+lon = -94.5728
+
+[[relays]]
+url = "nostr.bitcoiner.social:443"
+lat = 47.6743
+lon = -117.112
+
+[[relays]]
+url = "relay-dev.gulugulu.moe:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.rtvslawenia.com:443"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "bitcoiner.social"
+lat = 47.6743
+lon = -117.112
+
+[[relays]]
+url = "nostr.trcjr.xyz"
+lat = 35.3821
+lon = -78.5486
+
+[[relays]]
+url = "nostr.islandarea.net"
+lat = 35.4669
+lon = -97.6473
+
+[[relays]]
+url = "relay.zone667.com"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "scores.brainstorm.world"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "nostr-02.yakihonne.com"
+lat = 1.32123
+lon = 103.695
+
+[[relays]]
+url = "nostr-verified.wellorder.net"
+lat = 45.5201
+lon = -122.99
+
+[[relays]]
+url = "dev-relay.nostr.space"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.getsafebox.app"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nrl.ceskar.xyz"
+lat = 50.5145
+lon = 16.0119
+
+[[relays]]
+url = "21milionidinostr.duckdns.org"
+lat = 45.519
+lon = 9.08615
+
+[[relays]]
+url = "nostr.sathoarder.com"
+lat = 48.5734
+lon = 7.75211
+
+[[relays]]
+url = "memlay.v0l.io"
+lat = 53.3498
+lon = -6.26031
+
+[[relays]]
+url = "bridge.tagomago.me"
+lat = 42.3601
+lon = -71.0589
+
+[[relays]]
+url = "dev-relay.nostreon.com"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostr.ltd"
+lat = 19.076
+lon = 72.8777
+
+[[relays]]
+url = "relay.keykeeper.world"
+lat = 40.7824
+lon = -74.0711
+
+[[relays]]
+url = "relay.formstr.app"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.littlebitstudios.com"
+lat = 34.8688
+lon = -86.5502
+
+[[relays]]
+url = "relay.kizuna-miki.com"
+lat = 35.694
+lon = 139.754
+
+[[relays]]
+url = "relay.ezernode.net"
+lat = 52.6921
+lon = 6.19372
+
+[[relays]]
+url = "portal-relay.pareto.space"
+lat = 53.5488
+lon = 9.98717
+
+[[relays]]
+url = "relay.nostrmap.net"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostrcity-club.fly.dev:443"
+lat = 38.7946
+lon = -106.535
+
+[[relays]]
+url = "relay.decentralia.fr"
+lat = 48.122
+lon = 11.589
+
+[[relays]]
+url = "relay02.lnfi.network"
+lat = 35.6764
+lon = 139.65
+
+[[relays]]
+url = "x.kojira.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay1.nostrchat.io"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "relay.nostrian-conquest.com"
+lat = 41.223
+lon = -111.974
+
+[[relays]]
+url = "relay.plebeian.market"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "chat-relay.zap-work.com:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.ditto.pub"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "basspistol.org"
+lat = 49.0291
+lon = 8.35696
+
+[[relays]]
+url = "nostrelay.circum.space"
+lat = 52.2245
+lon = 8.826
+
+[[relays]]
+url = "bucket.coracle.social"
+lat = 37.7775
+lon = -122.397
+
+[[relays]]
+url = "borgar.lol"
+lat = 52.3676
+lon = 4.90414
+
+[[relays]]
+url = "relay.mypathtofire.de"
+lat = 42.8864
+lon = -78.8784
+
+[[relays]]
+url = "relay.flashapp.me"
+lat = 43.6548
+lon = -79.3885
+
+[[relays]]
+url = "relay.pacsarcade.org"
+lat = 32.7767
+lon = -96.797
+
+[[relays]]
+url = "public.crostr.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.twinkle.lol"
+lat = 51.902
+lon = 7.6657
+
+[[relays]]
+url = "relay.manneken.brussels"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "relay.nostrconnect.com"
+lat = 41.5695
+lon = -83.9786
+
+[[relays]]
+url = "relay.paulstephenborile.com"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "relay.czas.plus"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "nostr.azzamo.net"
+lat = 52.2633
+lon = 21.0283
+
+[[relays]]
+url = "nostr.emanuelemiani.it"
+lat = 45.778
+lon = 8.79414
+
+[[relays]]
+url = "dev.relay.stream"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.earthly.city"
+lat = 34.1749
+lon = -118.54
+
+[[relays]]
+url = "relay.atsocy.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.artx.market"
+lat = 43.6548
+lon = -79.3885
+
+[[relays]]
+url = "relay.nostrops.com"
+lat = 32.71
+lon = -96.6745
+
+[[relays]]
+url = "vault.iris.to:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.chaima.info"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.damus.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.islandbitcoin.com"
+lat = 20.3898
+lon = 78.0903
+
+[[relays]]
+url = "nostr.tac.lol"
+lat = 47.4748
+lon = -122.273
+
+[[relays]]
+url = "prl.plus"
+lat = 54.9486
+lon = 21.7283
+
+[[relays]]
+url = "relayrs.notoshi.win:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.snowbla.de"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay-dev.gulugulu.moe"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.layer.systems"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr-dev.wellorder.net"
+lat = 45.5201
+lon = -122.99
+
+[[relays]]
+url = "node.kommonzenze.de"
+lat = 49.4521
+lon = 11.0767
+
+[[relays]]
+url = "nostr.2b9t.xyz:443"
+lat = 34.0549
+lon = -118.243
+
+[[relays]]
+url = "nostr.88mph.life"
+lat = 52.1941
+lon = -2.21905
+
+[[relays]]
+url = "soloco.nl"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "test-relay.uid.ovh"
+lat = 48.5734
+lon = 7.75211
+
+[[relays]]
+url = "relay.grammstr.com"
+lat = 38.7946
+lon = -106.535
+
+[[relays]]
+url = "nosflare-leefcore.leefcore.workers.dev"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay-fra.zombi.cloudrodion.com"
+lat = 48.8566
+lon = 2.35222
+
+[[relays]]
+url = "relay.piazza.today"
+lat = 48.122
+lon = 11.589
+
+[[relays]]
+url = "openrelay.ziomc.com"
+lat = 41.8967
+lon = 12.4822
+
+[[relays]]
+url = "auth.nostr1.com"
+lat = 40.7057
+lon = -74.0136
+
+[[relays]]
+url = "nostr.plantroon.com"
+lat = 50.1013
+lon = 8.62643
+
+[[relays]]
+url = "relay.i9.eti.br"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.chatbett.de"
+lat = 40.7128
+lon = -74.006
+
+[[relays]]
+url = "relay.hivescope.xyz"
+lat = 40.4332
+lon = -3.62431
+
+[[relays]]
+url = "0x-nostr-relay.fly.dev"
+lat = 38.7946
+lon = -106.535
+
+[[relays]]
+url = "nostr.janx.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.mleku.dev"
+lat = 32.7767
+lon = -96.797
+
+[[relays]]
+url = "nostr-rs-relay.dev.fedibtc.com"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "nostr-02.uid.ovh"
+lat = 50.9871
+lon = 2.12554
+
+[[relays]]
+url = "myvoiceourstory.org"
+lat = 44.8484
+lon = -123.234
+
+[[relays]]
+url = "strfry.bonsai.com:443"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "vidar.nestoris.online"
+lat = 52.3676
+lon = 4.90414
+
+[[relays]]
+url = "strfry.shock.network:443"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "nostr.debate.report"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "nostr-relay.zimage.com"
+lat = 34.282
+lon = -118.439
+
+[[relays]]
+url = "nostr.txlyre.website"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "relay.satmaxt.xyz"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.notoshi.win"
+lat = 13.3396
+lon = 100.93
+
+[[relays]]
+url = "nostr.mas-family.eu"
+lat = 60.3478
+lon = 15.7505
+
+[[relays]]
+url = "nostr.self-determined.de"
+lat = 51.4379
+lon = 14.2355
+
+[[relays]]
+url = "relay.lacrypta.ar"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.nmail.li"
+lat = 50.9871
+lon = 2.12554
+
+[[relays]]
+url = "nip85-staging.nosfabrica.com"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "maxq.descendant.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nexus.libernet.app"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.primal.net"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.jcera.eu"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "support.flotilla.social"
+lat = 32.9483
+lon = -96.7299
+
+[[relays]]
+url = "relay2.orangesync.tech"
+lat = 40.7128
+lon = -74.006
+
+[[relays]]
+url = "nostr.yutakobayashi.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.bornheimer.app"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "nostr.mom"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr.planix.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.21crypto.ch"
+lat = 47.5356
+lon = 8.73209
+
+[[relays]]
+url = "chat-relay.zap-work.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "schnorr.me:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr-rs-relay.dev.fedibtc.com:443"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "bcast.girino.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.rtvslawenia.com"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "relay.wavlake.com"
+lat = 41.2619
+lon = -95.8608
+
+[[relays]]
+url = "n.kojira.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostrcity-club.fly.dev"
+lat = 38.7946
+lon = -106.535
+
+[[relays]]
+url = "relay.illuminodes.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "adre.su"
+lat = 59.9311
+lon = 30.3609
+
+[[relays]]
+url = "relay.guggero.org"
+lat = 46.5971
+lon = 9.59652
+
+[[relays]]
+url = "bruh.samt.st"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.ru.ac.th"
+lat = 13.7607
+lon = 100.627
+
+[[relays]]
+url = "relay.noeudlibre.fr"
+lat = 50.6924
+lon = 3.20113
+
+[[relays]]
+url = "nostr.oxtr.dev"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "spamspamspamspam.rest"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "n.bogs.ccwu.cc"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.wisp.talk"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "relay.bullishbounty.com:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.nostrfy.org"
+lat = 35.6916
+lon = 139.768
+
+[[relays]]
+url = "relay.nostr.net"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.satlantis.io"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "nostr.tagomago.me"
+lat = 42.3601
+lon = -71.0589
+
+[[relays]]
+url = "relay.vrtmrz.net:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay2.0xprivacy.online"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "talon.quest"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.agora.social"
+lat = 50.7383
+lon = 15.0648
+
+[[relays]]
+url = "nostr.spaceshell.xyz"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "public.crostr.com:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "cache.trustr.ing"
+lat = 43.6548
+lon = -79.3885
+
+[[relays]]
+url = "relay.bullishbounty.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.nodesmap.com"
+lat = 59.3327
+lon = 18.0656
+
+[[relays]]
+url = "relay.nostx.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.degmods.com"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr.data.haus"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.orangesync.tech"
+lat = 40.7128
+lon = -74.006
+
+[[relays]]
+url = "nostr.sathoarder.com:443"
+lat = 48.5734
+lon = 7.75211
+
+[[relays]]
+url = "relay1.privkey.io"
+lat = 25.7617
+lon = -80.1918
+
+[[relays]]
+url = "nostr.hifish.org"
+lat = 47.4009
+lon = 8.57814
+
+[[relays]]
+url = "relay.cloistr.xyz"
+lat = 42.337
+lon = -77.3178
+
+[[relays]]
+url = "nostr.middling.mydns.jp"
+lat = 35.8099
+lon = 140.12
+
+[[relays]]
+url = "nostr.n7ekb.net"
+lat = 47.4941
+lon = -122.294
+
+[[relays]]
+url = "relay.loveisbitcoin.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.lanavault.space"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "relay2.nostrasia.net"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "wisp.djorivaltech.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay2.fiatdenier.com"
+lat = 50.1013
+lon = 8.62643
+
+[[relays]]
+url = "relay.wellorder.net"
+lat = 45.5201
+lon = -122.99
+
+[[relays]]
+url = "nostr.synalysis.com"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.shychat.lol"
+lat = 39.8965
+lon = -80.1792
+
+[[relays]]
+url = "relay.liberbitworld.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.rebelbase.social"
+lat = 50.965
+lon = 5.50082
+
+[[relays]]
+url = "relay.veganostr.com"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostr.linky.fit"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.nostr.blockhenge.com"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "relay.scuba323.com"
+lat = 40.8218
+lon = -74.45
+
+[[relays]]
+url = "budabit.nostr1.com"
+lat = 40.7057
+lon = -74.0136
+
+[[relays]]
+url = "relay.nearhood.co.uk"
+lat = 51.5134
+lon = -0.0890675
+
+[[relays]]
+url = "relay.btcforplebs.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.whitenode45.ddns.net"
+lat = 40.55
+lon = -74.4758
+
+[[relays]]
+url = "relay.pprgb.app"
+lat = 52.52
+lon = 13.405
+
+[[relays]]
+url = "top.testrelay.top"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "strfry.bonsai.com"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "nostr.hetuniversum.nl"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.t6x.host"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "relay.satsapp.me"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr.now"
+lat = 35.8099
+lon = 140.12
+
+[[relays]]
+url = "relay.trotters.cc:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.staging.plebeian.market"
+lat = 51.5072
+lon = -0.127586
+
+[[relays]]
+url = "no.str.cr"
+lat = 8.96171
+lon = -83.5246
+
+[[relays]]
+url = "relay.nostrmap.net:443"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "relay.kilombino.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "chorus.mikedilger.com:444"
+lat = -36.8906
+lon = 174.794
+
+[[relays]]
+url = "relay-can.zombi.cloudrodion.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "zencrown.relay2aeon.quest"
+lat = 52.3061
+lon = 4.6907
+
+[[relays]]
+url = "relay.minibolt.info"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.eu.freedomrelay.dev"
+lat = 49.0524
+lon = 14.4347
+
+[[relays]]
+url = "nostr.relay.hedwig.sh"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "relay.wisp.talk:443"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "relay.orly.dev"
+lat = 32.7767
+lon = -96.797
+
+[[relays]]
+url = "relay.sigit.io"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "denimroad.feeds.relay.tools"
+lat = 38.6327
+lon = -90.1961
+
+[[relays]]
+url = "nos.lol"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.budabit.club"
+lat = 49.4543
+lon = 11.0746
+
+[[relays]]
+url = "nostr-01.yakihonne.com"
+lat = 1.32123
+lon = 103.695
+
+[[relays]]
+url = "ynostr.yael.at"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "nostr.girino.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.sincensura.org"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay-arg.zombi.cloudrodion.com"
+lat = 1.35208
+lon = 103.82
+
+[[relays]]
+url = "relay.dyne.org"
+lat = 49.0291
+lon = 8.35705
+
+[[relays]]
+url = "relay.binaryrobot.com:443"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay-testnet.k8s.layer3.news"
+lat = 37.3387
+lon = -121.885
+
+[[relays]]
+url = "testr.nymble.world"
+lat = 40.8054
+lon = -74.0241
+
+[[relays]]
+url = "relay.staging.plebeian.market:443"
+lat = 51.5072
+lon = -0.127586
+
+[[relays]]
+url = "nostr.na.social"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.stakey.net"
+lat = 52.6485
+lon = 4.73787
+
+[[relays]]
+url = "relay.getvia.xyz"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "vm-1734.lnvps.cloud"
+lat = 53.3498
+lon = -6.26031
+
+[[relays]]
+url = "relay.bowlafterbowl.com"
+lat = 32.9483
+lon = -96.7299
+
+[[relays]]
+url = "nostr.wecsats.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "buzz.cashu.space"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.lanacoin-eternity.com:443"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "offchain.bostr.online"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.nostriot.com"
+lat = 41.5695
+lon = -83.9786
+
+[[relays]]
+url = "nostr.tbxnetworx.de"
+lat = 47.6926
+lon = 10.0386
+
+[[relays]]
+url = "relay.favillakey.io"
+lat = -27.4705
+lon = 153.026
+
+[[relays]]
+url = "schnorr.me"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr-01.uid.ovh"
+lat = 50.9871
+lon = 2.12554
+
+[[relays]]
+url = "relay.lotek-distro.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr-pub.wellorder.net"
+lat = 45.5201
+lon = -122.99
+
+[[relays]]
+url = "relayrs.notoshi.win"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relayone.geektank.ai"
+lat = 39.0997
+lon = -94.5786
+
+[[relays]]
+url = "relay.mitosystem.net"
+lat = -23.5558
+lon = -46.6396
+
+[[relays]]
+url = "relay.yoinekodo.jp"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "cs-relay.nostrdev.com"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "nostr.snowbla.de:443"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.lanacoin-eternity.com"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "relay.bitos.space"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.tabordalab.com"
+lat = 60.1699
+lon = 24.9384
+
+[[relays]]
+url = "cyberspace.nostr1.com"
+lat = 40.7057
+lon = -74.0136
+
+[[relays]]
+url = "nostr.bitcoiner.social"
+lat = 47.6743
+lon = -117.112
+
+[[relays]]
+url = "relay.nostr.dev.br"
+lat = 48.1046
+lon = 11.6002
+
+[[relays]]
+url = "relay.lightning.pub"
+lat = 39.0438
+lon = -77.4874
+
+[[relays]]
+url = "nostr.thebiglake.org"
+lat = 32.71
+lon = -96.6745
+
+[[relays]]
+url = "relay.cyberguy.fyi"
+lat = 52.3676
+lon = 4.90414
+
+[[relays]]
+url = "relay.tdw.lol"
+lat = 41.8781
+lon = -87.6298
+
+[[relays]]
+url = "relay.mwaters.net"
+lat = 50.9871
+lon = 2.12554
+
+[[relays]]
+url = "relay.trotters.cc"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "cdn.satellite.earth"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "dm-test-strfry-generic.samt.st"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.2b9t.xyz"
+lat = 34.0549
+lon = -118.243
+
+[[relays]]
+url = "nostr.plantroon.com:443"
+lat = 50.1013
+lon = 8.62643
+
+[[relays]]
+url = "nostr.notribe.net"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "relay.samt.st"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "nostr-relay.cbrx.io"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "relay.jmoose.rocks"
+lat = 32.7767
+lon = -96.797
+
+[[relays]]
+url = "nostrride.io"
+lat = 37.3986
+lon = -121.964
+
+[[relays]]
+url = "nostr.jcera.eu"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "woods-leader-permits-yamaha.trycloudflare.com"
+lat = 43.6532
+lon = -79.3832
+
+[[relays]]
+url = "nostr.mad-social.net"
+lat = 50.4754
+lon = 12.3683
+
+[[relays]]
+url = "relay.chorus.community:443"
+lat = 50.1109
+lon = 8.68213
+
+[[relays]]
+url = "relay.mostro.network"
+lat = 40.8302
+lon = -74.1299
+
+[[relays]]
+url = "relay.routstr.com"
+lat = 59.4016
+lon = 17.9455

@@ -33,7 +33,8 @@ use kdf::KdfProfile;
 use session::{create, Session, VaultFile};
 
 pub use address::{
-    never_dialable, offer_observed, parse_advertise, parse_peer_address, parse_relay_hint, Offer,
+    never_dialable, offer_observed, parse_advertise, parse_peer_address, parse_personal_target,
+    parse_relay_hint, Offer,
 };
 pub use atomic::write_atomic;
 pub use attest_store::AttestStore;

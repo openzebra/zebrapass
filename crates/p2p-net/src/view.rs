@@ -134,4 +134,10 @@ pub trait Provider: Send + Sync + 'static {
     fn rekey(&self, _vault_id: &[u8; 16], _account: &[u8; 64]) -> Option<Zeroizing<Vec<u8>>> {
         None
     }
+
+    /// Beacon keys and their corresponding 16-byte vault or route identifiers
+    /// that this node should announce and listen for on the local network.
+    fn beacon_targets(&self) -> Vec<(Secret<[u8; 32]>, [u8; 16])> {
+        Vec::new()
+    }
 }

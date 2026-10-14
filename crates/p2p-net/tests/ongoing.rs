@@ -322,6 +322,18 @@ fn loopback_and_foreign_private_networks_depend_on_the_policy() {
         !Policy::default().allows(&at("100.64.0.1:1"), &none),
         "carrier-grade NAT is shared space"
     );
+    assert!(
+        Policy::default().allows(&at("100.115.92.2:7447"), &[at("100.64.0.1:7447")]),
+        "Tailscale / WireGuard CGNAT 100.64.0.0/10 peers share a network"
+    );
+    assert!(
+        Policy::default().allows(&at("10.240.1.2:7447"), &[at("10.0.0.1:7447")]),
+        "RFC 1918 10.0.0.0/8 peers share a network"
+    );
+    assert!(
+        Policy::default().allows(&at("172.31.9.9:7447"), &[at("172.16.0.1:7447")]),
+        "RFC 1918 172.16.0.0/12 peers share a network"
+    );
     assert!(Policy::default().allows(&at("[fd12:3456:789a::2]:1"), &[at("[fd12:3456:789a::9]:1")]));
 }
 

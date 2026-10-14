@@ -28,7 +28,15 @@ type Key = ([u8; 16], [u8; 16]);
 pub struct PeerBook {
     loopback: AtomicBool,
     own: Mutex<Vec<String>>,
+    local_nets: Mutex<Vec<SocketAddr>>,
     known: Mutex<HashMap<Key, PeerRecord>>,
+}
+
+fn hint_addr(hint: &str) -> Option<SocketAddr> {
+    hint.parse::<RelayHint>()
+        .ok()
+        .map(|relayed| relayed.relay)
+        .or_else(|| hint.parse::<SocketAddr>().ok())
 }
 
 impl PeerBook {
@@ -45,19 +53,65 @@ impl PeerBook {
         }
     }
 
+    /// Local interface addresses whose private networks this device belongs to,
+    /// even when the node itself is in fetch-only mode and advertises no port.
+    pub fn set_local_nets(&self, nets: Vec<SocketAddr>) {
+        if let Ok(mut local_nets) = self.local_nets.lock() {
+            *local_nets = nets;
+        }
+    }
+
+    fn trusted_addrs(&self, anchors: &[String]) -> Vec<SocketAddr> {
+        let mut trusted: Vec<SocketAddr> = self
+            .own
+            .lock()
+            .map(|own| own.iter().filter_map(|hint| hint_addr(hint)).collect())
+            .unwrap_or_default();
+        if let Ok(nets) = self.local_nets.lock() {
+            for addr in nets.iter().copied() {
+                if !trusted.contains(&addr) {
+                    trusted.push(addr);
+                }
+            }
+        }
+        for anchor in anchors {
+            if let Some(addr) = hint_addr(anchor) {
+                if !trusted.contains(&addr) {
+                    trusted.push(addr);
+                }
+            }
+        }
+        trusted
+    }
+
     /// What this device may dial: loopback if allowed, and its own networks
     /// as the only private ones.
     #[must_use]
     pub fn dialing(&self) -> Dialing {
+        self.dialing_with(&[])
+    }
+
+    /// What this device may dial when `anchors` (such as an invitation's
+    /// addresses) are also trusted private networks.
+    #[must_use]
+    pub fn dialing_with(&self, anchors: &[String]) -> Dialing {
+        let mut trusted = self.trusted_addrs(anchors);
+        if let Ok(known) = self.known.lock() {
+            for addr in known
+                .values()
+                .flat_map(|record| &record.hints)
+                .filter_map(|hint| hint_addr(hint))
+            {
+                if !trusted.contains(&addr) {
+                    trusted.push(addr);
+                }
+            }
+        }
         Dialing {
             policy: Policy {
                 loopback: self.loopback.load(Ordering::Relaxed),
             },
-            trusted: self
-                .own
-                .lock()
-                .map(|own| own.iter().filter_map(|hint| hint.parse().ok()).collect())
-                .unwrap_or_default(),
+            trusted,
         }
     }
 
@@ -111,15 +165,7 @@ impl PeerBook {
         let policy = Policy {
             loopback: self.loopback.load(Ordering::Relaxed),
         };
-        let anchored: Vec<SocketAddr> = self
-            .own
-            .lock()
-            .map(|own| own.clone())
-            .unwrap_or_default()
-            .iter()
-            .chain(anchors)
-            .filter_map(|hint| hint.parse().ok())
-            .collect();
+        let anchored = self.trusted_addrs(anchors);
         let now = now_ms();
         let Ok(mut known) = self.known.lock() else {
             return 0;
@@ -132,13 +178,17 @@ impl PeerBook {
                 .iter()
                 .find(|member| member.client_id == signer.client_id)
                 .is_some_and(|member| record.verify(&member.root_vk, now).is_ok());
-            let reachable = record.hints.iter().all(|hint| {
-                hint.parse::<RelayHint>()
-                    .ok()
-                    .map(|relayed| relayed.relay)
-                    .or_else(|| hint.parse::<SocketAddr>().ok())
-                    .is_some_and(|address| policy.allows(&address, &anchored))
-            });
+            let well_formed = !record.hints.is_empty()
+                && record.hints.iter().all(|hint| {
+                    hint_addr(hint).is_some_and(|address| {
+                        let ip = address.ip().to_canonical();
+                        address.port() != 0 && (ip.is_loopback() || !local::never_dialable(ip))
+                    })
+                });
+            let reachable = well_formed
+                && record.hints.iter().any(|hint| {
+                    hint_addr(hint).is_some_and(|address| policy.allows(&address, &anchored))
+                });
             let key = (record.vault_id, signer.device_id);
             let newer = known
                 .get(&key)
@@ -186,6 +236,7 @@ impl PeerBook {
     /// Addresses of the other members' devices, newest record first.
     #[must_use]
     pub fn hints(&self, log: &MemberLog) -> Vec<String> {
+        let allow_loopback = self.loopback.load(Ordering::Relaxed);
         let Ok(known) = self.known.lock() else {
             return Vec::new();
         };
@@ -199,7 +250,11 @@ impl PeerBook {
         records.sort_by_key(|record| std::cmp::Reverse(record.issued_ms));
         let mut hints: Vec<String> = Vec::new();
         for hint in records.iter().flat_map(|record| &record.hints) {
-            if !hints.contains(hint) {
+            let usable = hint_addr(hint).is_some_and(|addr| {
+                let ip = addr.ip().to_canonical();
+                !ip.is_loopback() || allow_loopback
+            });
+            if usable && !hints.contains(hint) {
                 hints.push(hint.clone());
             }
         }

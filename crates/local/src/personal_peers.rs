@@ -20,7 +20,7 @@ use secret::Secret;
 use syncwire::reader::Reader;
 
 use crate::limits::{PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN};
-use crate::parse_peer_address;
+use crate::parse_personal_target;
 
 const FORMAT_2: u16 = 0x8000;
 const FLAG_MANUAL: u8 = 1;
@@ -140,7 +140,7 @@ pub fn load_personal_entries(
         let text = std::str::from_utf8(reader.bytes_u8(PERSONAL_PEER_MAX_LEN)?)
             .map_err(|_| corrupted())?;
         found.extend(
-            parse_peer_address(text, allow_loopback)
+            parse_personal_target(text, allow_loopback)
                 .ok()
                 .map(|address| PersonalPeer { address, manual }),
         );
@@ -213,7 +213,8 @@ pub fn add_manual_peer(
     input: &str,
     allow_loopback: bool,
 ) -> anyhow::Result<Box<str>> {
-    let address = parse_peer_address(input, allow_loopback).map_err(|why| anyhow::anyhow!(why))?;
+    let address =
+        parse_personal_target(input, allow_loopback).map_err(|why| anyhow::anyhow!(why))?;
     let stored = load_personal_entries(path, key, true).unwrap_or_default();
     if stored
         .iter()

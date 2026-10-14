@@ -107,14 +107,15 @@ pub fn setup(vault: &Vault, beacon: Option<BeaconConfig>) -> Setup {
 /// Ask the members for a vault: persistently while its file is still
 /// missing, once when it is open and this is only a check-in.
 pub fn fetch(p2p: &P2p, item: &SharedItem) {
-    if item.reference.hints.is_empty() {
+    let hints = relays::hints_for(p2p, item);
+    if hints.is_empty() {
         return;
     }
     if let Ok(view) = p2p.provider.view_for(&item.reference) {
         if item.ready() {
             check_in(p2p, item);
         } else {
-            p2p.service.fetch(view, item.reference.hints.clone());
+            p2p.service.fetch(view, hints);
         }
     }
 }
@@ -333,16 +334,10 @@ impl Unlocked {
                 Event::PeerConnected { .. } | Event::PeerGone { .. } => ctx.redraw(),
                 Event::Observed(seen) => self.observe(seen),
                 Event::Discovered {
-                    address, relays, ..
-                } => {
-                    if let Some(p2p) = self.p2p.as_deref_mut() {
-                        p2p.discover(address);
-                        for hint in &relays {
-                            p2p.discover_relay(hint);
-                        }
-                    }
-                    ctx.redraw();
-                }
+                    address,
+                    vaults,
+                    relays,
+                } => relays::on_discovered(self, address, &vaults, &relays, ctx),
                 Event::Relayed(hint) => {
                     self.note_relayed(hint);
                     ctx.redraw();

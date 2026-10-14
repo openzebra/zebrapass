@@ -70,7 +70,10 @@ impl Unlocked {
             addresses: p2p
                 .discovered
                 .iter()
-                .filter(|address| address.parse::<SocketAddr>().is_ok())
+                .filter(|address| {
+                    address.parse::<SocketAddr>().is_ok()
+                        || address.parse::<p2p_net::RelayHint>().is_ok()
+                })
                 .cloned()
                 .chain(manual.iter().rev().cloned())
                 .collect(),

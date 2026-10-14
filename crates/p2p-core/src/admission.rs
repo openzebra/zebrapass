@@ -28,10 +28,10 @@ const DOMAIN_POW: &[u8] = b"brby/v2/p2p-pow";
 const DOMAIN_HELLO: &[u8] = b"brby/v2/p2p-hello";
 
 /// How far a hello timestamp may be from the responder's clock.
-pub const GATE_WINDOW_MS: u64 = 30_000;
+pub const GATE_WINDOW_MS: u64 = 120_000;
 
 /// How long a puzzle cookie stays valid.
-pub const COOKIE_WINDOW_MS: u64 = 60_000;
+pub const COOKIE_WINDOW_MS: u64 = 120_000;
 
 /// Hardest puzzle a responder issues and a client agrees to solve.
 pub const MAX_DIFFICULTY: u8 = 24;

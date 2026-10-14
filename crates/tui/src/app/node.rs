@@ -111,9 +111,16 @@ impl P2p {
             base.to_path_buf(),
             Arc::clone(&identity),
         ));
-        if matches!(listen, Listen::Local | Listen::Fetch) {
+        let local_ips = p2p_net::local_ips();
+        if matches!(listen, Listen::Local | Listen::Fetch) || local_ips.is_empty() {
             provider.allow_loopback_peers();
         }
+        provider.set_local_nets(
+            local_ips
+                .into_iter()
+                .map(|ip| std::net::SocketAddr::new(ip, PORT))
+                .collect(),
+        );
         let bind = |port: u16| match listen {
             Listen::Off | Listen::Fetch => None,
             Listen::Local => Some(format!("127.0.0.1:{port}")),
@@ -165,13 +172,19 @@ impl P2p {
     /// Hold a slot on the first saved relay, when the person asked for it.
     /// Dropping the node frees the slot.
     pub fn hold_saved(&self) {
-        let relay = self
+        let parsed = self
             .relays
             .first()
-            .and_then(|text| text.parse::<p2p_net::RelayHint>().ok())
-            .map(|hint| hint.relay);
-        if let (true, false, Some(relay)) = (self.holds, self.listen == Listen::Fetch, relay) {
-            self.service.hold_relay(Arc::clone(&self.provider), relay);
+            .and_then(|text| text.parse::<p2p_net::RelayHint>().ok());
+        if let (true, false, Some(hint)) = (self.holds, self.listen == Listen::Fetch, parsed) {
+            let fixed = (hint.slot != [0u8; 16]).then_some(hint.slot).or_else(|| {
+                let gate = self.identity.account_gate()?;
+                let route = kdf::account_route_id(gate).ok()?;
+                p2p_net::deterministic_relay_hint(gate.expose(), &route, hint.relay)
+                    .map(|det| det.slot)
+            });
+            self.service
+                .hold_relay_slot(Arc::clone(&self.provider), hint.relay, fixed);
         }
     }
 

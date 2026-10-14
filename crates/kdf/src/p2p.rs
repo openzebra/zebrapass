@@ -43,6 +43,12 @@ pub const INFO_P2P_ACCOUNT_ROUTE: &[u8] = b"brby/v2/p2p-account-route";
 /// HKDF info of the key that seals a LAN beacon.
 pub const INFO_P2P_BEACON: &[u8] = b"brby/v2/p2p-beacon";
 
+/// HKDF info of the key that seals a shared vault's LAN beacon.
+pub const INFO_SHARED_BEACON: &[u8] = b"brby/v2/shared-beacon";
+
+/// HKDF info of a deterministic relay slot id.
+pub const INFO_P2P_RELAY_SLOT: &[u8] = b"brby/v2/p2p-relay-slot";
+
 /// HKDF info of the key that seals a personal vault's stored peer addresses.
 pub const INFO_PERSONAL_PEERS: &[u8] = b"brby/v2/personal-peers";
 
@@ -65,6 +71,46 @@ pub fn account_gate_secret(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; 32]>> 
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn p2p_beacon_key(gate_secret: &Secret<[u8; 32]>) -> anyhow::Result<Secret<[u8; 32]>> {
     hkdf_sha512(gate_secret.expose(), &[0u8; 16], INFO_P2P_BEACON)
+}
+
+/// The key that seals the LAN beacons of one shared vault, from its shared
+/// seed and vault id. Every member of the shared vault derives the same key.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_beacon_key(seed: &[u8; 64], vault_id: &[u8; 16]) -> anyhow::Result<Secret<[u8; 32]>> {
+    hkdf_sha512(seed, vault_id, INFO_SHARED_BEACON)
+}
+
+/// Deterministic 16-byte relay slot id derived from `secret` (account gate or
+/// shared seed), `context_id` (personal route id or shared vault id), and
+/// length-framed `relay_addr`.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when `secret` or `relay_addr` is empty,
+/// `relay_addr` exceeds `u16::MAX`, or HKDF-Expand fails.
+pub fn p2p_relay_slot(
+    secret: &[u8],
+    context_id: &[u8; 16],
+    relay_addr: &str,
+) -> anyhow::Result<[u8; 16]> {
+    if secret.is_empty() || relay_addr.is_empty() {
+        return Err(anyhow::anyhow!("kdf parameters rejected"));
+    }
+    let addr_bytes = relay_addr.as_bytes();
+    let len =
+        u16::try_from(addr_bytes.len()).map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    let mut info = Vec::with_capacity(INFO_P2P_RELAY_SLOT.len() + 2 + addr_bytes.len());
+    info.extend_from_slice(INFO_P2P_RELAY_SLOT);
+    info.extend_from_slice(&len.to_be_bytes());
+    info.extend_from_slice(addr_bytes);
+    let okm = hkdf_sha512(secret, context_id, &info)?;
+    okm.expose()
+        .first_chunk::<16>()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("kdf parameters rejected"))
 }
 
 /// The id a personal vault is addressed by in the handshake.
@@ -147,8 +193,42 @@ mod tests {
     use secret::Secret;
 
     use super::{
-        p2p_gate_key, p2p_key, INFO_P2P_APP_I2R, INFO_P2P_APP_R2I, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I,
+        p2p_gate_key, p2p_key, p2p_relay_slot, shared_beacon_key, INFO_P2P_APP_I2R,
+        INFO_P2P_APP_R2I, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I,
     };
+
+    #[test]
+    fn shared_beacon_and_relay_slots_are_deterministic_and_separated() {
+        let seed = [3u8; 64];
+        let vault_id = [4u8; 16];
+        let b1 = shared_beacon_key(&seed, &vault_id).unwrap();
+        let b2 = shared_beacon_key(&seed, &vault_id).unwrap();
+        assert_eq!(b1.expose(), b2.expose());
+        assert_ne!(
+            b1.expose(),
+            shared_beacon_key(&[9u8; 64], &vault_id).unwrap().expose()
+        );
+        assert_ne!(
+            b1.expose(),
+            shared_beacon_key(&seed, &[9u8; 16]).unwrap().expose()
+        );
+
+        let slot = p2p_relay_slot(&seed, &vault_id, "93.184.216.34:7447").unwrap();
+        assert_eq!(
+            slot,
+            p2p_relay_slot(&seed, &vault_id, "93.184.216.34:7447").unwrap()
+        );
+        assert_ne!(
+            slot,
+            p2p_relay_slot(&seed, &vault_id, "93.184.216.35:7447").unwrap()
+        );
+        assert_ne!(
+            slot,
+            p2p_relay_slot(&[9u8; 64], &vault_id, "93.184.216.34:7447").unwrap()
+        );
+        assert!(p2p_relay_slot(&[], &vault_id, "93.184.216.34:7447").is_err());
+        assert!(p2p_relay_slot(&seed, &vault_id, "").is_err());
+    }
 
     #[test]
     fn grant_key_is_bound_to_every_input_and_not_a_channel_key() {

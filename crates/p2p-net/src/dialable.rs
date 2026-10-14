@@ -22,18 +22,26 @@ pub struct Policy {
 }
 
 const fn v4_shared(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    ip.is_private() || (octets[0] == 100 && (octets[1] & 0xC0) == 64)
+    let [first, second, ..] = ip.octets();
+    ip.is_private() || (first == 100 && (second & 0xC0) == 64)
 }
 
 const fn v6_shared(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xFE00) == 0xFC00
+    let [first, ..] = ip.segments();
+    (first & 0xFE00) == 0xFC00
 }
 
 fn same_network(a: IpAddr, b: IpAddr) -> bool {
     match (a, b) {
-        (IpAddr::V4(a), IpAddr::V4(b)) => a.octets().get(..2) == b.octets().get(..2),
-        (IpAddr::V6(a), IpAddr::V6(b)) => a.segments().get(..3) == b.segments().get(..3),
+        (IpAddr::V4(va), IpAddr::V4(vb)) => {
+            let [a0, a1, ..] = va.octets();
+            let [b0, b1, ..] = vb.octets();
+            (a0 == 10 && b0 == 10)
+                || (a0 == 172 && (16..=31).contains(&a1) && b0 == 172 && (16..=31).contains(&b1))
+                || (a0 == 100 && (a1 & 0xC0) == 64 && b0 == 100 && (b1 & 0xC0) == 64)
+                || (a0 == b0 && a1 == b1)
+        }
+        (IpAddr::V6(va), IpAddr::V6(vb)) => va.segments().get(..3) == vb.segments().get(..3),
         (IpAddr::V4(_), IpAddr::V6(_)) | (IpAddr::V6(_), IpAddr::V4(_)) => false,
     }
 }

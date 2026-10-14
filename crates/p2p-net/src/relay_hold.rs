@@ -33,11 +33,24 @@ impl Service {
     /// is lost it holds a new slot, after a growing and jittered wait.
     /// Returns `false` for a node that has no runtime.
     pub fn hold_relay<P: Provider>(&self, provider: Arc<P>, relay: SocketAddr) -> bool {
+        self.hold_relay_slot(provider, relay, None)
+    }
+
+    /// Hold a specific `fixed_slot` (or a fresh random slot when `None`) on
+    /// `relay` across reconnects so peers with a saved or deterministic
+    /// [`RelayHint`] can always reach this node.
+    pub fn hold_relay_slot<P: Provider>(
+        &self,
+        provider: Arc<P>,
+        relay: SocketAddr,
+        fixed_slot: Option<[u8; 16]>,
+    ) -> bool {
         let (Some(runtime), Ok(cookies)) = (self.runtime.as_ref(), CookieSecret::generate()) else {
             return false;
         };
         runtime.spawn(hold(
             relay,
+            fixed_slot,
             provider,
             Arc::new(cookies),
             Arc::clone(&self.shared),
@@ -49,6 +62,7 @@ impl Service {
 
 async fn hold<P: Provider>(
     relay: SocketAddr,
+    fixed_slot: Option<[u8; 16]>,
     provider: Arc<P>,
     cookies: Arc<CookieSecret>,
     shared: Arc<Shared>,
@@ -56,8 +70,13 @@ async fn hold<P: Provider>(
 ) {
     let mut backoff = Duration::from_secs(1);
     loop {
-        let Ok(slot) = p2p_core::relay_random() else {
-            return;
+        let slot = if let Some(chosen) = fixed_slot {
+            chosen
+        } else {
+            let Ok(random) = p2p_core::relay_random() else {
+                return;
+            };
+            random
         };
         if let Ok((stream, granted)) = reserve(relay, slot).await {
             backoff = Duration::from_secs(1);
@@ -82,7 +101,10 @@ async fn hold<P: Provider>(
             .await;
         }
         publish(&shared, relay, None);
-        let jitter = p2p_core::relay_random().map_or(0, |bytes| u64::from(bytes[0]) * 4);
+        let jitter = p2p_core::relay_random().map_or(0, |bytes| {
+            let [first, ..] = bytes;
+            u64::from(first) * 4
+        });
         sleep(backoff + Duration::from_millis(jitter)).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }

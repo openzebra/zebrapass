@@ -87,6 +87,29 @@ pub fn parse_relay_hint(input: &str) -> Result<Box<str>, &'static str> {
     Ok(text.into())
 }
 
+/// Validate a personal peer target (`ip:port` or `ip:port/slot`), respecting
+/// `allow_loopback` for both direct addresses and relay addresses.
+///
+/// # Errors
+///
+/// A short reason the interface can show as is.
+pub fn parse_personal_target(input: &str, allow_loopback: bool) -> Result<Box<str>, &'static str> {
+    let text = input.trim();
+    if text.contains('/') {
+        let hint: syncwire::RelayHint = text
+            .parse()
+            .map_err(|_| "Write it as ip:port/slot, the way another device shows it.")?;
+        if hint.to_string() != text {
+            return Err("Write it as ip:port/slot, the way another device shows it.");
+        }
+        parse_peer_address(&hint.relay.to_string(), allow_loopback)
+            .map_err(|_| "Other devices cannot reach that relay.")?;
+        Ok(text.into())
+    } else {
+        parse_peer_address(text, allow_loopback)
+    }
+}
+
 /// What to do with the address a peer reports having seen this device at.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Offer {

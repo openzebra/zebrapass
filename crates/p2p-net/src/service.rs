@@ -430,29 +430,6 @@ async fn admit<P: Provider>(
     Some((views, index, peer, channel))
 }
 
-/// Addresses other devices might reach this node at, best first: the
-/// interface the system would use to go out, then the loopback. No packet is
-/// sent; connecting a UDP socket only picks a route.
-#[must_use]
-pub fn reachable_hints(port: u16) -> Vec<String> {
-    let mut hints: Vec<String> = Vec::new();
-    for probe in ["192.0.2.1:9", "8.8.8.8:80"] {
-        let address = std::net::UdpSocket::bind("0.0.0.0:0")
-            .and_then(|socket| socket.connect(probe).and_then(|()| socket.local_addr()))
-            .ok()
-            .map(|local| local.ip())
-            .filter(|ip| !ip.is_unspecified() && !ip.is_loopback());
-        if let Some(ip) = address {
-            let hint = format!("{ip}:{port}");
-            if !hints.contains(&hint) {
-                hints.push(hint);
-            }
-        }
-    }
-    hints.push(format!("127.0.0.1:{port}"));
-    hints
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {

@@ -96,53 +96,111 @@ impl BeaconIdentity {
 /// The port is taken, or the group cannot be joined.
 pub async fn open_socket(config: &BeaconConfig) -> std::io::Result<UdpSocket> {
     let socket = UdpSocket::bind(config.bind).await?;
+    let _ = socket.set_broadcast(true);
     if let Some(group) = config.join {
         socket.join_multicast_v4(group, Ipv4Addr::UNSPECIFIED)?;
+        for ip in crate::interfaces::local_ips() {
+            if let std::net::IpAddr::V4(iface) = ip {
+                let _ = socket.join_multicast_v4(group, iface);
+            }
+        }
         socket.set_multicast_loop_v4(true)?;
     }
     Ok(socket)
 }
 
-async fn announce<P: Provider>(
-    socket: &UdpSocket,
+async fn sealed_beacons<P: Provider>(
     provider: &Arc<P>,
     shared: &Shared,
     identity: &BeaconIdentity,
     port: u16,
-    config: &BeaconConfig,
-) {
+) -> (Vec<Vec<u8>>, Vec<Secret<[u8; 32]>>) {
     let served = Arc::clone(provider);
-    let vaults: Vec<[u8; 16]> = tokio::task::spawn_blocking(move || {
-        served
+    let (view_ids, extra_targets) = tokio::task::spawn_blocking(move || {
+        let ids: Vec<[u8; 16]> = served
             .views()
             .iter()
             .take(MAX_BEACON_VAULTS)
             .map(|view| view.vault_id)
-            .collect()
+            .collect();
+        let targets = served.beacon_targets();
+        (ids, targets)
     })
     .await
     .unwrap_or_default();
-    let relays = shared
+
+    let relays: Vec<syncwire::RelayHint> = shared
         .relay_hints
         .lock()
         .map(|held| held.iter().take(MAX_BEACON_RELAYS).copied().collect())
         .unwrap_or_default();
-    let sealed = encode_beacon(&Beacon {
-        vaults,
+
+    let mut primary_vaults = view_ids;
+    let mut keys = vec![Secret::new(*identity.key.expose())];
+    let mut extra_packets: Vec<Vec<u8>> = Vec::new();
+    let now = now_ms();
+
+    for (key, vault_id) in extra_targets {
+        if secret::ct_eq(key.expose(), identity.key.expose()) {
+            if !primary_vaults.contains(&vault_id) && primary_vaults.len() < MAX_BEACON_VAULTS {
+                primary_vaults.push(vault_id);
+            }
+        } else {
+            if !keys
+                .iter()
+                .any(|known| secret::ct_eq(known.expose(), key.expose()))
+            {
+                keys.push(Secret::new(*key.expose()));
+            }
+            let pkt = encode_beacon(&Beacon {
+                vaults: vec![vault_id],
+                relays: relays.clone(),
+                port,
+            })
+            .and_then(|bytes| seal_beacon(&key, identity.device_id, now, &bytes));
+            if let Ok(wire) = pkt {
+                extra_packets.push(wire);
+            }
+        }
+    }
+
+    let mut packets = Vec::with_capacity(1 + extra_packets.len());
+    let primary = encode_beacon(&Beacon {
+        vaults: primary_vaults,
         relays,
         port,
     })
-    .and_then(|bytes| seal_beacon(&identity.key, identity.device_id, now_ms(), &bytes));
-    if let Ok(wire) = sealed {
-        let _ = socket.send_to(&wire, config.send_to).await;
+    .and_then(|bytes| seal_beacon(&identity.key, identity.device_id, now, &bytes));
+    if let Ok(wire) = primary {
+        packets.push(wire);
+    }
+    packets.extend(extra_packets);
+    (packets, keys)
+}
+
+async fn announce(socket: &UdpSocket, packets: &[Vec<u8>], config: &BeaconConfig) {
+    let mut destinations = vec![config.send_to];
+    if config.join.is_some() {
+        for target in crate::interfaces::broadcast_targets(config.send_to.port()) {
+            if !destinations.contains(&target) {
+                destinations.push(target);
+            }
+        }
+    }
+    for pkt in packets {
+        for dest in &destinations {
+            let _ = socket.send_to(pkt, *dest).await;
+        }
     }
 }
+
+type HeardKey = (SocketAddr, [u8; 16], usize);
 
 /// Opens the beacons that arrive and remembers which addresses it has
 /// already reported lately.
 struct Hearer {
     config: BeaconConfig,
-    known: HashMap<SocketAddr, Instant>,
+    known: HashMap<HeardKey, Instant>,
 }
 
 impl Hearer {
@@ -154,32 +212,44 @@ impl Hearer {
     }
 
     /// The event for one datagram, if it is a fresh beacon of another device
-    /// of the account naming an address worth trying that was not just heard.
-    fn hear(&mut self, identity: &BeaconIdentity, wire: &[u8], from: SocketAddr) -> Option<Event> {
+    /// of the account or shared vault naming an address worth trying that was
+    /// not just heard.
+    fn hear(
+        &mut self,
+        device_id: [u8; 16],
+        keys: &[Secret<[u8; 32]>],
+        wire: &[u8],
+        from: SocketAddr,
+    ) -> Option<Event> {
         if wire.len() > MAX_BEACON {
             return None;
         }
-        let (sender, payload) = open_beacon(&identity.key, wire, now_ms()).ok()?;
-        if sender == identity.device_id {
+        let now_ts = now_ms();
+        let (sender, payload) = keys
+            .iter()
+            .find_map(|key| open_beacon(key, wire, now_ts).ok())?;
+        if sender == device_id {
             return None;
         }
         let beacon = decode_beacon(payload.expose()).ok()?;
         let address = SocketAddr::new(from.ip().to_canonical(), beacon.port);
         parse_peer_address(&address.to_string(), self.config.loopback).ok()?;
-        let now = Instant::now();
-        self.known
-            .retain(|_, at| now.duration_since(*at) < self.config.every);
-        if self.known.contains_key(&address) || self.known.len() >= REMEMBERED {
-            return None;
-        }
-        self.known.insert(address, now);
-        let relays = beacon
+        let relays: Vec<syncwire::RelayHint> = beacon
             .relays
             .into_iter()
             .filter(|hint| {
                 parse_peer_address(&hint.relay.to_string(), self.config.loopback).is_ok()
             })
             .collect();
+        let first_vault = beacon.vaults.first().copied().unwrap_or([0; 16]);
+        let heard_key = (address, first_vault, relays.len());
+        let now = Instant::now();
+        self.known
+            .retain(|_, at| now.duration_since(*at) < self.config.every);
+        if self.known.contains_key(&heard_key) || self.known.len() >= REMEMBERED {
+            return None;
+        }
+        self.known.insert(heard_key, now);
         Some(Event::Discovered {
             address,
             vaults: beacon.vaults,
@@ -202,10 +272,13 @@ pub async fn run<P: Provider>(
     let mut buffer = vec![0u8; MAX_BEACON + 1];
     let mut hearer = Hearer::new(config);
     let mut next = Instant::now();
+    let mut keys = vec![Secret::new(*identity.key.expose())];
     loop {
         let now = Instant::now();
         if now >= next {
-            announce(&socket, &provider, &shared, &identity, port, &config).await;
+            let (packets, fresh_keys) = sealed_beacons(&provider, &shared, &identity, port).await;
+            keys = fresh_keys;
+            announce(&socket, &packets, &config).await;
             next = now + config.every;
         }
         let wait = next.saturating_duration_since(Instant::now());
@@ -216,13 +289,23 @@ pub async fn run<P: Provider>(
             tokio::time::sleep(Duration::from_millis(50)).await;
             continue;
         };
-        let Some(event) = buffer
-            .get(..len)
-            .and_then(|wire| hearer.hear(&identity, wire, from))
-        else {
+        let Some(wire) = buffer.get(..len) else {
             continue;
         };
-        if events.send(event).is_err() {
+        let mut event = hearer.hear(identity.device_id, &keys, wire, from);
+        if event.is_none() {
+            let (_, fresh_keys) = sealed_beacons(&provider, &shared, &identity, port).await;
+            keys = fresh_keys;
+            event = hearer.hear(identity.device_id, &keys, wire, from);
+        }
+        let Some(discovered) = event else {
+            continue;
+        };
+        let (packets, _) = sealed_beacons(&provider, &shared, &identity, port).await;
+        for pkt in &packets {
+            let _ = socket.send_to(pkt, from).await;
+        }
+        if events.send(discovered).is_err() {
             return;
         }
     }
@@ -236,6 +319,7 @@ async fn listen(
 ) {
     let mut buffer = vec![0u8; MAX_BEACON + 1];
     let mut hearer = Hearer::new(config);
+    let keys = [identity.key];
     loop {
         let Ok((len, from)) = socket.recv_from(&mut buffer).await else {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -243,7 +327,7 @@ async fn listen(
         };
         let Some(event) = buffer
             .get(..len)
-            .and_then(|wire| hearer.hear(&identity, wire, from))
+            .and_then(|wire| hearer.hear(identity.device_id, &keys, wire, from))
         else {
             continue;
         };

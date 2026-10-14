@@ -119,6 +119,11 @@ impl SharedProvider {
         self.book.set_own(hints);
     }
 
+    /// Local interface addresses whose private networks this device trusts.
+    pub fn set_local_nets(&self, nets: Vec<std::net::SocketAddr>) {
+        self.book.set_local_nets(nets);
+    }
+
     /// Run `act` while holding the node lock, for readers that open the files
     /// themselves and must not see a half-finished write.
     pub fn locked<T>(&self, act: impl FnOnce() -> T) -> Option<T> {
@@ -249,7 +254,7 @@ impl SharedProvider {
                 .collect(),
             revoked: state.revocations.all().to_vec(),
             gate_keys,
-            dialing: self.book.dialing(),
+            dialing: self.book.dialing_with(&reference.hints),
         })
     }
 
@@ -429,6 +434,28 @@ impl Provider for SharedProvider {
         payload.extend_from_slice(reference.seed.expose());
         payload.extend_from_slice(&reference.epoch.to_be_bytes());
         Some(payload)
+    }
+
+    fn beacon_targets(&self) -> Vec<(Secret<[u8; 32]>, [u8; 16])> {
+        let mut out = Vec::new();
+        if let Some(gate) = self.identity.account_gate() {
+            if let (Ok(key), Ok(route)) = (kdf::p2p_beacon_key(gate), kdf::account_route_id(gate)) {
+                out.push((key, route));
+            }
+        }
+        let served = self
+            .served
+            .lock()
+            .map(|list| list.clone())
+            .unwrap_or_default();
+        for reference in &served {
+            for seed in reference.seeds() {
+                if let Ok(key) = kdf::shared_beacon_key(seed.expose(), &reference.vault_id) {
+                    out.push((key, reference.vault_id));
+                }
+            }
+        }
+        out
     }
 }
 
