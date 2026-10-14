@@ -139,7 +139,7 @@ fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
 pub(crate) fn node_text(state: &Unlocked, theme: &Theme) -> (String, bool) {
     let mode = match state.listen_mode() {
         Listen::Lan => "local network".to_owned(),
-        Listen::Beacon => "local network, announced".to_owned(),
+        Listen::Beacon => "local, ANC".to_owned(),
         Listen::Local => "this device only".to_owned(),
         Listen::Fetch => format!("fetch only · pulls every {} s", CHECK_EVERY.as_secs()),
         Listen::Off => "off".to_owned(),

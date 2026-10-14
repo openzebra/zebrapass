@@ -47,7 +47,7 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
         Row::DevicePin => info
             .device
             .map_or_else(|| String::from("—"), |device| profile_text(device.profile)),
-        Row::SecureEnclave => String::from("not for terminal apps"),
+        Row::SecureEnclave => String::from("-"),
         Row::SyncStatus
         | Row::LastCheckIn
         | Row::SyncPeers
@@ -76,7 +76,6 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
         Row::Version => format!("zebrapass {}", env!("CARGO_PKG_VERSION")),
         Row::DataDir => home_relative(&ctx.base),
         Row::Primitives => String::from("ML-KEM-768 · ML-DSA-65 · AEGIS-256 · Argon2id"),
-        Row::Posture => score(state, modal).advice.to_owned(),
     }
 }
 

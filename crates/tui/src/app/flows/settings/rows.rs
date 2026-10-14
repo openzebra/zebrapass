@@ -127,12 +127,10 @@ pub enum Row {
     DataDir,
     /// Primitives in use.
     Primitives,
-    /// The top security advice.
-    Posture,
 }
 
 /// Every row with its section, in display order.
-pub const ROWS: [(Section, Row); 35] = [
+pub const ROWS: [(Section, Row); 34] = [
     (Section::Security, Row::AutoLock),
     (Section::Security, Row::FocusLock),
     (Section::Security, Row::RevealHide),
@@ -167,7 +165,6 @@ pub const ROWS: [(Section, Row); 35] = [
     (Section::About, Row::Version),
     (Section::About, Row::DataDir),
     (Section::About, Row::Primitives),
-    (Section::About, Row::Posture),
 ];
 
 /// Auto-lock steps in seconds.
@@ -212,7 +209,6 @@ impl Row {
             Self::Version => "Version",
             Self::DataDir => "Data directory",
             Self::Primitives => "Primitives",
-            Self::Posture => "Next step",
         }
     }
 
@@ -254,7 +250,6 @@ impl Row {
             Self::Version => "This build and its features.",
             Self::DataDir => "Where every vault on this machine lives.",
             Self::Primitives => "Nothing here is hand-rolled: vetted implementations only.",
-            Self::Posture => "The single change that would raise the posture score the most.",
         }
     }
 

@@ -184,7 +184,7 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     press(&mut alice, KeyCode::Enter);
     wait(&mut alice);
     let screen = render(&alice, 100, 30);
-    assert!(screen.contains("local network, announced"), "{screen}");
+    assert!(screen.contains("local, ANC"), "{screen}");
     assert!(
         state(&alice)
             .p2p
@@ -247,7 +247,7 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     press(&mut alice, KeyCode::Char('l'));
     wait(&mut alice);
     let screen = render(&alice, 100, 30);
-    assert!(screen.contains("local network, announced"), "{screen}");
+    assert!(screen.contains("local, ANC"), "{screen}");
     assert!(
         state(&alice)
             .p2p

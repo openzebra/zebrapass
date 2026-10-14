@@ -57,10 +57,10 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, modal: &Setting
 /// Unsaved count and how to settle it.
 fn draw_status(frame: &mut Frame<'_>, area: Rect, modal: &SettingsModal, theme: &Theme) {
     let line = match modal.unsaved() {
-        0 => Line::from(vec![
-            Span::styled(" saved · stored encrypted with this vault", theme.muted()),
-            Span::styled("   [Tab] section  [←→] adjust  [Esc] close", theme.muted()),
-        ]),
+        0 => Line::from(vec![Span::styled(
+            " [Tab] section  [←→] adjust  [Esc] close",
+            theme.muted(),
+        )]),
         count => {
             let plural = if count == 1 { "" } else { "s" };
             Line::from(vec![

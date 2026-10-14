@@ -59,7 +59,7 @@ fn relay_text(p2p: Option<&crate::app::node::P2p>) -> String {
             format!("ZPRY · holding {slot}")
         }
         Some(p2p) if p2p.holds => String::from("ZPRY · hold wanted · no slot yet"),
-        _ => String::from("ZPRY · off (not holding a slot)"),
+        _ => String::from("ZPRY · off"),
     }
 }
 
@@ -155,7 +155,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, scroll: usize, state: &Unlocked, 
         Line::from(Span::styled(fit(&text, cells), theme.text()))
     }));
     lines.push(Line::from(Span::styled(
-        fit(" events this session (RAM only)", cells),
+        fit(" events:", cells),
         theme.strong(),
     )));
     append_events(&mut lines, p2p, scroll, inner.height, cells, theme);

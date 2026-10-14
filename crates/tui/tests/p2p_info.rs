@@ -172,6 +172,8 @@ fn the_log_and_the_screens_hold_no_record_title() {
     assert!(screen.contains("p2p net"), "{screen}");
     assert!(screen.contains("TCP/ZPMX:7447"), "{screen}");
     assert!(screen.contains("QUIC:off"), "{screen}");
+    assert!(screen.contains("events:"), "{screen}");
+    assert!(screen.contains("ZPRY · off"), "{screen}");
     let dialog: Vec<&str> = screen
         .lines()
         .skip_while(|line| !line.contains("p2p net"))

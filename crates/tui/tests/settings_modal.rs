@@ -68,7 +68,9 @@ fn a_saved_change_survives_a_new_process() {
     assert!(render(&app, 120, 40).contains("1 unsaved change"));
     app.on_key(&ctrl('s'));
     wait(&mut app);
-    assert!(render(&app, 120, 40).contains("stored encrypted with this vault"));
+    let screen = render(&app, 120, 40);
+    assert!(!screen.contains("unsaved change"));
+    assert!(screen.contains("[Tab] section"));
     assert_eq!(app.ctx.idle.after(), Duration::from_secs(600));
     press(&mut app, KeyCode::Esc);
     assert!(!modal_open(&app), "nothing unsaved: Esc just closes");
@@ -98,8 +100,17 @@ fn search_reaches_rows_in_other_sections() {
     let (mut app, _) = open_settings("settings-search");
     type_text(&mut app, "/enclave");
     let screen = render(&app, 120, 40);
-    assert!(screen.contains("Secure Enclave"), "{screen}");
+    assert!(screen.contains("Secure Enclave              -"), "{screen}");
     assert!(!screen.contains("Auto-lock after"), "{screen}");
     press(&mut app, KeyCode::Esc);
     assert!(render(&app, 120, 40).contains("Auto-lock after"));
+}
+
+#[test]
+fn posture_row_is_hidden_from_settings() {
+    let (mut app, _) = open_settings("settings-no-posture");
+    section(&mut app, 7);
+    let screen = render(&app, 120, 40);
+    assert!(screen.contains("Primitives"), "{screen}");
+    assert!(!screen.contains("Next step"), "{screen}");
 }

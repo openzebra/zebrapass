@@ -112,8 +112,7 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         | Row::FilePath
         | Row::Version
         | Row::DataDir
-        | Row::Primitives
-        | Row::Posture => {}
+        | Row::Primitives => {}
     }
     Nav::Stay
 }
