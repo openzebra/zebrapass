@@ -113,6 +113,7 @@ fn a_placeholder_that_already_holds_a_record_is_never_replaced() {
         announcing_device("bc-keep-first", beacon(first_bind, second_bind), &["wifi"]);
     let base = temp_dir("bc-keep-second");
     let mut second = restore_empty(&base, &words, PASSWORD, beacon(second_bind, first_bind));
+    press(&mut second, KeyCode::Esc);
     press(&mut second, KeyCode::Char('n'));
     type_text(&mut second, "Mine");
     for _ in 0..4 {

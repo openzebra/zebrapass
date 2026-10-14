@@ -230,10 +230,8 @@ pub fn draw_restore_sync(
     frame.render_widget(Paragraph::new(lines), inner);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" [Esc / Enter / c]", theme.accent()),
-            Span::styled(" cancel & use empty vault   ", theme.text()),
-            Span::styled("[,]", theme.accent()),
-            Span::styled(" settings   ", theme.text()),
+            Span::styled(" [Esc]", theme.accent()),
+            Span::styled(" cancel   ", theme.text()),
             Span::styled("[↑↓]", theme.muted()),
             Span::styled(" scroll", theme.muted()),
         ])),

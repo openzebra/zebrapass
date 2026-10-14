@@ -27,8 +27,8 @@ use tui::ui::screens::p2p_status::{summary, Light};
 use tui::App;
 
 use common::{
-    adopted_pair, app, ctrl, make_vault, press, render, sync_off_with, temp_dir, tick, tick_both,
-    unlock, unlocked_state as state, PASSWORD,
+    adopted_pair, app, make_vault, press, render, sync_off_with, temp_dir, tick, tick_both, unlock,
+    unlocked_state as state, PASSWORD,
 };
 
 const WITHIN: Duration = Duration::from_secs(60);
@@ -130,7 +130,7 @@ fn the_dialog_lists_a_peer_after_a_check_in_and_logs_the_failure_after_it_dies()
         b,
         CheckOutcome::Synced
     )));
-    b.on_key(&ctrl('i'));
+    press(&mut b, KeyCode::Char('i'));
     assert!(matches!(state(&b).dialog.as_deref(), Some(Dialog::P2p(_))));
     let address = common::address_of(&a);
     let screen = render(&b, 120, 40);
@@ -148,7 +148,7 @@ fn the_dialog_lists_a_peer_after_a_check_in_and_logs_the_failure_after_it_dies()
         b,
         CheckOutcome::Unreachable
     )));
-    b.on_key(&ctrl('i'));
+    press(&mut b, KeyCode::Char('i'));
     let screen = render(&b, 120, 40);
     assert!(screen.contains("fetch failed: unreachable"), "{screen}");
     let row = screen.lines().find(|line| line.contains(&address)).unwrap();
@@ -191,7 +191,7 @@ fn the_strip_and_the_dialog_rows_stay_on_one_line_at_80_columns() {
     let screen = render(&b, 80, 30);
     let strips = screen.lines().filter(|line| line.contains("p2p ·")).count();
     assert_eq!(strips, 1, "{screen}");
-    b.on_key(&ctrl('i'));
+    press(&mut b, KeyCode::Char('i'));
     let screen = render(&b, 80, 30);
     for needle in ["listen mode", "beacon", "address ", "checked in with"] {
         assert_eq!(

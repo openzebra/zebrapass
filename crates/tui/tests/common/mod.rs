@@ -360,10 +360,10 @@ pub fn wait_adopted(app: &mut App, within: Duration) {
     let until = Instant::now() + within;
     while Instant::now() < until {
         tick(app, Duration::from_millis(50));
-        if app.screen.name() == "unlocked" && !is_placeholder(app) {
+        app.wait_for_job(Duration::from_millis(50));
+        if app.screen.name() == "unlocked" && !app.ctx.busy() && !is_placeholder(app) {
             return;
         }
-        app.wait_for_job(Duration::from_millis(50));
     }
     panic!("the vault never arrived");
 }
@@ -442,6 +442,12 @@ pub fn address_of(app: &App) -> String {
 
 /// Settings → Sync → Device addresses, with the list open.
 pub fn open_address_list(app: &mut App) {
+    if matches!(
+        unlocked_state(app).dialog.as_deref(),
+        Some(tui::app::flows::dialog::Dialog::RestoreSync(_))
+    ) {
+        press(app, KeyCode::Esc);
+    }
     type_text(app, ",");
     press(app, KeyCode::Tab);
     press(app, KeyCode::Tab);
@@ -486,7 +492,7 @@ pub fn adopted_pair(tag: &str) -> (App, App, PathBuf) {
     add_address(&mut b, &address_of(&a));
     assert!(
         tick_both(&mut a, &mut b, Duration::from_secs(60), |_, b| {
-            b.screen.name() == "unlocked" && !is_placeholder(b)
+            b.screen.name() == "unlocked" && !b.ctx.busy() && !is_placeholder(b)
         }),
         "the vault never arrived"
     );

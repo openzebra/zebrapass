@@ -40,15 +40,21 @@ impl Unlocked {
         self
     }
 
-    /// Cancel waiting for another device's vault: promote this vault to the
-    /// active personal vault and start serving it.
+    /// Dismiss the restore-sync modal while keeping background adoption
+    /// active if the user adds a manual device address in Settings.
     pub fn cancel_adopt(&mut self, ctx: &mut Ctx) {
-        self.promote_if_placeholder();
+        if matches!(self.dialog.as_deref(), Some(Dialog::RestoreSync(_))) {
+            self.dialog = None;
+        }
+        self.refresh_personal();
+        if let Some(p2p) = self.p2p.as_deref() {
+            p2p.hold_saved();
+        }
         ctx.redraw();
     }
 
     /// Promote a placeholder vault to the active personal vault once the
-    /// owner writes or imports records into it, or cancels restore sync.
+    /// owner writes or imports records into it.
     pub fn promote_if_placeholder(&mut self) {
         self.held = None;
         if matches!(self.dialog.as_deref(), Some(Dialog::RestoreSync(_))) {

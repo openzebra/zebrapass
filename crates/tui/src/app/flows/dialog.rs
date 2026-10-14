@@ -173,14 +173,11 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
                 *scroll = scroll.saturating_sub(1);
                 Nav::Stay
             }
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('c') => {
+            KeyCode::Esc => {
                 state.cancel_adopt(ctx);
                 Nav::Stay
             }
-            _ => {
-                state.dialog = None;
-                state.on_key(event, ctx)
-            }
+            _ => Nav::Stay,
         },
         Dialog::Form(_) => form_key(state, event, ctx),
     }

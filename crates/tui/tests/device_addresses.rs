@@ -51,7 +51,8 @@ fn a_typed_address_brings_the_vault_in_and_later_edits_reach_the_first_device() 
     open_address_list(&mut b);
     add_address(&mut b, &address_of(&a));
     assert!(
-        tick_until(&mut b, |app| !is_placeholder(app)
+        tick_until(&mut b, |app| !app.ctx.busy()
+            && !is_placeholder(app)
             && app.screen.name() == "unlocked"),
         "the vault never arrived"
     );
@@ -174,7 +175,21 @@ fn the_restore_sync_modal_opens_on_empty_restore_and_can_be_cancelled() {
             "{width}: {screen}"
         );
     }
+    press(&mut b, KeyCode::Enter);
+    assert!(
+        render(&b, 140, 30).contains("p2p sync // restore"),
+        "Enter does not close the modal"
+    );
     press(&mut b, KeyCode::Char('c'));
-    assert!(!is_placeholder(&b), "cancelling promotes the vault");
+    assert!(
+        render(&b, 140, 30).contains("p2p sync // restore"),
+        "c does not close the modal"
+    );
+    press(&mut b, KeyCode::Char(','));
+    assert!(
+        render(&b, 140, 30).contains("p2p sync // restore"),
+        "comma does not close the modal"
+    );
+    press(&mut b, KeyCode::Esc);
     assert!(!render(&b, 140, 30).contains("p2p sync // restore"));
 }

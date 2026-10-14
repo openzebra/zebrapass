@@ -15,7 +15,7 @@ use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
 use crate::ui::layout::Breakpoint;
 use crate::ui::screens::detail;
-use crate::ui::screens::p2p_status::{peers_text, summary};
+use crate::ui::screens::p2p_status::{summary, Light};
 use crate::ui::widgets::chrome::row_style;
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::list;
@@ -31,11 +31,7 @@ pub fn header(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, title: &str, 
     };
     let head = format!(" {} {} ", theme.glyphs.vk, state.info.label);
     let rest = if title.is_empty() {
-        format!(
-            " CAS-0xA005 · gen {} · {} rec ",
-            state.info.generation,
-            state.cache.len()
-        )
+        String::from(" CAS-0xA005 ")
     } else {
         format!(" {title} ")
     };
@@ -79,18 +75,17 @@ fn link_indicator(
     ctx: &Ctx,
 ) -> (String, Style) {
     let theme = &ctx.theme;
+    let glyph = format!(" {}", theme.glyphs.sync);
     let Some(p2p) = state.p2p.as_ref() else {
-        return (String::from(" p2p:off "), theme.muted());
+        return (glyph, theme.muted());
     };
     let status = p2p.service.status();
-    let glyph = theme.glyphs.sync;
-    if status.fetching > 0 {
-        (format!(" {glyph} sync "), theme.warn())
-    } else if status.peers > 0 {
-        (format!(" {glyph} {}p ", status.peers), theme.accent())
+    let style = if (status.peers > 0 && status.fetching == 0) || p2p_sum.light == Light::Green {
+        theme.accent()
     } else {
-        (format!(" {} ", peers_text(p2p_sum)), theme.muted())
-    }
+        theme.warn()
+    };
+    (glyph, style)
 }
 
 fn draw_action_bar(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
