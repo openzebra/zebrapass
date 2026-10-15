@@ -388,10 +388,37 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, state: Arc<State>) {
             return;
         }
     };
-    let mut open = [0u8; RELAY_OPEN_LEN];
-    let opened = timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut open)).await;
-    if !matches!(opened, Ok(Ok(_))) || decode_open(&open).is_err() {
+    let mut prefix = [0u8; 4];
+    if !matches!(
+        timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut prefix)).await,
+        Ok(Ok(_))
+    ) {
         return;
+    }
+    let mut open = [0u8; RELAY_OPEN_LEN];
+    if &prefix == b"GET " {
+        let Some(upgraded) = crate::ws_relay::upgrade_after_get(stream).await else {
+            return;
+        };
+        stream = upgraded;
+        let opened = timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut open)).await;
+        if !matches!(opened, Ok(Ok(_))) || decode_open(&open).is_err() {
+            return;
+        }
+    } else {
+        let mut rest = [0u8; 2];
+        if !matches!(
+            timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut rest)).await,
+            Ok(Ok(_))
+        ) {
+            return;
+        }
+        let [p0, p1, p2, p3] = prefix;
+        let [v0, v1] = rest;
+        open = [p0, p1, p2, p3, v0, v1];
+        if decode_open(&open).is_err() {
+            return;
+        }
     }
     let Ok(salt) = p2p_core::relay_random() else {
         return;

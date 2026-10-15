@@ -188,7 +188,7 @@ async fn keep<P: Provider>(
 /// Serve a connection that arrived through a relay, under a pool of its own:
 /// the relay's address says nothing of who is on the other end, so the
 /// streams of one slot are counted together and all of them are few.
-fn spawn_relayed<P: Provider>(
+pub fn spawn_relayed<P: Provider>(
     tcp: TcpStream,
     key: std::net::IpAddr,
     provider: Arc<P>,

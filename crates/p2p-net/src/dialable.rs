@@ -71,6 +71,33 @@ impl Policy {
     }
 }
 
+/// Transport fallback stage in ascending order of preference.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Stage {
+    /// Direct peer on a trusted local or private network.
+    Lan = 0,
+    /// Direct peer on the public Internet or an overlay network.
+    WanDirect = 1,
+    /// User-saved or peer-advertised TCP relay slot (`ZPRY`).
+    ZpryRelay = 2,
+    /// WebSocket (`RFC 6455` / Nostr envelope) or catalog hostname relay slot.
+    CatalogRelay = 3,
+}
+
+/// A WebSocket or hostname-backed relay target (`ws://host:port/slot` or
+/// `host:port/slot`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CatalogTarget {
+    /// Hostname or IP literal of the relay.
+    pub host: Box<str>,
+    /// Deterministic 16-byte rendezvous slot.
+    pub slot: [u8; 16],
+    /// Relay TCP port.
+    pub port: u16,
+    /// Whether WebSocket (`RFC 6455`) framing was requested (`ws://`).
+    pub websocket: bool,
+}
+
 /// Where this device may dial: the policy and the addresses it trusts.
 #[derive(Clone, Debug, Default)]
 pub struct Dialing {
@@ -80,41 +107,122 @@ pub struct Dialing {
     pub trusted: Vec<SocketAddr>,
 }
 
-/// Where a hint leads: straight to a device, or to a relay and a slot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Where a hint leads: straight to a device, to a TCP relay and a slot, or to
+/// a WebSocket/catalog relay.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Target {
     /// An address to dial.
     Direct(SocketAddr),
     /// A relay to dial and the slot to ask it for.
     Relayed(RelayHint),
+    /// A WebSocket or hostname-backed relay and slot.
+    Catalog(Box<CatalogTarget>),
+}
+
+fn parse_slot_bytes(hex: &str) -> Option<[u8; 16]> {
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    for (dst, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let hi = match *pair.first()? {
+            b @ b'0'..=b'9' => b - b'0',
+            b @ b'a'..=b'f' => b - b'a' + 10,
+            _ => return None,
+        };
+        let lo = match *pair.get(1)? {
+            b @ b'0'..=b'9' => b - b'0',
+            b @ b'a'..=b'f' => b - b'a' + 10,
+            _ => return None,
+        };
+        *dst = (hi << 4) | lo;
+    }
+    Some(out)
 }
 
 impl Dialing {
-    /// `hint` as a place this device may go: an address, or `ip:port/slot`
-    /// for a relay (which must pass the same rules as any address).
+    /// Classify `hint` into its fallback [`Stage`].
     #[must_use]
-    pub fn target(&self, hint: &str) -> Option<Target> {
-        if hint.contains('/') {
-            let relayed: RelayHint = hint.parse().ok()?;
-            self.policy
-                .allows(&relayed.relay, &self.trusted)
-                .then_some(Target::Relayed(relayed))
-        } else {
-            self.resolve(hint).map(Target::Direct)
+    pub fn stage_of(&self, hint: &str) -> Stage {
+        if !hint.contains('/') {
+            if let Ok(addr) = hint.parse::<SocketAddr>() {
+                let ip = addr.ip().to_canonical();
+                let is_lan = ip.is_loopback()
+                    || match ip {
+                        IpAddr::V4(v4) => v4.is_private(),
+                        IpAddr::V6(v6) => v6_shared(v6),
+                    };
+                if is_lan {
+                    return Stage::Lan;
+                }
+            }
+            return Stage::WanDirect;
         }
+        if !hint.starts_with("ws://") && hint.parse::<RelayHint>().is_ok() {
+            return Stage::ZpryRelay;
+        }
+        Stage::CatalogRelay
     }
 
-    /// The next hint of `queue` to try that is not in `done`: every hint that
-    /// does not lead through a relay comes before any that does, so a member
-    /// that can be dialed directly never costs a relay's bandwidth.
+    /// `hint` as a place this device may go: an address, `ip:port/slot` for a
+    /// TCP relay, or `ws://host:port/slot` / `ws://ip:port/slot` for a
+    /// WebSocket or catalog relay.
+    #[must_use]
+    pub fn target(&self, hint: &str) -> Option<Target> {
+        if !hint.contains('/') {
+            return self.resolve(hint).map(Target::Direct);
+        }
+        let Some(body) = hint.strip_prefix("ws://") else {
+            let relayed: RelayHint = hint.parse().ok()?;
+            return self
+                .policy
+                .allows(&relayed.relay, &self.trusted)
+                .then_some(Target::Relayed(relayed));
+        };
+        local::parse_personal_target(hint, self.policy.loopback).ok()?;
+        let (endpoint, slot_hex) = body.split_once('/')?;
+        let slot = parse_slot_bytes(slot_hex)?;
+        if let Ok(addr) = endpoint.parse::<SocketAddr>() {
+            if !self.policy.allows(&addr, &self.trusted) {
+                return None;
+            }
+            return Some(Target::Catalog(Box::new(CatalogTarget {
+                host: addr.ip().to_string().into_boxed_str(),
+                slot,
+                port: addr.port(),
+                websocket: true,
+            })));
+        }
+        let (host, port_str) = endpoint.rsplit_once(':')?;
+        let port: u16 = port_str.parse().ok()?;
+        Some(Target::Catalog(Box::new(CatalogTarget {
+            host: host.into(),
+            slot,
+            port,
+            websocket: true,
+        })))
+    }
+
+    /// The next hint of `queue` to try that is not in `done`, ordered across
+    /// the 4-stage fallback chain: [`Stage::Lan`], [`Stage::WanDirect`],
+    /// [`Stage::ZpryRelay`], and [`Stage::CatalogRelay`].
     #[must_use]
     pub fn next_hint<'a>(&self, queue: &'a [String], done: &[String]) -> Option<&'a String> {
-        let mut untried = queue.iter().filter(|hint| !done.contains(hint));
-        let relayed = |hint: &&String| matches!(self.target(hint), Some(Target::Relayed(_)));
-        untried
-            .clone()
-            .find(|hint| !relayed(hint))
-            .or_else(|| untried.next())
+        for stage in [
+            Stage::Lan,
+            Stage::WanDirect,
+            Stage::ZpryRelay,
+            Stage::CatalogRelay,
+        ] {
+            if let Some(found) = queue
+                .iter()
+                .filter(|hint| !done.contains(hint))
+                .find(|hint| self.stage_of(hint) == stage)
+            {
+                return Some(found);
+            }
+        }
+        None
     }
 
     /// `hint` as an address this device may dial. Names are never resolved.
@@ -217,5 +325,37 @@ mod tests {
             .next_hint(&queue, std::slice::from_ref(first))
             .unwrap();
         assert!(matches!(dialing.target(after), Some(Target::Relayed(_))));
+    }
+
+    #[test]
+    fn four_stage_ordering_steps_lan_wan_zpry_then_catalog() {
+        let dialing = Dialing {
+            policy: Policy { loopback: true },
+            trusted: Vec::new(),
+        };
+        let ws_cat = format!("ws://relay.damus.io:443/{}", "cd".repeat(16));
+        let ws_ip = format!("ws://93.184.216.40:7447/{}", "ef".repeat(16));
+        let zpry = relayed("93.184.216.40:7447");
+        let wan = "93.184.216.34:7447".to_owned();
+        let lan = "192.168.1.42:7447".to_owned();
+
+        let queue = vec![
+            ws_cat.clone(),
+            zpry.clone(),
+            wan.clone(),
+            ws_ip.clone(),
+            lan.clone(),
+        ];
+        let mut done = Vec::new();
+        let mut order = Vec::new();
+        while let Some(next) = dialing.next_hint(&queue, &done) {
+            order.push(next.clone());
+            done.push(next.clone());
+        }
+        assert_eq!(order, vec![lan, wan, zpry, ws_cat, ws_ip]);
+        assert_eq!(dialing.stage_of("192.168.1.42:7447"), Stage::Lan);
+        assert_eq!(dialing.stage_of("93.184.216.34:7447"), Stage::WanDirect);
+        assert_eq!(dialing.stage_of(&order[2]), Stage::ZpryRelay);
+        assert_eq!(dialing.stage_of(&order[3]), Stage::CatalogRelay);
     }
 }

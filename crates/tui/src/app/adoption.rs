@@ -95,22 +95,29 @@ impl Unlocked {
             .filter(|entry| entry.manual)
             .map(|entry| entry.address.to_string())
             .collect();
-        let known = p2p.discovered.len() + manual.len();
+        let known = p2p.discovered.len() + manual.len() + p2p.relays.len();
         let due = p2p.check_due();
-        if known == 0 || (known == self.adopt_seen && !due) {
+        let catalog_count = if due && self.beacon.is_none() { 2 } else { 0 };
+        if (known == 0 && catalog_count == 0) || (known == self.adopt_seen && !due) {
             return;
         }
         self.adopt_seen = known;
-        let addresses: Vec<String> = p2p
+        let primary: Vec<String> = p2p
             .discovered
             .iter()
             .filter(|address| {
-                address.parse::<SocketAddr>().is_ok()
-                    || address.parse::<p2p_net::RelayHint>().is_ok()
+                address.parse::<SocketAddr>().is_ok() || local::parse_relay_hint(address).is_ok()
             })
             .cloned()
             .chain(manual.iter().rev().cloned())
             .collect();
+        let chain = crate::app::p2p::personal_candidates(p2p, &manual, catalog_count);
+        let mut addresses: Vec<String> = chain
+            .into_iter()
+            .filter(|cand| !primary.contains(cand))
+            .rev()
+            .collect();
+        addresses.extend(primary);
         if let Some(target) = addresses.last() {
             p2p.log.push_line(format!(
                 "adopt // dialing {target} ({} candidates)",

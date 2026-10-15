@@ -52,15 +52,20 @@ pub fn fetch_personal(
     address: &str,
     loopback: bool,
 ) -> Result<PersonalFetch, FetchError> {
-    let target: SocketAddr = address
-        .parse::<syncwire::RelayHint>()
-        .ok()
-        .map(|hint| hint.relay)
-        .or_else(|| address.parse::<SocketAddr>().ok())
-        .ok_or(FetchError::Unreachable)?;
+    let body = address.strip_prefix("ws://").unwrap_or(address);
+    let endpoint = body.split('/').next().unwrap_or(body);
+    let trusted = if let Ok(target) = endpoint.parse::<SocketAddr>() {
+        vec![target]
+    } else if address.starts_with("ws://")
+        && local::parse_personal_target(address, loopback).is_ok()
+    {
+        Vec::new()
+    } else {
+        return Err(FetchError::Unreachable);
+    };
     let dialing = Dialing {
         policy: Policy { loopback },
-        trusted: vec![target],
+        trusted,
     };
     let view = personal_view(identity, dialing).ok_or(FetchError::Failed)?;
     let runtime = Builder::new_current_thread()

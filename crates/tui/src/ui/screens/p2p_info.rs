@@ -92,7 +92,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, scroll: usize, state: &Unlocked, 
         .map_or(DEFAULT_BEACON_PORT, |cfg| cfg.send_to.port());
     let beacon_str = if listen == Listen::Beacon {
         format!(
-            "on · UDP :{bcast_port} · mcast 239.255.90.80 + bcast [{}]",
+            "on · UDP :{bcast_port} · mcast 239.255.74.74 + bcast [{}]",
             bcast_targets_text(bcast_port)
         )
     } else {
@@ -122,7 +122,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, scroll: usize, state: &Unlocked, 
         ),
         line(
             "proto.off",
-            String::from("QUIC:off · DHT:off · uTP:off · STUN/UPnP:off · NOSTR:off"),
+            String::from("QUIC:off · DHT:off · uTP:off"),
         ),
         Line::from(Span::styled(
             fit(
@@ -218,7 +218,7 @@ pub fn draw_restore_sync(
         line(
             "tx.bcast",
             format!(
-                "239.255.90.80:{bcast_port}, {}",
+                "239.255.74.74:{bcast_port}, {}",
                 bcast_targets_text(bcast_port)
             ),
         ),

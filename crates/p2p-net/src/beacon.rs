@@ -181,7 +181,11 @@ async fn sealed_beacons<P: Provider>(
 async fn announce(socket: &UdpSocket, packets: &[Vec<u8>], config: &BeaconConfig) {
     let mut destinations = vec![config.send_to];
     if config.join.is_some() {
-        for target in crate::interfaces::broadcast_targets(config.send_to.port()) {
+        let port = config.send_to.port();
+        for target in crate::interfaces::broadcast_targets(port)
+            .into_iter()
+            .chain(crate::interfaces::subnet_unicast_targets(port))
+        {
             if !destinations.contains(&target) {
                 destinations.push(target);
             }

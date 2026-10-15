@@ -1444,3 +1444,108 @@ fn quitting_releases_the_slot_and_the_freed_place_goes_to_the_next_node() {
         assert_eq!(answer, Some(RelayType::Refused), "the old slot is gone");
     });
 }
+
+#[test]
+fn four_stage_fallback_chain_reaches_member_over_websocket_relay() {
+    let ws_relay = Relay::start("127.0.0.1:0", quiet()).unwrap();
+    let provider = served(vec![0x5A; 64 * 1024]);
+    let node = Service::start(None, Arc::clone(&provider)).unwrap();
+    let secret = [0x42u8; 32];
+    let det_hint =
+        p2p_net::deterministic_relay_hint(&secret, &VAULT, ws_relay.local_addr()).unwrap();
+    assert!(node.hold_relay_ws(provider, ws_relay.local_addr(), Some(det_hint.slot)));
+    let held = next_relayed(&node);
+    assert_eq!(held.slot, det_hint.slot);
+
+    let ws_relay_hint = format!("ws://{}/{}", ws_relay.local_addr(), "00".repeat(16));
+    let candidates = p2p_net::expand_chain_hints(
+        &["127.0.0.1:9".to_owned()],
+        &["127.0.0.1:8".to_owned()],
+        &[format!("127.0.0.1:7/{}", "aa".repeat(16)), ws_relay_hint],
+        &secret,
+        &VAULT,
+        0,
+    );
+
+    let client = Service::start(None, served(Vec::new())).unwrap();
+    let mut view = member_view();
+    view.dialing.trusted.push(ws_relay.local_addr());
+    client.fetch(view, candidates);
+
+    let event = client
+        .events()
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("4-stage fallback chain reached the WebSocket relay");
+    match event {
+        Event::Fetched {
+            vault_id, snapshot, ..
+        } => {
+            assert_eq!(vault_id, VAULT);
+            assert_eq!(snapshot.len(), 64 * 1024);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[test]
+fn stun_and_nat_pmp_gateway_probe_round_trip() {
+    let tx_id = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    let req = p2p_net::encode_stun_binding_request(&tx_id);
+    assert_eq!(&req[0..2], &[0x00, 0x01]);
+    assert_eq!(&req[4..8], &p2p_net::STUN_MAGIC_COOKIE.to_be_bytes());
+    assert_eq!(&req[8..20], &tx_id);
+
+    let ip = [93u8, 184, 216, 34];
+    let port = 0x1D17_u16;
+    let cookie = p2p_net::STUN_MAGIC_COOKIE.to_be_bytes();
+    let xor_port = (port ^ u16::from_be_bytes([cookie[0], cookie[1]])).to_be_bytes();
+    let xor_ip = [
+        ip[0] ^ cookie[0],
+        ip[1] ^ cookie[1],
+        ip[2] ^ cookie[2],
+        ip[3] ^ cookie[3],
+    ];
+    let resp = [
+        &0x0101u16.to_be_bytes()[..],
+        &12u16.to_be_bytes(),
+        &cookie,
+        &tx_id,
+        &0x0020u16.to_be_bytes(),
+        &8u16.to_be_bytes(),
+        &[0x00, 0x01],
+        &xor_port,
+        &xor_ip,
+    ]
+    .concat();
+    assert_eq!(
+        p2p_net::decode_stun_binding_response(&resp, &tx_id),
+        "93.184.216.34:7447".parse().ok()
+    );
+    assert!(p2p_net::decode_stun_binding_response(&resp, &[9u8; 12]).is_none());
+
+    block_on(async {
+        let mock_gw = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let gw_addr = mock_gw.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut buf = [0u8; 32];
+            let (n, client) = mock_gw.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], &[0, 0]);
+            let mut ext_reply = [0u8; 12];
+            ext_reply[1] = 128;
+            ext_reply[8..12].copy_from_slice(&[93, 184, 216, 34]);
+            mock_gw.send_to(&ext_reply, client).await.unwrap();
+
+            let (n2, client2) = mock_gw.recv_from(&mut buf).await.unwrap();
+            assert_eq!(n2, 12);
+            let mut map_reply = [0u8; 16];
+            map_reply[1] = 130;
+            map_reply[8..10].copy_from_slice(&7447u16.to_be_bytes());
+            map_reply[10..12].copy_from_slice(&7447u16.to_be_bytes());
+            map_reply[12..16].copy_from_slice(&3600u32.to_be_bytes());
+            mock_gw.send_to(&map_reply, client2).await.unwrap();
+        });
+        let mapped = p2p_net::probe_nat_pmp_gateway(gw_addr, 7447).await.unwrap();
+        assert_eq!(mapped, "93.184.216.34:7447".parse().unwrap());
+        server.await.unwrap();
+    });
+}

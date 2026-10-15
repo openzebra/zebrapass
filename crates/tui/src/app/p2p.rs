@@ -19,8 +19,8 @@ use crate::vault::shared::{references, SharedItem, Status};
 use crate::vault::Vault;
 
 mod relays;
-pub use relays::check_in;
 use relays::saved_relays;
+pub use relays::{check_in, personal_candidates};
 
 pub use crate::app::node::P2p;
 

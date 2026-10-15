@@ -8,12 +8,14 @@
 
 mod beacon;
 mod blob;
+mod chain;
 mod client;
 mod client_calls;
 mod dialable;
 mod interfaces;
 mod io;
 mod limits;
+pub mod nat;
 mod peers;
 mod personal;
 mod personal_client;
@@ -32,14 +34,22 @@ mod shared;
 mod shared_join;
 mod sync;
 mod view;
+pub mod ws_relay;
 
 pub use beacon::{BeaconConfig, BeaconIdentity, BeaconListener};
+pub use chain::{catalog_relay_hints, deterministic_ws_relay_hint, expand_chain_hints};
 pub use client::{Conn, FetchError, Fetched};
 pub use client_calls::{fetch, Push};
-pub use dialable::{Dialing, Policy, Target};
-pub use interfaces::{broadcast_targets, local_ips, reachable_hints};
+pub use dialable::{CatalogTarget, Dialing, Policy, Stage, Target};
+pub use interfaces::{
+    broadcast_targets, default_gateways, local_ips, reachable_hints, subnet_unicast_targets,
+};
 pub use io::{now_ms, HANDSHAKE_TIMEOUT};
 pub use limits::{Limits, Tickets};
+pub use nat::{
+    decode_stun_binding_response, encode_stun_binding_request, probe_nat_pmp_gateway,
+    STUN_MAGIC_COOKIE,
+};
 pub use peers::PeerBook;
 pub use personal::{personal_view, PersonalServe};
 pub use personal_client::{fetch_personal, PersonalFetch};

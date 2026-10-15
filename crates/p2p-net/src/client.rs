@@ -108,6 +108,9 @@ impl Conn {
                 .map_err(|_| FetchError::Unreachable)?
                 .map_err(|_| FetchError::Unreachable)?,
             Target::Relayed(hint) => crate::relay_client::connect(&hint).await?,
+            Target::Catalog(cat) => {
+                crate::relay_client::connect_catalog(&cat, &view.dialing).await?
+            }
         };
         let (finish, established) = handshake(view, &mut tcp).await?;
         write_msg(&mut tcp, &finish)

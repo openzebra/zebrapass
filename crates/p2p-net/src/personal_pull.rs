@@ -100,7 +100,12 @@ impl Service {
         runtime.spawn(async move {
             let mut reason = FetchError::Unreachable;
             let mut outcome = None;
-            for address in addresses.into_iter().take(MAX_DIALED) {
+            let mut done: Vec<String> = Vec::with_capacity(MAX_DIALED);
+            while done.len() < MAX_DIALED {
+                let Some(address) = view.dialing.next_hint(&addresses, &done).cloned() else {
+                    break;
+                };
+                done.push(address.clone());
                 match pull_from(&view, &address, &mine, serve.as_ref()).await {
                     Ok(frames) => {
                         outcome = Some(Event::PersonalPulled { address, frames });

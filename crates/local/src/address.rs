@@ -66,29 +66,93 @@ pub fn parse_peer_address(input: &str, allow_loopback: bool) -> Result<Box<str>,
     Ok(address.to_string().into_boxed_str())
 }
 
-/// Validate a relay slot a person pasted: `ip:port/slot`.
+fn valid_hostname(host: &str) -> bool {
+    if host.is_empty() || host.len() > 253 || !host.contains('.') {
+        return false;
+    }
+    let mut has_alpha = false;
+    for label in host.split('.') {
+        if label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return false;
+        }
+        if label.bytes().any(|b| b.is_ascii_lowercase()) {
+            has_alpha = true;
+        }
+    }
+    has_alpha
+}
+
+fn valid_slot_hex(slot: &str) -> bool {
+    slot.len() == 32
+        && slot
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn validate_relay_target(text: &str, allow_loopback: bool) -> Result<Box<str>, &'static str> {
+    const SHAPE: &str = "Write it as ip:port/slot, the way another device shows it.";
+    const UNREACHABLE: &str = "Other devices cannot reach that relay.";
+
+    let (is_ws, body) = text
+        .strip_prefix("ws://")
+        .map_or((false, text), |rest| (true, rest));
+    let Some((endpoint, slot)) = body.split_once('/') else {
+        return Err(SHAPE);
+    };
+    if !valid_slot_hex(slot) {
+        return Err(SHAPE);
+    }
+    if let Ok(addr) = endpoint.parse::<std::net::SocketAddr>() {
+        if addr.to_string() != endpoint {
+            return Err(SHAPE);
+        }
+        parse_peer_address(endpoint, allow_loopback).map_err(|_| UNREACHABLE)?;
+        return Ok(text.into());
+    }
+    if !is_ws {
+        return Err(SHAPE);
+    }
+    let Some((host, port_str)) = endpoint.rsplit_once(':') else {
+        return Err(SHAPE);
+    };
+    let Ok(port) = port_str.parse::<u16>() else {
+        return Err(SHAPE);
+    };
+    if port == 0 || port_str != port.to_string() || !valid_hostname(host) {
+        return Err(SHAPE);
+    }
+    if host == "localhost" || host.ends_with(".localhost") {
+        if !allow_loopback {
+            return Err(UNREACHABLE);
+        }
+        return Ok(text.into());
+    }
+    Ok(text.into())
+}
+
+/// Validate a relay slot a person pasted: `ip:port/slot`, `host:port/slot`,
+/// or `ws://host:port/slot`.
 ///
-/// It must be in exactly the form a peer record carries it, with a relay
-/// address that could ever be a peer. Loopback is allowed because the person
-/// chose it. Returns it written canonically.
+/// It must be in canonical lowercase form, with a relay address that could
+/// ever be a peer. Loopback is allowed because the person chose it.
 ///
 /// # Errors
 ///
 /// A short reason the interface can show as is.
 pub fn parse_relay_hint(input: &str) -> Result<Box<str>, &'static str> {
-    const SHAPE: &str = "Write it as ip:port/slot, the way another device shows it.";
-    let text = input.trim();
-    let hint: syncwire::RelayHint = text.parse().map_err(|_| SHAPE)?;
-    if hint.to_string() != text {
-        return Err(SHAPE);
-    }
-    parse_peer_address(&hint.relay.to_string(), true)
-        .map_err(|_| "Other devices cannot reach that relay.")?;
-    Ok(text.into())
+    validate_relay_target(input.trim(), true)
 }
 
-/// Validate a personal peer target (`ip:port` or `ip:port/slot`), respecting
-/// `allow_loopback` for both direct addresses and relay addresses.
+/// Validate a personal peer target (`ip:port`, `ip:port/slot`, or
+/// `ws://host:port/slot`), respecting `allow_loopback` for both direct
+/// addresses and relay addresses.
 ///
 /// # Errors
 ///
@@ -96,15 +160,7 @@ pub fn parse_relay_hint(input: &str) -> Result<Box<str>, &'static str> {
 pub fn parse_personal_target(input: &str, allow_loopback: bool) -> Result<Box<str>, &'static str> {
     let text = input.trim();
     if text.contains('/') {
-        let hint: syncwire::RelayHint = text
-            .parse()
-            .map_err(|_| "Write it as ip:port/slot, the way another device shows it.")?;
-        if hint.to_string() != text {
-            return Err("Write it as ip:port/slot, the way another device shows it.");
-        }
-        parse_peer_address(&hint.relay.to_string(), allow_loopback)
-            .map_err(|_| "Other devices cannot reach that relay.")?;
-        Ok(text.into())
+        validate_relay_target(text, allow_loopback)
     } else {
         parse_peer_address(text, allow_loopback)
     }

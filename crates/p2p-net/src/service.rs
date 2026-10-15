@@ -290,7 +290,9 @@ impl Service {
                 if attempt > 0 {
                     tokio::time::sleep(retry).await;
                 }
-                for hint in &hints {
+                let mut done = Vec::with_capacity(hints.len());
+                while let Some(hint) = view.dialing.next_hint(&hints, &done) {
+                    done.push(hint.clone());
                     match fetch(&view, hint).await {
                         Ok(fetched) => {
                             outcome = Some(Event::Fetched {

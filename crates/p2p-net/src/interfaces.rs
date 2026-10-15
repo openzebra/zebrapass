@@ -84,3 +84,58 @@ pub fn broadcast_targets(port: u16) -> Vec<SocketAddr> {
     }
     targets
 }
+
+/// Bounded `/24` neighbor unicast UDP targets for `port` around each active
+/// private IPv4 interface so beacons can reach peers on Wi-Fi networks that
+/// filter both IGMP multicast and broadcast frames.
+#[must_use]
+pub fn subnet_unicast_targets(port: u16) -> Vec<SocketAddr> {
+    let mut targets: Vec<SocketAddr> = Vec::new();
+    for ip in local_ips() {
+        let IpAddr::V4(v4) = ip else {
+            continue;
+        };
+        if !v4.is_private() {
+            continue;
+        }
+        let [a, b, c, d] = v4.octets();
+        let start = d.saturating_sub(16).max(1);
+        let end = d.saturating_add(16).min(254);
+        for host in [1u8, 254].into_iter().chain(start..=end) {
+            if host == d || host == 0 || host == 255 {
+                continue;
+            }
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(a, b, c, host)), port);
+            if !targets.contains(&addr) {
+                targets.push(addr);
+            }
+        }
+    }
+    targets
+}
+
+/// Candidate LAN gateway IPv4 addresses (`.1` and `.254`) on active private
+/// interfaces for automatic port mapping.
+#[must_use]
+pub fn default_gateways() -> Vec<Ipv4Addr> {
+    let mut gateways: Vec<Ipv4Addr> = Vec::new();
+    for ip in local_ips() {
+        let IpAddr::V4(v4) = ip else {
+            continue;
+        };
+        if !v4.is_private() {
+            continue;
+        }
+        let [a, b, c, d] = v4.octets();
+        for host in [1u8, 254] {
+            if host == d {
+                continue;
+            }
+            let gw = Ipv4Addr::new(a, b, c, host);
+            if !gateways.contains(&gw) {
+                gateways.push(gw);
+            }
+        }
+    }
+    gateways
+}

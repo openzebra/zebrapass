@@ -148,6 +148,9 @@ impl P2p {
         let hints = node.hints();
         node.provider.set_hints(hints.clone());
         node.reachable = hints.into_boxed_slice();
+        if matches!(listen, Listen::Lan | Listen::Beacon) && beacon.is_none() {
+            node.service.start_nat_traversal();
+        }
         if matches!(listen, Listen::Beacon) {
             node.start_beacon(beacon.unwrap_or_else(BeaconConfig::lan));
         }
@@ -172,11 +175,13 @@ impl P2p {
     /// Hold a slot on the first saved relay, when the person asked for it.
     /// Dropping the node frees the slot.
     pub fn hold_saved(&self) {
-        let parsed = self
-            .relays
-            .first()
-            .and_then(|text| text.parse::<p2p_net::RelayHint>().ok());
-        if let (true, false, Some(hint)) = (self.holds, self.listen == Listen::Fetch, parsed) {
+        if !self.holds || self.listen == Listen::Fetch {
+            return;
+        }
+        let Some(first) = self.relays.first() else {
+            return;
+        };
+        if let Ok(hint) = first.parse::<p2p_net::RelayHint>() {
             let fixed = (hint.slot != [0u8; 16]).then_some(hint.slot).or_else(|| {
                 let gate = self.identity.account_gate()?;
                 let route = kdf::account_route_id(gate).ok()?;
@@ -185,6 +190,21 @@ impl P2p {
             });
             self.service
                 .hold_relay_slot(Arc::clone(&self.provider), hint.relay, fixed);
+        } else if let Some(p2p_net::Target::Catalog(cat)) =
+            p2p_net::Dialing::default().target(first)
+        {
+            let Ok(ip) = cat.host.parse::<std::net::IpAddr>() else {
+                return;
+            };
+            let relay_addr = std::net::SocketAddr::new(ip, cat.port);
+            let fixed = (cat.slot != [0u8; 16]).then_some(cat.slot).or_else(|| {
+                let gate = self.identity.account_gate()?;
+                let route = kdf::account_route_id(gate).ok()?;
+                p2p_net::deterministic_relay_hint(gate.expose(), &route, relay_addr)
+                    .map(|det| det.slot)
+            });
+            self.service
+                .hold_relay_ws(Arc::clone(&self.provider), relay_addr, fixed);
         }
     }
 
