@@ -63,7 +63,7 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
         osc52: osc52_likely(
             std::env::var("TERM").ok().as_deref(),
             std::env::var("TERM_PROGRAM").ok().as_deref(),
-        ),
+        ) || std::env::var_os("WAYLAND_DISPLAY").is_some(),
         key_release: terminal::supports_keyboard_enhancement().unwrap_or(false),
     };
     let mut app = App::new(config, base, caps)?;
@@ -148,6 +148,7 @@ fn flush_outbox(app: &mut App) {
     let mut out = io::stdout();
     for sequence in &pending {
         let _ = out.write_all(sequence);
+        crate::secure::clipboard::sync_system_clipboard(sequence);
     }
     let _ = out.flush();
 }
