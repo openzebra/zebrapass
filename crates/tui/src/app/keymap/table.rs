@@ -103,15 +103,15 @@ pub const KEYMAP: &[Binding] = bindings! {
     Enroll: key(KeyCode::Enter) => Confirm, "enroll";
     Enroll: key(KeyCode::Esc) => Back, "back";
 
-    Unlock: key(KeyCode::Enter) => Confirm, "unlock";
-    Unlock: key(KeyCode::Tab) => SwitchFactor, "factor";
-    Unlock: ctrl('p') => UseRecovery, "recovery phrase";
-    Unlock: ctrl('v') => SwitchVault, "vault";
-    Unlock: ctrl('r') => RevealField, "reveal";
-    Unlock: ctrl('n') => CreateVault, "new vault";
-    Unlock: ctrl('o') => RestoreVault, "restore";
+    Unlock: key(KeyCode::Enter) => Confirm;
+    Unlock: key(KeyCode::Tab) => NextField;
+    Unlock: key(KeyCode::BackTab) => PrevField;
+    Unlock: ch(' ') => Confirm;
     Unlock: key(KeyCode::Up) => Up;
     Unlock: key(KeyCode::Down) => Down;
+    Unlock: key(KeyCode::Left) => Left;
+    Unlock: key(KeyCode::Right) => Right;
+    Unlock: ctrl('o') => RevealField, "reveal";
     Unlock: key(KeyCode::Esc) => Back, "clear";
     Unlock: ctrl('q') => Quit, "quit";
 

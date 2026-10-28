@@ -3,18 +3,11 @@
 
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent};
 use local::{device_key_info, DEVICE_PIN_LEN};
-use seed::SeedPhrase;
 use session::WrapDirectory;
 
-use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
-use crate::app::flows::editing::{edit_secret, printable};
-use crate::app::keymap::{resolve, Scope};
-use crate::app::screen::Nav;
 use crate::app::worker::Job;
-use crate::secure::phrase_input::{secret_string, PhraseInput};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::widgets::toast::Tone;
@@ -37,19 +30,23 @@ pub const MAX_BACKOFF: Duration = Duration::from_secs(30);
 pub enum Mode {
     /// Human password.
     Password,
-    /// Recovery phrase.
-    Recovery,
     /// This device's PIN-sealed key file.
     Device,
 }
 
-/// Focus inside recovery mode.
+/// Focused control on the unlock screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RecoveryField {
-    /// The words.
-    Phrase,
-    /// The optional 25th word.
-    Passphrase,
+pub enum UnlockFocus {
+    /// Storage selector.
+    Storage,
+    /// Unlock-factor buttons.
+    Factor,
+    /// Password or PIN input.
+    Input,
+    /// Unlock button.
+    Unlock,
+    /// Create/restore choice button.
+    New,
 }
 
 /// Unlock screen state.
@@ -63,16 +60,12 @@ pub struct UnlockState {
     pub directory: Result<WrapDirectory, UnlockError>,
     /// Presented factor.
     pub mode: Mode,
+    /// Focused control.
+    pub focus: UnlockFocus,
     /// Password being typed.
     pub password: SecretInput,
     /// Device PIN being typed.
     pub pin: SecretInput,
-    /// Recovery words.
-    pub phrase: PhraseInput,
-    /// Recovery passphrase.
-    pub passphrase: SecretInput,
-    /// Focus in recovery mode.
-    pub recovery_field: RecoveryField,
     /// Failed attempts this visit.
     pub attempts: u32,
     /// No new attempt before this.
@@ -100,11 +93,9 @@ impl UnlockState {
             current,
             directory: Err(UnlockError::Io),
             mode: Mode::Password,
+            focus: UnlockFocus::Input,
             password: SecretInput::new(MAX_PASSWORD),
             pin: SecretInput::new(*DEVICE_PIN_LEN.end()),
-            phrase: PhraseInput::default(),
-            passphrase: SecretInput::new(MAX_PASSPHRASE),
-            recovery_field: RecoveryField::Phrase,
             attempts: 0,
             retry_at: None,
             error: None,
@@ -145,7 +136,6 @@ impl UnlockState {
         [
             (Mode::Device, found.owned_devices > 0),
             (Mode::Password, found.password),
-            (Mode::Recovery, found.recovery),
         ]
         .iter()
         .filter(|(_, present)| *present)
@@ -153,18 +143,17 @@ impl UnlockState {
         .collect()
     }
 
-    fn select(&mut self, index: usize) {
+    pub(super) fn select(&mut self, index: usize) {
         self.current = index.min(self.vaults.len().saturating_sub(1));
         self.directory = self.vault().map_or(Err(UnlockError::Io), |vault| {
             read_directory(&vault.paths.vault_file)
         });
         self.password.clear();
         self.pin.clear();
-        self.phrase.clear();
-        self.passphrase.clear();
         self.error = None;
         self.attempts = 0;
         self.retry_at = None;
+        self.held = None;
         let found = self.presence();
         self.mode = self.modes().first().copied().unwrap_or(Mode::Password);
         let other = found.password || found.owned_devices > 0;
@@ -173,137 +162,13 @@ impl UnlockState {
         }
     }
 
-    /// Handle a key.
-    pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
-        if let Some(cursor) = self.picker {
-            return self.on_picker(event, cursor);
-        }
-        let recovery_words =
-            self.mode == Mode::Recovery && self.recovery_field == RecoveryField::Phrase;
-        if recovery_words {
-            if let Some(ch) = printable(event) {
-                if ch == ' ' {
-                    if !self.phrase.space() {
-                        ctx.toast(Tone::Warn, "Keep typing: that is not a whole word yet.");
-                    }
-                } else {
-                    self.phrase.type_char(ch);
-                }
-                return Nav::Stay;
-            }
-            if event.code == KeyCode::Backspace {
-                self.phrase.backspace();
-                return Nav::Stay;
-            }
-        }
-        if let Some(action) = resolve(Scope::Unlock, event) {
-            return self.on_action(action, ctx);
-        }
-        let input = match (self.mode, self.recovery_field) {
-            (Mode::Recovery, RecoveryField::Passphrase) => &mut self.passphrase,
-            (Mode::Recovery, RecoveryField::Phrase) => return Nav::Stay,
-            (Mode::Password, _) => &mut self.password,
-            (Mode::Device, _) => &mut self.pin,
-        };
-        edit_secret(input, event);
-        Nav::Stay
-    }
-
-    fn on_picker(&mut self, event: &KeyEvent, cursor: usize) -> Nav {
-        match event.code {
-            KeyCode::Up => self.picker = Some(cursor.saturating_sub(1)),
-            KeyCode::Down => {
-                self.picker = Some((cursor + 1).min(self.vaults.len().saturating_sub(1)));
-            }
-            KeyCode::Enter => {
-                self.picker = None;
-                self.select(cursor);
-            }
-            KeyCode::Esc => self.picker = None,
-            _ => {}
-        }
-        Nav::Stay
-    }
-
-    /// Paste into the focused field.
-    pub fn on_paste(&mut self, text: &str) {
-        match (self.mode, self.recovery_field) {
-            (Mode::Password, _) => {
-                self.password.insert_str(text);
-            }
-            (Mode::Recovery, RecoveryField::Passphrase) => {
-                self.passphrase.insert_str(text);
-            }
-            (Mode::Recovery, RecoveryField::Phrase) => {
-                for ch in text.chars() {
-                    if ch.is_whitespace() {
-                        self.phrase.space();
-                    } else {
-                        self.phrase.type_char(ch);
-                    }
-                }
-                self.phrase.space();
-            }
-            (Mode::Device, _) => {
-                self.pin.insert_str(text);
-            }
-        }
-    }
-
-    /// Handle an action.
-    pub fn on_action(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
-        match action {
-            Action::Confirm => self.submit(ctx),
-            Action::SwitchFactor => {
-                let modes = self.modes();
-                let at = modes
-                    .iter()
-                    .position(|mode| *mode == self.mode)
-                    .unwrap_or(0);
-                self.mode = modes
-                    .get((at + 1) % modes.len().max(1))
-                    .copied()
-                    .unwrap_or(Mode::Password);
-                self.reveal_off(ctx);
-            }
-            Action::UseRecovery => {
-                self.mode = Mode::Recovery;
-                self.recovery_field = RecoveryField::Phrase;
-                self.reveal_off(ctx);
-            }
-            Action::SwitchVault if self.vaults.len() > 1 => self.picker = Some(self.current),
-            Action::SwitchVault => ctx.toast(Tone::Info, "Only one vault on this device."),
-            Action::Up | Action::Down if self.mode == Mode::Recovery => {
-                self.recovery_field = match self.recovery_field {
-                    RecoveryField::Phrase => RecoveryField::Passphrase,
-                    RecoveryField::Passphrase => RecoveryField::Phrase,
-                };
-            }
-            Action::RevealField if self.mode == Mode::Password => {
-                if self.reveal.toggle(REVEAL_PASSWORD, ctx.now) {
-                    ctx.redraw();
-                }
-            }
-            Action::Back => {
-                self.password.clear();
-                self.pin.clear();
-                self.phrase.clear();
-                self.passphrase.clear();
-                self.reveal_off(ctx);
-            }
-            Action::Quit => return Nav::Quit,
-            _ => {}
-        }
-        Nav::Stay
-    }
-
-    const fn reveal_off(&mut self, ctx: &mut Ctx) {
+    pub(super) const fn reveal_off(&mut self, ctx: &mut Ctx) {
         if self.reveal.hide() {
             ctx.redraw();
         }
     }
 
-    fn submit(&mut self, ctx: &mut Ctx) {
+    pub(super) fn submit(&mut self, ctx: &mut Ctx) {
         if ctx.busy() {
             return;
         }
@@ -332,13 +197,6 @@ impl UnlockState {
                 }
                 Credential::Password(self.password.take())
             }
-            Mode::Recovery => match self.parse_phrase() {
-                Ok(phrase) => Credential::Phrase(Box::new(phrase)),
-                Err(message) => {
-                    ctx.toast(Tone::Warn, message);
-                    return;
-                }
-            },
             Mode::Device => {
                 if self.pin.len() < *DEVICE_PIN_LEN.start() {
                     ctx.toast(Tone::Warn, "The device PIN has at least 6 characters.");
@@ -357,22 +215,8 @@ impl UnlockState {
             Mode::Device => device_key_info(&paths.device_key)
                 .ok()
                 .map(|info| (info.profile.m_kib(), info.profile.t(), info.profile.p())),
-            Mode::Recovery => None,
         };
         ctx.start(Job::Unlock(paths, credential), Task::Unlock(cost));
-    }
-
-    fn parse_phrase(&mut self) -> Result<SeedPhrase, &'static str> {
-        if !self.phrase.plausible() {
-            return Err("Enter all 12, 15, 18, 21, or 24 words.");
-        }
-        let passphrase =
-            secret_string(self.passphrase.expose()).ok_or("The passphrase is not valid text.")?;
-        let parsed = SeedPhrase::parse(&self.phrase.to_secret(), &passphrase)
-            .map_err(|_| "That phrase is not valid. Check the words and their order.")?;
-        self.phrase.clear();
-        self.passphrase.clear();
-        Ok(parsed)
     }
 
     /// Record a failed attempt: uniform message, exponential backoff.

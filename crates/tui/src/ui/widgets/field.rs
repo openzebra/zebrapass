@@ -68,6 +68,26 @@ pub fn secret_line<'a>(
     Line::from(spans)
 }
 
+/// A secret input with a muted placeholder while it is empty.
+#[must_use]
+pub fn secret_line_with_placeholder<'a>(
+    input: &'a SecretInput,
+    focused: bool,
+    revealed: bool,
+    placeholder: &'a str,
+    theme: &Theme,
+) -> Line<'a> {
+    if !input.is_empty() {
+        return secret_line(input, focused, revealed, theme);
+    }
+    let mut spans = Vec::with_capacity(2);
+    if focused {
+        spans.push(block_cursor("", theme));
+    }
+    spans.push(Span::styled(placeholder, theme.muted()));
+    Line::from(spans)
+}
+
 const _: () = assert!(PHASES as usize == MASK_CELLS);
 
 /// The fixed-width mask of an input with a two-cell wave at `phase`: the

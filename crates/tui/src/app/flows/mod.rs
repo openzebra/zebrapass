@@ -37,4 +37,5 @@ pub mod share_role;
 pub mod share_upgrade;
 pub mod shared_edit;
 pub mod unlock;
+mod unlock_controls;
 pub mod unlocked;

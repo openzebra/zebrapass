@@ -142,12 +142,6 @@ actions! {
     HideWord,
     /// Fill a generated passphrase.
     GeneratePassphrase,
-    /// Next unlock factor.
-    SwitchFactor,
-    /// Unlock with the recovery phrase.
-    UseRecovery,
-    /// Choose another vault.
-    SwitchVault,
     /// Add a factor.
     AddFactor,
     /// Revoke a factor and rotate the vault key.

@@ -1,22 +1,23 @@
-//! Unlock screen: vault card, factor chips from the public wrap directory,
-//! the factor input, one uniform error, and the backoff stripe.
+//! Unlock screen: one balanced card with storage, factor, secret, and actions.
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::unlock::{Mode, RecoveryField, UnlockState, MAX_BACKOFF, REVEAL_PASSWORD};
+use crate::app::flows::unlock::{Mode, UnlockFocus, UnlockState, MAX_BACKOFF, REVEAL_PASSWORD};
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
-use crate::ui::screens::restore::word_grid;
-use crate::ui::widgets::chrome::{hint_bar, modal, row_style};
-use crate::ui::widgets::field::{boxed, secret_line};
+use crate::ui::widgets::chrome::{button, hint_bar, modal, panel, row_style};
+use crate::ui::widgets::field::{boxed, secret_line_with_placeholder};
 use crate::ui::widgets::fingerprint::{grouped_hex, stripe_print};
 use crate::ui::widgets::meter::bar;
 use crate::ui::widgets::stripes::rule;
 use crate::vault::discover::VaultRef;
+
+const CARD_WIDTH: u16 = 64;
+const CONTROL_WIDTH: u16 = 44;
 
 fn vault_title(vault: Option<&VaultRef>) -> String {
     vault.and_then(|vault| vault.vault_id).map_or_else(
@@ -27,65 +28,20 @@ fn vault_title(vault: Option<&VaultRef>) -> String {
 
 /// Draw the unlock screen.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
-    let theme = &ctx.theme;
-    let glyphs = theme.glyphs;
     let [body, hints] = body_and_hints(area);
-    let recovery = state.mode == Mode::Recovery;
-    let input_height = if recovery { 9 } else { 3 };
-    // Tall enough: the striped vault card and breathing room; otherwise one
-    // title line and no gaps, so nothing overlaps at 60x20.
-    let roomy = body.height >= input_height + 17;
-    let (head, gap) = if roomy { (6, 1) } else { (1, 0) };
-    let height = head + 1 + input_height + 4 + gap * 4;
-    let card = centered(body, body.width.min(96), height);
-    let [header, _, chips, _, input, _, error, _, print] = Layout::vertical([
-        Constraint::Length(head),
-        Constraint::Length(gap),
-        Constraint::Length(1),
-        Constraint::Length(gap),
-        Constraint::Length(input_height),
-        Constraint::Length(gap),
-        Constraint::Length(2),
-        Constraint::Length(gap),
-        Constraint::Length(1),
-    ])
-    .areas(card);
-    let title = format!("{}  {}", glyphs.vk, vault_title(state.vault()));
-    let subtitle = state.directory.as_ref().map_or_else(
-        |error| error.message().to_owned(),
-        |_| String::from("locked"),
+    let roomy = body.height >= 23;
+    let card = centered(
+        body,
+        body.width.min(CARD_WIDTH),
+        if roomy { 23 } else { 19 },
     );
+    let block = panel("", &ctx.theme);
+    let inner = block.inner(card);
+    frame.render_widget(block, card);
     if roomy {
-        draw_card(frame, header, &title, &subtitle, ctx);
+        draw_roomy(frame, inner, state, ctx);
     } else {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(title, theme.strong()),
-                Span::styled(format!("  {} {subtitle}", glyphs.dot), theme.muted()),
-            ]))
-            .alignment(Alignment::Center),
-            header,
-        );
-    }
-    frame.render_widget(
-        Paragraph::new(chips_line(state, card.width >= 90, ctx)).alignment(Alignment::Center),
-        chips,
-    );
-    draw_input(frame, input, state, ctx);
-    frame.render_widget(
-        Paragraph::new(error_lines(state, ctx)).alignment(Alignment::Center),
-        error,
-    );
-    if let Some(id) = state.vault().and_then(|vault| vault.vault_id) {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("vault  ", theme.muted()),
-                Span::styled(stripe_print(&id, glyphs), theme.zebra()),
-                Span::styled(format!("  {}", grouped_hex(&id, 4)), theme.muted()),
-            ]))
-            .alignment(Alignment::Center),
-            print,
-        );
+        draw_compact(frame, inner, state, ctx);
     }
     hint_bar(frame, hints, Scope::Unlock, "", ctx);
     if let Some(cursor) = state.picker {
@@ -93,8 +49,146 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
     }
 }
 
+fn draw_roomy(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let [brand, _, title, subtitle, _, storage, _, factors, _, input, error, actions] =
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(2),
+            Constraint::Length(3),
+        ])
+        .areas(area);
+    draw_brand(frame, brand, "quantum-safe", ctx);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("{}  Unlock your vault", ctx.theme.glyphs.vk),
+            ctx.theme.strong(),
+        )))
+        .alignment(Alignment::Center),
+        title,
+    );
+    let subtitle_text = state.directory.as_ref().map_or_else(
+        |error| error.message().to_owned(),
+        |_| String::from("This storage is locked"),
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(subtitle_text, ctx.theme.muted())).alignment(Alignment::Center),
+        subtitle,
+    );
+    draw_storage(frame, storage, state, ctx);
+    draw_factors(frame, factors, state, ctx);
+    draw_input(frame, input, state, ctx);
+    draw_error(frame, error, state, ctx);
+    draw_actions(frame, actions, state, ctx);
+}
+
+fn draw_compact(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let [brand, storage, _, factors, _, input, error, _, actions] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+    ])
+    .areas(area);
+    draw_brand(frame, brand, "locked", ctx);
+    draw_storage(frame, storage, state, ctx);
+    draw_factors(frame, factors, state, ctx);
+    draw_input(frame, input, state, ctx);
+    draw_error(frame, error, state, ctx);
+    draw_actions(frame, actions, state, ctx);
+}
+
+fn draw_brand(frame: &mut Frame<'_>, area: Rect, right: &str, ctx: &Ctx) {
+    let theme = &ctx.theme;
+    let [left, badge] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(14)]).areas(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(rule(theme.glyphs, 4), theme.zebra()),
+            Span::styled(" ZEBRAPASS", theme.strong()),
+        ])),
+        left,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(format!("{right} "), theme.muted()))
+            .alignment(Alignment::Right),
+        badge,
+    );
+}
+
+fn draw_storage(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let label = if state.vaults.is_empty() {
+        String::from("Storage")
+    } else {
+        format!(
+            "Storage {}/{}  ·  {}",
+            state.current + 1,
+            state.vaults.len(),
+            vault_title(state.vault())
+        )
+    };
+    button(
+        frame,
+        area,
+        &label,
+        false,
+        state.focus == UnlockFocus::Storage,
+        &ctx.theme,
+    );
+}
+
+fn draw_factors(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let modes = state.modes();
+    let Ok(count) = u32::try_from(modes.len()) else {
+        return;
+    };
+    if count == 0 {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "No supported unlock factors",
+                ctx.theme.danger(),
+            ))
+            .alignment(Alignment::Center),
+            area,
+        );
+        return;
+    }
+    let rect = centered(area, area.width.min(CONTROL_WIDTH), 3);
+    let constraints = vec![Constraint::Ratio(1, count); modes.len()];
+    let rects = Layout::horizontal(constraints).split(rect);
+    for (mode, spot) in modes.iter().zip(rects.iter()) {
+        let label = match mode {
+            Mode::Device => format!("{} Device PIN", ctx.theme.glyphs.device),
+            Mode::Password => format!("{} Password", ctx.theme.glyphs.password),
+        };
+        let selected = *mode == state.mode;
+        button(
+            frame,
+            *spot,
+            &label,
+            selected,
+            selected && state.focus == UnlockFocus::Factor,
+            &ctx.theme,
+        );
+    }
+}
+
 fn draw_input(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
     let theme = &ctx.theme;
+    let input_focus = state.focus == UnlockFocus::Input;
     match state.mode {
         Mode::Password => {
             let revealed = state.reveal.is_shown(REVEAL_PASSWORD);
@@ -102,7 +196,14 @@ fn draw_input(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
                 frame,
                 area,
                 "",
-                secret_line(&state.password, true, revealed, theme),
+                secret_line_with_placeholder(
+                    &state.password,
+                    input_focus,
+                    revealed,
+                    "Enter password",
+                    theme,
+                ),
+                input_focus,
                 ctx,
             );
         }
@@ -111,56 +212,48 @@ fn draw_input(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
                 frame,
                 area,
                 "Device PIN  ",
-                secret_line(&state.pin, true, false, theme),
+                secret_line_with_placeholder(
+                    &state.pin,
+                    input_focus,
+                    false,
+                    "Enter device PIN",
+                    theme,
+                ),
+                input_focus,
                 ctx,
             );
         }
-        Mode::Recovery => {
-            let [words, pass] =
-                Layout::vertical([Constraint::Length(5), Constraint::Length(4)]).areas(area);
-            let grid = centered(words, words.width.min(84), 5);
-            let focused = state.recovery_field == RecoveryField::Phrase;
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title(" recovery phrase ")
-                .border_style(if focused {
-                    theme.accent()
-                } else {
-                    theme.muted()
-                });
-            let inner = block.inner(grid);
-            frame.render_widget(block, grid);
-            frame.render_widget(
-                Paragraph::new(word_grid(&state.phrase, focused, false, false, theme)),
-                inner,
-            );
-            let pass_focus = state.recovery_field == RecoveryField::Passphrase;
-            let [label, field] =
-                Layout::horizontal([Constraint::Length(14), Constraint::Length(36)])
-                    .flex(ratatui::layout::Flex::Center)
-                    .areas(Rect {
-                        height: 3.min(pass.height),
-                        y: pass.y + 1,
-                        ..pass
-                    });
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(Span::styled("Passphrase  ", theme.muted())),
-                ])
-                .alignment(Alignment::Right),
-                label,
-            );
-            boxed(
-                frame,
-                field,
-                secret_line(&state.passphrase, pass_focus, false, theme),
-                pass_focus,
-                theme,
-            );
-        }
     }
+}
+
+fn draw_actions(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let rect = centered(area, area.width.min(CONTROL_WIDTH), 3);
+    let [unlock, new] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(rect);
+    let unlock_focus = state.focus == UnlockFocus::Unlock;
+    button(
+        frame,
+        unlock,
+        "Unlock",
+        unlock_focus,
+        unlock_focus,
+        &ctx.theme,
+    );
+    button(
+        frame,
+        new,
+        "New",
+        false,
+        state.focus == UnlockFocus::New,
+        &ctx.theme,
+    );
+}
+
+fn draw_error(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    frame.render_widget(
+        Paragraph::new(error_lines(state, ctx)).alignment(Alignment::Center),
+        area,
+    );
 }
 
 fn draw_picker(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, cursor: usize, ctx: &Ctx) {
@@ -168,7 +261,7 @@ fn draw_picker(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, cursor: u
     let height = u16::try_from(state.vaults.len().min(10) + 2).unwrap_or(12);
     let rect = centered(area, 56, height);
     frame.render_widget(Clear, rect);
-    let inner = modal(frame, rect, "Choose a vault", theme);
+    let inner = modal(frame, rect, "Choose a storage", theme);
     let lines: Vec<Line<'_>> = state
         .vaults
         .iter()
@@ -193,47 +286,20 @@ fn draw_picker(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, cursor: u
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The striped vault card.
-fn draw_card(frame: &mut Frame<'_>, header: Rect, title: &str, subtitle: &str, ctx: &Ctx) {
-    let theme = &ctx.theme;
-    let glyphs = theme.glyphs;
-    let frame_width = 34u16.min(header.width);
-    let box_rect = centered(header, frame_width, 6);
-    let stripes = Span::styled(rule(glyphs, frame_width), theme.zebra());
-    let side = |text: Span<'static>| {
-        Line::from(vec![
-            Span::styled(glyphs.mask, theme.zebra()),
-            text,
-            Span::styled(glyphs.mask, theme.zebra()),
-        ])
-    };
-    let inner_width = usize::from(frame_width.saturating_sub(2));
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(stripes.clone()),
-            side(Span::raw(" ".repeat(inner_width))),
-            side(Span::styled(
-                format!("{title:^inner_width$}"),
-                theme.strong(),
-            )),
-            side(Span::styled(
-                format!("{subtitle:^inner_width$}"),
-                theme.muted(),
-            )),
-            Line::from(stripes),
-        ]),
-        box_rect,
-    );
-}
-
-/// A right-aligned label and a boxed secret, centered in `area`.
-fn secret_box(frame: &mut Frame<'_>, area: Rect, label: &str, line: Line<'_>, ctx: &Ctx) {
+fn secret_box(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &str,
+    line: Line<'_>,
+    focused: bool,
+    ctx: &Ctx,
+) {
     let theme = &ctx.theme;
     if label.is_empty() {
-        let [field] = Layout::horizontal([Constraint::Length(36)])
+        let [field] = Layout::horizontal([Constraint::Length(CONTROL_WIDTH)])
             .flex(ratatui::layout::Flex::Center)
             .areas(area);
-        boxed(frame, field, line, true, theme);
+        boxed(frame, field, line, focused, theme);
         return;
     }
     let [label_rect, field] = Layout::horizontal([Constraint::Length(14), Constraint::Length(36)])
@@ -247,52 +313,9 @@ fn secret_box(frame: &mut Frame<'_>, area: Rect, label: &str, line: Line<'_>, ct
         .alignment(Alignment::Right),
         label_rect,
     );
-    boxed(frame, field, line, true, theme);
+    boxed(frame, field, line, focused, theme);
 }
 
-/// Which factor kinds the vault has: glyph, word, and dot (never color alone).
-fn chips_line(state: &UnlockState, wide: bool, ctx: &Ctx) -> Line<'static> {
-    let theme = &ctx.theme;
-    let glyphs = theme.glyphs;
-    let found = state.presence();
-    let chip = |glyph: &'static str, name: &'static str, on: bool| {
-        vec![
-            Span::styled(
-                format!("{glyph} {name} "),
-                if on { theme.text() } else { theme.muted() },
-            ),
-            Span::styled(
-                if on { glyphs.on } else { glyphs.off },
-                if on { theme.accent() } else { theme.muted() },
-            ),
-        ]
-    };
-    let chips = [
-        chip(
-            glyphs.password,
-            if wide { "password" } else { "pw" },
-            found.password,
-        ),
-        chip(
-            glyphs.device,
-            if wide { "device" } else { "dev" },
-            found.devices > 0,
-        ),
-        chip(glyphs.hw_key, "key", found.hw_keys > 0),
-        chip(glyphs.recovery, "phrase", found.recovery),
-    ];
-    let gap = if wide { "   " } else { " " };
-    let mut spans = Vec::new();
-    for (index, part) in chips.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(gap));
-        }
-        spans.extend(part.iter().cloned());
-    }
-    Line::from(spans)
-}
-
-/// The uniform error and the backoff bar.
 fn error_lines(state: &UnlockState, ctx: &Ctx) -> Vec<Line<'static>> {
     let theme = &ctx.theme;
     let glyphs = theme.glyphs;
