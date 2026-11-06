@@ -112,6 +112,7 @@ fn the_phrase_alone_brings_the_vault_and_a_later_record_arrives_at_the_next_chec
     );
 
     // The first device gets a new record while the second is locked.
+    press(&mut second, KeyCode::Esc);
     press(&mut second, KeyCode::Char('L'));
     fetch_only_with(&base, PASSWORD);
     press(&mut first, KeyCode::Char('n'));

@@ -69,6 +69,7 @@ fn first_run_creates_a_vault_and_round_trips_a_record() {
     wait(&mut app);
     assert_eq!(app.screen.name(), "unlocked");
 
+    press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Char('n'));
     type_text(&mut app, "Mail");
     for _ in 0..4 {

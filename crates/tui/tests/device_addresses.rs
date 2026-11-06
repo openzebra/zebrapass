@@ -65,6 +65,7 @@ fn a_typed_address_brings_the_vault_in_and_later_edits_reach_the_first_device() 
 
     // The adopted vault dials the typed address on every check-in, and a
     // later edit travels the push path to the first device.
+    press(&mut b, KeyCode::Esc);
     press(&mut b, KeyCode::Char('L'));
     press(&mut b, KeyCode::Enter);
     fetch_only_with(&base_b, PASSWORD);

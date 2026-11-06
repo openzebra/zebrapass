@@ -74,6 +74,7 @@ fn restored_from(words: &str, tag: &str, second_bind: u16, first_bind: u16) -> A
         beacon(second_bind, first_bind),
     );
     wait_adopted(&mut second, Duration::from_secs(60));
+    press(&mut second, KeyCode::Esc);
     second
 }
 

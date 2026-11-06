@@ -167,12 +167,13 @@ pub fn wait(app: &mut App) {
     );
 }
 
-/// Type the password on the unlock screen and wait for the result.
+/// Unlock and leave the initial search so callers can use home shortcuts.
 pub fn unlock(app: &mut App, password: &str) {
     assert_eq!(app.screen.name(), "unlock");
     type_text(app, password);
     press(app, KeyCode::Enter);
     wait(app);
+    press(app, KeyCode::Esc);
 }
 
 /// Advance the app clock by `by` and run timers.
@@ -448,6 +449,7 @@ pub fn open_address_list(app: &mut App) {
     ) {
         press(app, KeyCode::Esc);
     }
+    press(app, KeyCode::Esc);
     type_text(app, ",");
     press(app, KeyCode::Tab);
     press(app, KeyCode::Tab);
@@ -496,6 +498,7 @@ pub fn adopted_pair(tag: &str) -> (App, App, PathBuf) {
         }),
         "the vault never arrived"
     );
+    press(&mut b, KeyCode::Esc);
     for _ in 0..200 {
         press(&mut b, KeyCode::Char('L'));
         if b.screen.name() != "unlocked" {

@@ -54,6 +54,7 @@ fn an_empty_restore_finds_the_announcing_device_and_brings_the_vault_in() {
     );
 
     // The password it was restored with opens the account's vault.
+    press(&mut second, KeyCode::Esc);
     press(&mut second, KeyCode::Char('L'));
     press(&mut second, KeyCode::Enter);
     assert_eq!(second.screen.name(), "unlock");
@@ -113,6 +114,7 @@ fn a_placeholder_that_already_holds_a_record_is_never_replaced() {
         announcing_device("bc-keep-first", beacon(first_bind, second_bind), &["wifi"]);
     let base = temp_dir("bc-keep-second");
     let mut second = restore_empty(&base, &words, PASSWORD, beacon(second_bind, first_bind));
+    press(&mut second, KeyCode::Esc);
     press(&mut second, KeyCode::Esc);
     press(&mut second, KeyCode::Char('n'));
     type_text(&mut second, "Mine");

@@ -108,6 +108,7 @@ fn a_restored_device_set_to_fetch_only_still_pulls_what_the_peer_wrote_after() {
     let base = temp_dir("fetch-second");
     let mut second = restore_empty(&base, &words, PASSWORD, beacon(second_bind, first_bind));
     wait_adopted(&mut second, Duration::from_secs(60));
+    press(&mut second, KeyCode::Esc);
     assert_eq!(
         titles_of(&second),
         ["bank", "wifi"],

@@ -164,7 +164,7 @@ pub const KEYMAP: &[Binding] = bindings! {
     Home: key(KeyCode::Esc) => Back;
 
     Search: key(KeyCode::Esc) => Back, "clear";
-    Search: key(KeyCode::Enter) => Confirm, "done";
+    Search: key(KeyCode::Enter) => Confirm, "open";
     Search: key(KeyCode::Up) => Up, "move";
     Search: key(KeyCode::Down) => Down;
 

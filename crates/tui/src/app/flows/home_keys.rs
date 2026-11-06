@@ -40,7 +40,7 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
             }
             Some(Action::Confirm) => {
                 state.home.searching = false;
-                Nav::Stay
+                on_action(state, Action::Confirm, ctx)
             }
             Some(action @ (Action::Up | Action::Down)) => on_action(state, action, ctx),
             _ => {

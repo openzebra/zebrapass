@@ -117,6 +117,7 @@ fn bitwarden_export_becomes_a_new_vault() {
     assert!(key.ends_with(" key"), "{key}");
 
     // The records survive a lock and a password unlock from disk.
+    press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Char('L'));
     press(&mut app, KeyCode::Enter);
     unlock(&mut app, PASSWORD);

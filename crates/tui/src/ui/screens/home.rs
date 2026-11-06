@@ -93,7 +93,7 @@ fn draw_action_bar(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ct
     if state.home.searching {
         let line = Line::from(vec![
             Span::styled(" SEARCH ", theme.accent()),
-            Span::styled(" [Enter] done  [Esc] clear  [↑↓] move", theme.muted()),
+            Span::styled(" [Enter] open  [Esc] clear  [↑↓] move", theme.muted()),
         ]);
         frame.render_widget(Paragraph::new(line).style(theme.base()), area);
         return;
@@ -311,6 +311,8 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
     if visible.is_empty() {
         let hint = if state.in_shared() && state.active_cache().is_empty() {
             "Nothing here yet."
+        } else if state.cache.is_empty() && state.home.searching {
+            "No records yet. Esc, then n to add one."
         } else if state.cache.is_empty() {
             "No records yet. Press n to add one."
         } else {

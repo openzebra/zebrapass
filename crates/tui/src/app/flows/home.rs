@@ -317,7 +317,7 @@ impl Default for Home {
     fn default() -> Self {
         Self {
             query: TextInput::new(MAX_QUERY),
-            searching: false,
+            searching: true,
             filter: Filter::All,
             pane: Pane::List,
             selected: 0,
