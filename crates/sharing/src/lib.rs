@@ -12,6 +12,7 @@ mod card;
 mod fingerprint;
 mod invitation;
 mod text;
+mod uri;
 
 pub use card::{CARD_PREFIX, CARD_WIRE_LEN, ContactCard, MAX_CARD_AGE_MS};
 pub use fingerprint::{Fingerprint, account_fingerprint, vault_fingerprint, vault_number};
@@ -20,3 +21,7 @@ pub use invitation::{
     Opened,
 };
 pub use text::{decode as decode_text, encode as encode_text};
+pub use uri::{
+    MAX_SHARE_URI_ADDR, MAX_SHARE_URI_LEN, SHARE_URI_HOST, SHARE_URI_SCHEME, SHARE_URI_VERSION,
+    ShareUri,
+};

@@ -26,7 +26,7 @@ use crate::ui::screens::sync_confirm::{
     role_confirm_lines,
 };
 use crate::ui::theme::Theme;
-use crate::ui::widgets::chrome::hint_bar;
+use crate::ui::widgets::chrome::{hint_bar, panel};
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::fingerprint::stripe_print;
 use crate::vault::shared::{SharedItem, Status};
@@ -84,13 +84,6 @@ pub(super) const fn role_gloss(role: Role) -> &'static str {
     }
 }
 
-fn people(count: usize) -> String {
-    match count {
-        0 | 1 => String::from("just you"),
-        more => format!("you + {}", more - 1),
-    }
-}
-
 const fn reason_word(reason: FetchError) -> &'static str {
     match reason {
         FetchError::Unreachable => "offline",
@@ -99,7 +92,7 @@ const fn reason_word(reason: FetchError) -> &'static str {
     }
 }
 
-fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
+pub(super) fn status(item: &SharedItem, fetching: bool, theme: &Theme) -> Span<'static> {
     let glyphs = theme.glyphs;
     match (&item.status, item.waiting) {
         (Status::Ready(_), _) if item.my_role.is_none() => Span::styled(
@@ -164,102 +157,6 @@ pub(crate) fn node_text(state: &Unlocked, theme: &Theme) -> (String, bool) {
         Some(None) => (format!("not listening · {mode}"), false),
         None => (format!("stopped · {mode}"), false),
     }
-}
-
-fn node_line(state: &Unlocked, theme: &Theme) -> Line<'static> {
-    let (text, up) = node_text(state, theme);
-    let style = if up { theme.accent() } else { theme.muted() };
-    Line::from(vec![
-        Span::styled(format!("{INDENT}{:<14}", "node"), theme.muted()),
-        Span::styled(text, style),
-    ])
-}
-
-fn overview(state: &Unlocked, share: &ShareState, theme: &Theme) -> Vec<Line<'static>> {
-    let mut lines = vec![blank(), heading("your key", theme)];
-    match &share.me {
-        Some(me) => {
-            lines.extend(print_lines(&me.print, "", theme));
-            lines.push(say(
-                "Enter copies it. Give it to whoever adds you.",
-                theme.muted(),
-            ));
-        }
-        None => lines.push(say(
-            "This vault has no sync identity. Restore it with its recovery phrase to share.",
-            theme.warn(),
-        )),
-    }
-    lines.push(blank());
-    lines.push(heading("shared", theme));
-    if state.shared.is_empty() {
-        lines.push(say("none yet · n makes one, j joins one", theme.muted()));
-    }
-    let fetching = state
-        .p2p
-        .as_deref()
-        .is_some_and(|p2p| p2p.service.status().fetching > 0);
-    for (index, item) in state.shared.iter().enumerate() {
-        let chosen = index == share.cursor;
-        let pointer = if chosen { theme.glyphs.pointer } else { " " };
-        let role = item.my_role.map_or("", role_name);
-        let row_style = if chosen { theme.strong() } else { theme.text() };
-        lines.push(Line::from(vec![
-            Span::styled(format!("{INDENT}{pointer} "), theme.accent()),
-            Span::styled(
-                format!("{:<16}", crate::ui::widgets::list::fit(item.name(), 16)),
-                row_style,
-            ),
-            Span::styled(format!("{role:<8}"), theme.muted()),
-            Span::styled(format!("{:<12}", people(item.people)), theme.muted()),
-            status(item, fetching, theme),
-        ]));
-    }
-    lines.push(blank());
-    lines.push(node_line(state, theme));
-    if let Some(address) = state.p2p.as_deref().and_then(|p2p| p2p.reachable.first()) {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{INDENT}{:<14}", "restore from"), theme.muted()),
-            Span::styled(format!("{address}  type it on a new device"), theme.text()),
-        ]));
-    }
-    if let Some(address) = state
-        .advertised()
-        .filter(|_| matches!(state.listen_mode(), Listen::Lan | Listen::Beacon))
-    {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{INDENT}{:<14}", "offering"), theme.muted()),
-            Span::styled(address.to_owned(), theme.text()),
-        ]));
-    }
-    lines.extend(crate::ui::screens::sync_lines::observed_line(state, theme));
-    if let Some(saved) = state
-        .p2p
-        .as_deref()
-        .map(|p2p| p2p.relays.len())
-        .filter(|n| *n > 0)
-    {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{INDENT}{:<14}", "relays"), theme.muted()),
-            Span::styled(
-                format!(
-                    "{saved} saved  ·  {}",
-                    crate::ui::screens::sync_lines::hold_gloss(state)
-                ),
-                theme.text(),
-            ),
-        ]));
-    }
-    if state.identity_is_old() {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{INDENT}{:<14}", "identity"), theme.muted()),
-            Span::styled(
-                "old format, cannot serve your devices  ·  u to upgrade with your phrase",
-                theme.warn(),
-            ),
-        ]));
-    }
-    lines
 }
 
 /// What a member saw this device at, and what can be done with it.
@@ -420,7 +317,7 @@ fn step_lines(
         .get(share.cursor)
         .map_or(String::new(), |item| item.name().to_owned());
     match &share.step {
-        Step::Overview => overview(state, share, theme),
+        Step::Overview => Vec::new(),
         Step::Name(input) => name_lines(input, width, theme),
         Step::PasteCard => prompt(
             &format!("add someone to «{vault_name}»"),
@@ -469,19 +366,47 @@ fn step_lines(
     }
 }
 
+const fn sub_step_title(step: &Step) -> &'static str {
+    match step {
+        Step::Overview => "Share",
+        Step::Name(_) => "New shared vault",
+        Step::PasteCard => "Add member",
+        Step::AddConfirm { .. } => "Verify fingerprint",
+        Step::AddDone { .. } => "Invitation ready",
+        Step::PickPerson(_) | Step::RemoveConfirm { .. } => "Remove member",
+        Step::PickRole(_) | Step::RoleConfirm { .. } => "Change role",
+        Step::LeaveConfirm(_) => "Leave vault",
+        Step::RekeyConfirm => "Replace key",
+        Step::Advertise(_) => "Public address",
+        Step::Upgrade(_) => "Upgrade identity",
+        Step::Relay(_) => "Add relay",
+        Step::PasteInvite | Step::JoinConfirm(_) => "Join shared vault",
+    }
+}
+
 /// Draw the share screen.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, share: &ShareState, ctx: &Ctx) {
     let theme = &ctx.theme;
     let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
     header(frame, top, state, "share", ctx);
     let [body, hints] = body_and_hints(rest);
-    let column = centered(body, body.width.min(76), body.height);
-    let lines = step_lines(state, share, column.width, theme);
-    frame.render_widget(Paragraph::new(lines).style(theme.base()), column);
-    let scope = if matches!(share.step, Step::Overview) {
-        Scope::Sync
+    if matches!(share.step, Step::Overview) {
+        crate::ui::screens::sync_overview::draw(frame, body, state, share, ctx);
+        hint_bar(frame, hints, Scope::Sync, "", ctx);
     } else {
-        Scope::Share
-    };
-    hint_bar(frame, hints, scope, "", ctx);
+        let width = match &share.step {
+            Step::Upgrade(_) => body.width.min(98),
+            _ => body.width.min(78),
+        };
+        let lines = step_lines(state, share, width.saturating_sub(2), theme);
+        let height = u16::try_from(lines.len() + 3)
+            .unwrap_or(body.height)
+            .clamp(10.min(body.height), body.height);
+        let card = centered(body, width, height);
+        let block = panel(format!(" {} ", sub_step_title(&share.step)), theme);
+        let inner = block.inner(card);
+        frame.render_widget(block, card);
+        frame.render_widget(Paragraph::new(lines).style(theme.base()), inner);
+        hint_bar(frame, hints, Scope::Share, "", ctx);
+    }
 }

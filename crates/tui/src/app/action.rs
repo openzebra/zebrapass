@@ -188,6 +188,8 @@ actions! {
     ToggleAll,
     /// Make a shared vault.
     ShareNew,
+    /// Copy the share URL.
+    ShareCopyUrl,
     /// Add a person to the selected shared vault.
     ShareAdd,
     /// Join a shared vault from an invitation.

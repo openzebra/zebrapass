@@ -60,6 +60,31 @@ impl Unlocked {
         ctx.copy(text.as_bytes(), "share key");
     }
 
+    /// Standard RFC 3986 share URI for this device's account fingerprint and
+    /// best reachable address hint.
+    #[must_use]
+    pub fn share_uri(&self, print: sharing::Fingerprint) -> sharing::ShareUri {
+        let addr = self
+            .advertised()
+            .filter(|_| matches!(self.listen_mode(), Listen::Lan | Listen::Beacon))
+            .or_else(|| {
+                self.p2p
+                    .as_deref()
+                    .and_then(|p2p| p2p.reachable.first())
+                    .map(String::as_str)
+            });
+        sharing::ShareUri::new(print, addr)
+    }
+
+    pub(super) fn copy_my_url(&self, ctx: &mut Ctx) {
+        let Some(print) = my_print(self).or_else(|| self.make_me().map(|me| me.print)) else {
+            ctx.toast(Tone::Warn, "This vault has no sync identity yet.");
+            return;
+        };
+        let uri = self.share_uri(print).to_uri();
+        ctx.copy(uri.as_bytes(), "share URL");
+    }
+
     fn fail(ctx: &mut Ctx, error: &anyhow::Error) {
         ctx.toast(Tone::Warn, error.to_string());
     }

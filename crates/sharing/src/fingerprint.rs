@@ -30,10 +30,27 @@ impl Fingerprint {
         Self(out)
     }
 
+    /// Construct a fingerprint from raw 20 bytes.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+
     /// The raw 20 bytes.
     #[must_use]
     pub const fn bytes(&self) -> &[u8; 20] {
         &self.0
+    }
+
+    /// The 40 uppercase hexadecimal digits with no spaces.
+    #[must_use]
+    pub fn to_hex_compact(&self) -> String {
+        let mut out = String::with_capacity(40);
+        for byte in &self.0 {
+            // Writing to a String cannot fail.
+            let _ = write!(out, "{byte:02X}");
+        }
+        out
     }
 }
 

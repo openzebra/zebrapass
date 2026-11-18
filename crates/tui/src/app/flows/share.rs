@@ -12,6 +12,10 @@ use crate::app::ctx::Ctx;
 use crate::app::flows::editing::edit_text;
 use crate::app::flows::factors::palette_action;
 pub use crate::app::flows::share_leave::LeaveMode;
+use crate::app::flows::share_nav::{
+    ShareButton, ShareFocus, action_for_button, button_for_action, move_horizontal, move_vertical,
+    next_focus,
+};
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
@@ -85,6 +89,8 @@ pub struct ShareState {
     pub step: Step,
     /// The selected shared vault.
     pub cursor: usize,
+    /// The active focus on the overview screen.
+    pub focus: ShareFocus,
     /// This device's key, when the vault has a sync identity.
     pub me: Option<Me>,
 }
@@ -93,6 +99,7 @@ impl std::fmt::Debug for ShareState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ShareState")
             .field("cursor", &self.cursor)
+            .field("focus", &self.focus)
             .finish_non_exhaustive()
     }
 }
@@ -119,6 +126,7 @@ impl Unlocked {
         self.view = View::Sync(Box::new(ShareState {
             step: Step::Overview,
             cursor: 0,
+            focus: ShareFocus::default(),
             me,
         }));
     }
@@ -295,37 +303,120 @@ impl Unlocked {
     }
 
     fn overview(&mut self, action: Option<Action>, ctx: &mut Ctx) -> Next {
+        let Some(action) = action else {
+            return Next::Stay(Step::Overview);
+        };
         let count = self.shared.len();
-        let cursor = self.share_mut().map_or(0, |share| share.cursor);
+        let has_vaults = count > 0;
+        let old_id = self.identity_is_old();
+        let (cursor, focus) = self
+            .share_mut()
+            .map_or((0, ShareFocus::Button(ShareButton::CopyKey)), |share| {
+                (share.cursor, share.focus)
+            });
         match action {
-            Some(Action::Back) => return Next::Leave,
-            Some(Action::Up) => self.set_cursor(cursor.saturating_sub(1)),
-            Some(Action::Down) => self.set_cursor((cursor + 1).min(count.saturating_sub(1))),
-            Some(Action::Confirm) => self.copy_my_key(ctx),
-            Some(Action::ShareNew) => {
-                return Next::Stay(Step::Name(TextInput::new(NAME_MAX)));
+            Action::Back => Next::Leave,
+            Action::NextField => {
+                self.set_focus(next_focus(focus, true, has_vaults, old_id));
+                Next::Stay(Step::Overview)
             }
-            Some(Action::ShareAdd) => return Next::Stay(self.begin_add(ctx)),
-            Some(Action::ShareJoin) => return Next::Stay(Step::PasteInvite),
-            Some(Action::ShareRemove) => return Next::Stay(self.begin_remove(ctx)),
-            Some(Action::ShareRole) => return Next::Stay(self.begin_role(ctx)),
-            Some(Action::ShareLeave) => return Next::Stay(self.begin_leave(ctx)),
-            Some(Action::ShareRekey) => return Next::Stay(self.begin_rekey(ctx)),
-            Some(Action::ShareAdvertise) => return Next::Stay(self.begin_advertise()),
-            Some(Action::ShareFillObserved) => return Next::Stay(self.begin_fill_observed(ctx)),
-            Some(Action::ShareUpgrade) => return Next::Stay(self.begin_upgrade(ctx)),
-            Some(Action::ShareRelay) => return Next::Stay(Self::begin_relay()),
-            Some(Action::ShareHold) => self.toggle_hold(ctx),
-            Some(Action::ShareRetry) => self.retry_selected(ctx),
-            Some(Action::ShareListen) => self.cycle_listen(ctx),
-            _ => {}
+            Action::PrevField => {
+                self.set_focus(next_focus(focus, false, has_vaults, old_id));
+                Next::Stay(Step::Overview)
+            }
+            Action::Left => {
+                self.set_focus(move_horizontal(focus, false, old_id));
+                Next::Stay(Step::Overview)
+            }
+            Action::Right => {
+                self.set_focus(move_horizontal(focus, true, old_id));
+                Next::Stay(Step::Overview)
+            }
+            Action::Up => {
+                if focus == ShareFocus::Vaults {
+                    self.set_cursor(cursor.saturating_sub(1));
+                } else {
+                    self.set_focus(move_vertical(focus, false, has_vaults, old_id));
+                }
+                Next::Stay(Step::Overview)
+            }
+            Action::Down => {
+                if focus == ShareFocus::Vaults {
+                    if cursor + 1 < count {
+                        self.set_cursor(cursor + 1);
+                    } else {
+                        self.set_focus(ShareFocus::Button(ShareButton::NewVault));
+                    }
+                } else {
+                    self.set_focus(move_vertical(focus, true, has_vaults, old_id));
+                }
+                Next::Stay(Step::Overview)
+            }
+            Action::Confirm => match focus {
+                ShareFocus::Vaults | ShareFocus::Button(ShareButton::CopyKey) => {
+                    self.copy_my_key(ctx);
+                    Next::Stay(Step::Overview)
+                }
+                ShareFocus::Button(btn) => {
+                    self.dispatch_overview_action(action_for_button(btn), ctx)
+                }
+            },
+            other => {
+                if let Some(btn) = button_for_action(other) {
+                    self.set_focus(ShareFocus::Button(btn));
+                }
+                self.dispatch_overview_action(other, ctx)
+            }
         }
-        Next::Stay(Step::Overview)
+    }
+
+    fn dispatch_overview_action(&mut self, action: Action, ctx: &mut Ctx) -> Next {
+        let step = match action {
+            Action::Confirm => {
+                self.copy_my_key(ctx);
+                Step::Overview
+            }
+            Action::ShareCopyUrl => {
+                self.copy_my_url(ctx);
+                Step::Overview
+            }
+            Action::ShareNew => Step::Name(TextInput::new(NAME_MAX)),
+            Action::ShareAdd => self.begin_add(ctx),
+            Action::ShareJoin => Step::PasteInvite,
+            Action::ShareRemove => self.begin_remove(ctx),
+            Action::ShareRole => self.begin_role(ctx),
+            Action::ShareLeave => self.begin_leave(ctx),
+            Action::ShareRekey => self.begin_rekey(ctx),
+            Action::ShareAdvertise => self.begin_advertise(),
+            Action::ShareFillObserved => self.begin_fill_observed(ctx),
+            Action::ShareUpgrade => self.begin_upgrade(ctx),
+            Action::ShareRelay => Self::begin_relay(),
+            Action::ShareHold => {
+                self.toggle_hold(ctx);
+                Step::Overview
+            }
+            Action::ShareRetry => {
+                self.retry_selected(ctx);
+                Step::Overview
+            }
+            Action::ShareListen => {
+                self.cycle_listen(ctx);
+                Step::Overview
+            }
+            _ => Step::Overview,
+        };
+        Next::Stay(step)
     }
 
     fn set_cursor(&mut self, cursor: usize) {
         if let Some(share) = self.share_mut() {
             share.cursor = cursor;
+        }
+    }
+
+    fn set_focus(&mut self, focus: ShareFocus) {
+        if let Some(share) = self.share_mut() {
+            share.focus = focus;
         }
     }
 }
