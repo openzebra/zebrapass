@@ -102,7 +102,7 @@ impl Unlocked {
         if let Some(p2p) = self.p2p.as_deref() {
             p2p.provider.serve(Arc::clone(&reference));
         }
-        self.refresh_https_sync(ctx);
+        self.refresh_zsync(ctx);
         self.sync_push_shared_full(&vault_id);
         self.remember(&reference, ctx);
         Ok(())
@@ -350,9 +350,9 @@ impl Unlocked {
             p2p.provider.serve(Arc::clone(&item.reference));
             crate::app::p2p::fetch(p2p, item);
         }
-        self.refresh_https_sync(ctx);
-        if let Some(https) = self.https.as_deref() {
-            https.trigger_pull_shared(&reference);
+        self.refresh_zsync(ctx);
+        if let (Some(zsync), Some(item)) = (self.zsync.as_deref(), self.shared.last_mut()) {
+            zsync.trigger_reconcile_shared(item);
         }
         self.remember(&reference, ctx);
         Ok(())
@@ -389,14 +389,14 @@ impl Unlocked {
 
     /// Check in with every peer and sync server once, now.
     pub fn sync_now(&mut self, ctx: &mut Ctx) {
-        if let Some(https) = self.https.as_deref() {
-            https.trigger_pull_personal(false);
-            for item in &self.shared {
-                https.trigger_pull_shared(&item.reference);
+        if let (Some(zsync), Some(vault)) = (self.zsync.as_deref_mut(), self.vault.as_deref()) {
+            zsync.trigger_reconcile_personal(vault, false, false);
+            for item in &mut self.shared {
+                zsync.trigger_reconcile_shared(item);
             }
         }
         if self.p2p.is_none() && self.listen_mode() == Listen::Off {
-            if self.https.is_some() {
+            if self.zsync.is_some() {
                 ctx.toast(Tone::Info, "Checking sync server.");
             } else {
                 ctx.toast(

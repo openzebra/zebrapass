@@ -56,9 +56,20 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
         | Row::SyncAdvertised
         | Row::SyncBeacon
         | Row::SyncNow => sync_value(row, state, ctx),
+        Row::ServerSync => {
+            if !draft.server_sync {
+                String::from("off (LAN/direct P2P only)")
+            } else if draft.sync_servers.is_empty() {
+                String::from("on (Zebra mesh)")
+            } else {
+                String::from("on (custom)")
+            }
+        }
         Row::SyncServers => {
-            if draft.sync_servers.is_empty() {
-                String::from("none · Enter sets URLs")
+            if !draft.server_sync {
+                String::from("disabled")
+            } else if draft.sync_servers.is_empty() {
+                String::from("ru.zebra.sh, eu.zebra.sh, zh.zebra.sh")
             } else {
                 format!(
                     "{} configured · {}",
@@ -67,11 +78,6 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
                 )
             }
         }
-        Row::SyncProxy => draft
-            .sync_proxy
-            .as_deref()
-            .unwrap_or("direct · Enter sets proxy")
-            .to_owned(),
         Row::BackupDir => draft
             .backup_dir
             .as_deref()
@@ -85,8 +91,6 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
             }
         }
         Row::BackupExport
-        | Row::CloudBackupPush
-        | Row::CloudBackupPull
         | Row::RotateKey
         | Row::ForgetDevice
         | Row::ClearHistory

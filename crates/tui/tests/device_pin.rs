@@ -50,6 +50,8 @@ fn device_vault(base: &std::path::Path) -> (Box<Vault>, String) {
         profile: KdfProfile::Fast,
         factor: Enrollment::Device(secret(PIN), KdfProfile::Fast),
         records: Vec::new(),
+        server_sync: false,
+        sync_servers: Vec::new(),
     })
     .unwrap();
     (vault, words)

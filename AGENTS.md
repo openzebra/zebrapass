@@ -9,21 +9,27 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 ## 0. Project Map
 
 ### 0.1 Product model
-1. A **BIP39 phrase** is the root secret. It is used **only** to create a vault or restore one on a new device.
+1. A **root identity** (`seed::RootKind`) creates or restores a vault on a device: **BIP39 phrase** (active), **Email** (`TODO(email)`, not supported yet), or **Hardware key** (`TODO(hw-key)`, not supported yet). All map to a 512-bit root seed on-device and derive a one-way 512-bit `storage_id` (`client_id: [u8; 64]`).
 2. After a restore, each device enrolls its own unlock factor: password, this device (P-256 + ML-KEM keys in a PIN-sealed `device.key` file, or a secure chip in native apps), or later a hardware key (FIDO2 PRF / YubiKey). Device keys never go to the OS keychain.
 3. **Envelope encryption.** One random vault key (VK) encrypts the data. The VK is wrapped by N independent KEKs (master, password, device, PRF). Adding or removing a factor never re-encrypts the data. Revoking a device **rotates the VK**.
 4. **Quantum-safe.** Symmetric keys are 256-bit. Key exchange uses a hybrid of ML-KEM and a classical EC share. Signatures use ML-DSA.
-5. **Sync is per record.** A single signed record frame goes to the server, never the whole vault.
-6. **Client ID** is `[u8; 64]`, derived one-way from the seed with HKDF-SHA512 and a domain-separated label.
-7. **Every upload is signed.** The server verifies it with public data only.
-8. Hardware keys are TODO; their seams already exist, so extend them and never bypass them. The sync server was removed by owner decision (2026-10): sync is peer-to-peer only. Its crypto seams stay dormant and no UI may expose them.
+5. **Sync is per record and Git-versioned.** Normal edits synchronize only signed per-record frames reconciled by `(record_id, revision, origin_device)` frontier; encrypted vault wrap headers (`SignedHead`) sync only on creation or generation change.
+6. **Client / Storage ID** is `[u8; 64]` (512-bit), derived one-way from the root seed with HKDF-SHA512 and a domain-separated label (`storage_id` for personal, `shared_storage_id` for shared vaults). It is identical across all devices and all servers.
+7. **Every upload is signed.** Servers verify uploads with public data only and replicate deltas across each other in parallel without ever seeing keys or plaintext.
+8. Hardware keys (`TODO(hw-key)`) and Email root accounts (`TODO(email)`) are future seams that must fail closed. Sync combines local LAN/direct P2P (`p2p-net`) with opt-out (enabled-by-default) zero-knowledge PQ TLS 1.3 sync & live relay across `[ru.zebra.sh, eu.zebra.sh, zh.zebra.sh]` (or user-configured self-hosted servers) via `zsync`.
 
 ### 0.2 Workspace crates (dependency direction: top → bottom)
 
 | Crate | Responsibility |
 |---|---|
+| `tui` | Terminal interface, create/restore/unlock flows, settings, CLI (`--server`) |
+| `zsync` | Unified binary sync over PQ TLS 1.3 (`:443`): Git-like frontier versioned encrypted repo sync, zero-storage live P2P relay, and parallel server-to-server mesh replication |
+| `p2p-net` | Direct LAN/WAN P2P sync service, multicast/subnet beacons, peer discovery |
+| `p2p-core` | Post-quantum noise/KEM peer channel and admission |
+| `syncwire` | Wire framing for P2P, certificates, attestations, revocations |
+| `sharing` / `memberlog` | Multi-user shared-vault invitations and signed member logs |
 | `session` | Public API: `create`, `unlock`, records CRUD, devices, rotation/revoke, `export_record` / `accept_record`, sync signatures |
-| `local` | On-device storage: atomic writes, local meta, rollback `seen` state, the PIN-sealed device key file |
+| `local` | On-device storage: atomic writes, local meta, rollback `seen` state, prefs, `.zpbackup`, PIN-sealed device key file |
 | `platform` | Secure-chip seam for native apps (`ChipBackend`; `SoftwareChip` for tests). Terminal apps cannot reach the Secure Enclave |
 | `container` | Vault file wire format: static header, wrap directory, wrap entries (`password`, `password_human`, `chip` = device, `prf`); kind `0x0002` is retired, commitment tag, parse limits |
 | `wraps` | KEK derivation and VK wrap/unwrap per factor (`password`, `password_human`, `chip` = device, `prf`) and wrap AD construction (`wad`) |
@@ -33,7 +39,7 @@ The rules below are strict. If a rule seems to conflict with a security requirem
 | `aead` | Body ciphers: AEGIS-256 and Kuznyechik-CTR + HMAC (encrypt-then-MAC), `BodyAlg` |
 | `pq` | ML-KEM (hybrid KEM) and ML-DSA (sync signing, device certificates) |
 | `ec` | Classical EC share for the hybrid KEM |
-| `seed` | BIP39 phrase, wordlist, entropy RNG, identity |
+| `seed` | BIP39 phrase, root identity seam (`RootKind`), wordlist, entropy RNG, identity |
 | `secret` | `Secret<T>` (zeroizing, redacted `Debug`) and constant-time compare (`ct_eq`) |
 
 ### 0.3 Cryptographic primitives (the only ones allowed)
@@ -82,7 +88,7 @@ VK ──HKDF(vault_id)──► k_body, k_bmac, k_commit (+ frame keys)
 - **Domain-separate everything.** Each derived key has a unique constant label. Variable parts of an info string or signed message are length-prefixed (`u16/u32 BE len ‖ bytes`). Never concatenate raw variable data.
 - **Authenticate all context.** Every AEAD call binds its header, algorithm id, version, vault_id and wrap metadata as AD. Algorithm ids come from an allow-list. Downgrades are rejected.
 - **Fail closed.** Unsupported algorithms, unknown wrap kinds, and unbuilt hardware paths return an error. Never silently skip them.
-- **Every sync upload is signed.** The signed message (`MSG_VERSION` 2) binds the domain ‖ server origin ‖ client_id ‖ device_id ‖ vault_id ‖ record_id ‖ revision ‖ prev_hash ‖ hash(ciphertext) ‖ msg_version ‖ key_generation. Version 1 still verifies but is never signed or accepted.
+- **Every sync upload is signed.** Legacy `session::SyncRecord` (`MSG_VERSION` 2) binds domain ‖ server origin ‖ client_id ‖ device_id ‖ vault_id ‖ record_id ‖ revision ‖ prev_hash ‖ hash(ciphertext) ‖ msg_version ‖ key_generation (version 1 still verifies but is never signed or accepted). Server-replicated `zsync` commits bind domain ‖ kind ‖ storage_id ‖ record_id/generation ‖ revision ‖ origin_device ‖ hash(ciphertext) under `ML-DSA` (`SYNC_CTX`) without locking to a single `server_origin`, so `[ru, eu, zh].zebra.sh` verify and replicate identical signed objects.
 - **Unsafe code is forbidden** in crypto crates: `#![forbid(unsafe_code)]`.
 - **Every security fix ships with a regression test.** Examples: tamper a byte and expect failure; roll back and expect `rollback`; revoke and expect the old key to fail.
 

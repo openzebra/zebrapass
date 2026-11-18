@@ -63,11 +63,11 @@ impl Row {
             Self::SyncPeers => {
                 Some("Other devices and members this node knows, and how many are connected now.")
             }
-            Self::SyncServers => Some(
-                "Self-hosted HTTPS/WSS sync relays (one or comma-separated). Traffic is PQ-encrypted before upload.",
+            Self::ServerSync => Some(
+                "Zero-knowledge PQ TLS 1.3 sync & live P2P relay across [ru, eu, zh].zebra.sh or custom servers.",
             ),
-            Self::SyncProxy => Some(
-                "Route sync server traffic through socks5h:// or http:// (set empty for direct connections).",
+            Self::SyncServers => Some(
+                "Custom Zebra sync servers (host[:port], comma-separated). Leave empty to use ru.zebra.sh, eu.zebra.sh, zh.zebra.sh.",
             ),
             Self::SyncDevices => Some(
                 "Addresses of your other devices, typed here when no beacon reaches them: another network, another country. Enter opens the list; a adds one.",
@@ -92,12 +92,6 @@ impl Row {
             ),
             Self::BackupKeep => Some(
                 "Maximum number of automatic rolling .zpbackup snapshots to retain in Auto-backup folder.",
-            ),
-            Self::CloudBackupPush => Some(
-                "Seal a full .zpbackup bundle under an outer Cascade key and upload it to your sync server.",
-            ),
-            Self::CloudBackupPull => Some(
-                "Download the encrypted .zpbackup bundle from your sync server and restore missing records or shared vaults.",
             ),
             _ => None,
         }

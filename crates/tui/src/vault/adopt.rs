@@ -1,5 +1,5 @@
-//! Replace a placeholder with the account's vault (from an HTTPS/WSS sync
-//! server or a LAN peer).
+//! Replace a placeholder with the account's vault (from `zsync` servers or
+//! a LAN peer).
 //!
 //! A device restored without a vault file holds an empty vault of its own;
 //! when a sync server or another device of the account answers, the file it
@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use local::{
-    BackupContents, Paths, SyncIdentity, decode_personal_head, load_local_meta, open_backup_bundle,
-    paths_for, remember_personal_peer, restore_shared_entries, save_meta,
+    Paths, SyncIdentity, decode_personal_head, load_local_meta, paths_for, remember_personal_peer,
+    save_meta,
 };
 use p2p_net::{Announce, PersonalFetch, fetch_personal};
 use secret::Secret;
@@ -20,7 +20,7 @@ use session::{
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
-use crate::vault::create::{Enrollment, land};
+use crate::vault::create::{Enrollment, land, unix_ms};
 use crate::vault::error::UnlockError;
 use crate::vault::factors::presence;
 use crate::vault::open::{Vault, read_vault_file};
@@ -122,10 +122,8 @@ pub struct AdoptRequest {
     pub manual: Vec<String>,
     /// Addresses on this machine may be dialed.
     pub loopback: bool,
-    /// HTTPS/WSS sync server URLs configured on CLI or settings.
+    /// `zsync` server endpoints (`host[:port]`) configured on CLI or settings.
     pub sync_servers: Vec<String>,
-    /// Outbound proxy URL configured on CLI or settings.
-    pub sync_proxy: Option<String>,
     /// Optional additional CA certificate PEM bytes.
     pub extra_ca_pem: Option<Vec<u8>>,
 }
@@ -136,7 +134,7 @@ impl std::fmt::Debug for AdoptRequest {
     }
 }
 
-/// Fetch the account's vault from configured HTTPS/WSS sync servers first, then
+/// Fetch the account's vault from configured `zsync` servers first, then
 /// LAN peers, verify it, enroll this device's own factor, and remove the
 /// placeholder.
 ///
@@ -148,7 +146,7 @@ impl std::fmt::Debug for AdoptRequest {
 /// [`UnlockError::Conflict`] against a newer local file, or [`UnlockError::Io`].
 pub fn adopt(request: &AdoptRequest) -> Result<Box<Vault>, UnlockError> {
     if !request.sync_servers.is_empty()
-        && let Some(vault) = adopt_from_https(request)?
+        && let Some(vault) = adopt_from_zsync(request)?
     {
         return Ok(vault);
     }
@@ -162,20 +160,27 @@ pub fn adopt(request: &AdoptRequest) -> Result<Box<Vault>, UnlockError> {
     Err(last)
 }
 
-fn adopt_from_https(request: &AdoptRequest) -> Result<Option<Box<Vault>>, UnlockError> {
-    let Ok(client) = sync_https::SyncClient::new(
-        &request.sync_servers,
-        request.sync_proxy.as_deref(),
-        request.extra_ca_pem.as_deref(),
-        true,
-    ) else {
+fn adopt_from_zsync(request: &AdoptRequest) -> Result<Option<Box<Vault>>, UnlockError> {
+    let Ok(client) =
+        zsync::ZebraClient::new(&request.sync_servers, request.extra_ca_pem.as_deref(), true)
+    else {
         return Ok(None);
     };
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| UnlockError::Io)?;
-    if let Ok(Some(pulled)) = rt.block_on(client.pull_personal_state(&request.identity, 0))
+    let input = zsync::PersonalStateInput {
+        vault_bytes: &[],
+        head_meta_plain: &[],
+        generation: 0,
+        head_epoch: 0,
+        records: &[],
+        revocations: &[],
+        rekeys: &[],
+        push_head_always: false,
+    };
+    if let Ok(pulled) = rt.block_on(client.reconcile_personal(&request.identity, input))
         && let Some((snap_bytes, head_bytes, _)) = pulled.snapshot
     {
         let (vault_id, commit_tag, generation) =
@@ -195,12 +200,14 @@ fn adopt_from_https(request: &AdoptRequest) -> Result<Option<Box<Vault>>, Unlock
             file: snap_bytes.to_vec(),
             peer,
         };
-        let mut vault = adopt_fetched_with_frames(request, fetched, &pulled.frames, None)?;
-        apply_sync_prefs(&mut vault, request)?;
-        return Ok(Some(vault));
-    }
-    if let Ok(Some(zpbk_bytes)) = rt.block_on(client.pull_cloud_backup(&request.identity)) {
-        let mut vault = adopt_from_backup_bytes(request, &zpbk_bytes)?;
+        let mut vault = adopt_fetched_with_frames(
+            request,
+            fetched,
+            &pulled.frames,
+            &pulled.certs,
+            &pulled.revocations,
+            None,
+        )?;
         apply_sync_prefs(&mut vault, request)?;
         return Ok(Some(vault));
     }
@@ -238,68 +245,6 @@ fn local_enrollment(file: &VaultFile, held: &Held) -> Result<Enrollment, UnlockE
     }
 }
 
-fn adopt_from_backup_bytes(
-    request: &AdoptRequest,
-    bytes: &[u8],
-) -> Result<Box<Vault>, UnlockError> {
-    let contents = match request.held.seed.as_ref() {
-        Some(seed) => open_backup_bundle(bytes, &UnlockCreds::master(seed.expose())),
-        None => match &request.held.factor {
-            HeldFactor::Password(pw) => {
-                open_backup_bundle(bytes, &UnlockCreds::default().with_human(pw))
-            }
-            HeldFactor::DevicePin(_, _) => return Err(UnlockError::Denied),
-        },
-    }
-    .map_err(|_| UnlockError::Denied)?;
-    let (file, mut session, shared) = match contents {
-        BackupContents::Bundle(bundle) => (bundle.file, bundle.session, bundle.shared),
-        BackupContents::LegacyVault(legacy) => (legacy.file, legacy.session, Vec::new()),
-    };
-    if let HeldFactor::Password(pw) = &request.held.factor {
-        let dir = wrap_directory(&file).map_err(|_| UnlockError::NotAVault)?;
-        if presence(&dir, None).password {
-            unlock(&file, &UnlockCreds::default().with_human(pw), None)
-                .map_err(|_| UnlockError::Denied)?;
-        }
-    }
-    let device_id = request.identity.device_id().ok_or(UnlockError::Io)?;
-    let paths = paths_for(&request.placeholder.base, session.vault_id());
-    if paths.vault_dir() == request.placeholder.vault_dir() {
-        return Err(UnlockError::WrongVault);
-    }
-    refuse_older(&paths, &session)?;
-    session
-        .set_origin_device(device_id)
-        .map_err(|_| UnlockError::Io)?;
-    request
-        .identity
-        .save(
-            &paths.sync_identity(),
-            &session.sync_identity_key().map_err(|_| UnlockError::Io)?,
-        )
-        .map_err(|_| UnlockError::Io)?;
-    let enrollment = local_enrollment(&file, &request.held)?;
-    let vault = land(
-        (session, file, paths),
-        (request.client_id, request.name.clone()),
-        request.held.profile,
-        enrollment,
-    )?;
-    if !shared.is_empty() {
-        restore_shared_entries(
-            &request.placeholder.base,
-            &request.identity,
-            &vault.session,
-            &shared,
-            false,
-        )
-        .map_err(|_| UnlockError::Io)?;
-    }
-    drop(std::fs::remove_dir_all(request.placeholder.vault_dir()));
-    Ok(vault)
-}
-
 /// Verify a fetched vault file, enroll this device's factor, and replace the
 /// placeholder.
 ///
@@ -311,7 +256,7 @@ pub fn adopt_fetched(
     fetched: PersonalFetch,
     address: &str,
 ) -> Result<Box<Vault>, UnlockError> {
-    let mut vault = adopt_fetched_with_frames(request, fetched, &[], Some(address))?;
+    let mut vault = adopt_fetched_with_frames(request, fetched, &[], &[], &[], Some(address))?;
     apply_sync_prefs(&mut vault, request)?;
     Ok(vault)
 }
@@ -319,7 +264,9 @@ pub fn adopt_fetched(
 fn adopt_fetched_with_frames(
     request: &AdoptRequest,
     fetched: PersonalFetch,
-    frames: &[(u64, Zeroizing<Vec<u8>>)],
+    frames: &[Zeroizing<Vec<u8>>],
+    certs: &[session::DeviceCert],
+    revocations: &[session::Revocation],
     address: Option<&str>,
 ) -> Result<Box<Vault>, UnlockError> {
     let device_id = request.identity.device_id().ok_or(UnlockError::Io)?;
@@ -335,21 +282,46 @@ fn adopt_fetched_with_frames(
         return Err(UnlockError::WrongVault);
     }
     let mut session = unlock_with_held(&file, &request.held)?;
-    for (_, raw) in frames {
-        if !raw.starts_with(&local::PERSONAL_DEVICE_MAGIC) {
-            let _ = session::accept_peer_frame(&mut session, &mut file, raw);
-        }
-    }
     let paths = paths_for(&request.placeholder.base, session.vault_id());
     if paths.vault_dir() == request.placeholder.vault_dir() {
         return Err(UnlockError::WrongVault);
     }
     refuse_older(&paths, &session)?;
+    let id_key = session.sync_identity_key().map_err(|_| UnlockError::Io)?;
+    request
+        .identity
+        .save(&paths.sync_identity(), &id_key)
+        .map_err(|_| UnlockError::Io)?;
+    let mut next_identity =
+        SyncIdentity::load(&paths.sync_identity(), &id_key).map_err(|_| UnlockError::Io)?;
+    let now = unix_ms();
+    for rev in revocations {
+        let _ = next_identity.add_revocation(rev.clone(), now);
+    }
+    for cert in certs {
+        if cert.device_id != device_id {
+            let _ = next_identity.add_peer(cert.clone(), now);
+        }
+    }
+    for raw in frames {
+        if raw.starts_with(&local::PERSONAL_DEVICE_MAGIC) {
+            if let Ok(entry) = local::PersonalDeviceEntry::verify_decode(
+                raw,
+                next_identity.root_vk(),
+                session.vault_id(),
+                now,
+            ) && entry.cert.device_id != device_id
+            {
+                let _ = next_identity.add_peer(entry.cert, now);
+            }
+        } else {
+            let _ = session::accept_peer_frame(&mut session, &mut file, raw);
+        }
+    }
     session
         .set_origin_device(device_id)
         .map_err(|_| UnlockError::Io)?;
-    request
-        .identity
+    next_identity
         .save(
             &paths.sync_identity(),
             &session.sync_identity_key().map_err(|_| UnlockError::Io)?,
@@ -371,7 +343,7 @@ fn adopt_fetched_with_frames(
 }
 
 fn apply_sync_prefs(vault: &mut Vault, request: &AdoptRequest) -> Result<(), UnlockError> {
-    if request.sync_servers.is_empty() && request.sync_proxy.is_none() {
+    if request.sync_servers.is_empty() {
         return Ok(());
     }
     let mut prefs = vault.meta.prefs.clone().unwrap_or_default();
@@ -381,9 +353,6 @@ fn apply_sync_prefs(vault: &mut Vault, request: &AdoptRequest) -> Result<(), Unl
             .iter()
             .map(|s| Box::from(s.as_str()))
             .collect();
-    }
-    if prefs.sync_proxy.is_none() {
-        prefs.sync_proxy = request.sync_proxy.as_deref().map(Box::from);
     }
     vault.meta.prefs = Some(prefs);
     save_meta(&vault.paths, &vault.meta, &vault.session).map_err(|_| UnlockError::Io)

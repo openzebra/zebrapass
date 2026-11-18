@@ -66,6 +66,13 @@ fn first_run_creates_a_vault_and_round_trips_a_record() {
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, PASSWORD);
     press(&mut app, KeyCode::Enter);
+    let Screen::Create(state) = &app.screen else {
+        panic!("not create")
+    };
+    assert_eq!(state.step, Step::Sync);
+    let sync_screen = render(&app, 100, 30);
+    assert!(sync_screen.contains("ru.zebra.sh"), "{sync_screen}");
+    press(&mut app, KeyCode::Enter);
     wait(&mut app);
     assert_eq!(app.screen.name(), "unlocked");
 

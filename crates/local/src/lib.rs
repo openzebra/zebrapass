@@ -58,7 +58,7 @@ pub use last_seen::LastSeen;
 pub use limits::{
     BACKUP_DIR_MAX_LEN, BACKUP_KEEP_MAX, CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S,
     PEERS_MAX, PERSONAL_PEER_MAX_LEN, PERSONAL_PEERS_MAX, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX,
-    SHARED_NAME_MAX, SYNC_PROXY_MAX_LEN, SYNC_SERVER_MAX_LEN, SYNC_SERVERS_MAX,
+    SHARED_NAME_MAX, SYNC_SERVER_MAX_LEN, SYNC_SERVERS_MAX,
 };
 pub use listen::Listen;
 pub use meta::{LocalMeta, SeenCursor, load_local_meta, save_local_meta};
@@ -87,7 +87,8 @@ pub use shared_rotate::{
 pub use shared_sync::{Edit, Verdict, verdict_of};
 pub use sync_identity::{SyncIdentity, upgrade_sync_identity};
 pub use sync_url::{
-    parse_backup_dir, parse_sync_proxy_url, parse_sync_server_list, parse_sync_server_url,
+    DEFAULT_SYNC_PORT, DEFAULT_SYNC_SERVERS, default_sync_servers, parse_backup_dir,
+    parse_sync_server_list, parse_sync_server_url,
 };
 pub use usage::{Usage, UsageEntry};
 

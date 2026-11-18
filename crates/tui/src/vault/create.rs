@@ -57,6 +57,10 @@ pub struct NewVault {
     pub factor: Enrollment,
     /// Records imported from another manager, written with the vault.
     pub records: Vec<Document>,
+    /// Whether cloud/mesh server sync & live relay are enabled.
+    pub server_sync: bool,
+    /// Optional custom sync server list (empty uses hardcoded official servers).
+    pub sync_servers: Vec<Box<str>>,
 }
 
 /// Where a restore gets the vault file from.
@@ -100,6 +104,8 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
         profile,
         factor,
         records,
+        server_sync,
+        sync_servers,
     } = request;
     // Every new vault uses per-record frames: each frame is the AEGIS-256 +
     // Kuznyechik cascade, and there is no cipher choice to get wrong.
@@ -109,6 +115,13 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
         .save(&paths.sync_identity(), &session.sync_identity_key()?)?;
     drop(phrase);
     meta.name = name;
+    if !server_sync || !sync_servers.is_empty() {
+        meta.prefs = Some(local::Prefs {
+            server_sync,
+            sync_servers,
+            ..local::Prefs::default()
+        });
+    }
     enroll(&mut session, &mut file, &paths, profile, factor)?;
     write_records_batch(&mut session, &mut file, &records)?;
     drop(records);
@@ -155,6 +168,8 @@ fn restore_empty(request: RestoreVault) -> Result<Box<Vault>, UnlockError> {
         profile,
         factor,
         records: Vec::new(),
+        server_sync: true,
+        sync_servers: Vec::new(),
     })
     .map_err(|_| UnlockError::Io)?;
     crate::vault::adopt::mark_placeholder(&vault.paths).map_err(|_| UnlockError::Io)?;

@@ -95,22 +95,8 @@ impl Unlocked {
         if !is_placeholder(&vault.paths) {
             return;
         }
-        let sync_servers: Vec<String> = vault
-            .meta
-            .prefs
-            .as_ref()
-            .filter(|p| !p.sync_servers.is_empty())
-            .map_or_else(
-                || ctx.sync_servers.iter().map(ToString::to_string).collect(),
-                |p| p.sync_servers.iter().map(ToString::to_string).collect(),
-            );
-        let sync_proxy = vault
-            .meta
-            .prefs
-            .as_ref()
-            .and_then(|p| p.sync_proxy.as_deref())
-            .or(ctx.sync_proxy.as_deref())
-            .map(ToString::to_string);
+        let sync_servers =
+            crate::app::zsync::resolve_sync_servers(vault.meta.prefs.as_ref(), ctx, &[]);
         let manual: Vec<String> = self
             .devices
             .iter()
@@ -169,7 +155,6 @@ impl Unlocked {
             manual,
             loopback: self.beacon.is_some_and(|config| config.loopback),
             sync_servers,
-            sync_proxy,
             extra_ca_pem: ctx.extra_ca_pem.clone(),
         };
         ctx.start(Job::Adopt(Box::new(request)), Task::Adopt);

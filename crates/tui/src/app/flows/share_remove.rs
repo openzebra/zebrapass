@@ -174,8 +174,8 @@ impl Unlocked {
         if let Some(p2p) = self.p2p.as_deref() {
             p2p.provider.serve(next);
         }
-        if let Some(https) = self.https.as_deref() {
-            https.update_boxes(&self.shared);
+        if let Some(zsync) = self.zsync.as_deref() {
+            zsync.update_watched(&self.shared);
         }
         self.sync_push_shared_full(&next_vault_id);
         self.sync_push_personal(None);

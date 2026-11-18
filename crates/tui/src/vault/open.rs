@@ -136,6 +136,7 @@ pub fn read_directory(path: &Path) -> Result<WrapDirectory, UnlockError> {
 /// [`UnlockError::Denied`].
 pub fn unlock_vault(paths: Paths, credential: Credential) -> Result<Box<Vault>, UnlockError> {
     let file = read_vault_file(&paths.vault_file)?;
+    let is_device = matches!(credential, Credential::Device(_));
     let opened = match &credential {
         Credential::Password(password) => {
             unlock(&file, &UnlockCreds::default().with_human(password), None)
@@ -145,14 +146,24 @@ pub fn unlock_vault(paths: Paths, credential: Credential) -> Result<Box<Vault>, 
     };
     drop(credential);
     let session = opened.map_err(|error| UnlockError::from(&error))?;
-    finish_open(file, session, paths)
+    finish_open(file, session, paths, is_device)
 }
 
 /// Apply the rollback cursor and hand back the vault.
-fn finish_open(file: VaultFile, session: Session, paths: Paths) -> Result<Box<Vault>, UnlockError> {
+fn finish_open(
+    file: VaultFile,
+    mut session: Session,
+    paths: Paths,
+    is_device: bool,
+) -> Result<Box<Vault>, UnlockError> {
     let key = session.local_meta_key().map_err(|_| UnlockError::Io)?;
     let mut meta =
         load_local_meta(&paths.local_meta, &key).map_err(|_| UnlockError::MetaMissing)?;
+    if !is_device && meta.device_id != [0u8; 16] {
+        session
+            .set_origin_device(meta.device_id)
+            .map_err(|_| UnlockError::Io)?;
+    }
     let seen = meta.seen.map(|cursor| Seen {
         generation: cursor.generation,
         commit_tag: cursor.commit_tag,

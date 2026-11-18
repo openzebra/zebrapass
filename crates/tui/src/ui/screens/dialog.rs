@@ -234,7 +234,6 @@ fn draw_form(frame: &mut Frame<'_>, area: Rect, form: &Form, ctx: &Ctx) {
         let label = match form.kind {
             FormKind::DropRecovery => "type DROP",
             FormKind::SyncServers => "servers",
-            FormKind::SyncProxy => "proxy",
             FormKind::BackupDir => "folder",
             FormKind::BackupExport => "output path",
             _ => "name",
@@ -286,7 +285,6 @@ fn confirm_line(form: &Form, ctx: &Ctx) -> Line<'static> {
                 | FormKind::ChangePin
                 | FormKind::Rename
                 | FormKind::SyncServers
-                | FormKind::SyncProxy
                 | FormKind::BackupDir
                 | FormKind::BackupExport => "rotate",
             };

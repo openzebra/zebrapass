@@ -305,20 +305,6 @@ fn submit_settings_form(
             }
             Some(Ok("Staged. Press Ctrl-S in Settings to save."))
         }
-        FormKind::SyncProxy => {
-            let parsed = if raw.is_empty() {
-                None
-            } else {
-                match local::parse_sync_proxy_url(raw) {
-                    Ok(url) => Some(url),
-                    Err(err) => return Some(Err(err)),
-                }
-            };
-            if let Some(modal) = state.settings.as_deref_mut() {
-                modal.draft.sync_proxy = parsed;
-            }
-            Some(Ok("Staged. Press Ctrl-S in Settings to save."))
-        }
         FormKind::BackupDir => {
             let parsed = if raw.is_empty() {
                 None

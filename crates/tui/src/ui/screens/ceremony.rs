@@ -37,7 +37,7 @@ fn draw_phrase(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx
     let [body, hints] = body_and_hints(area);
     let card = centered(body, body.width.min(84), 22);
     let block = panel(
-        titled("Your recovery phrase", (2, 4), card.width, ctx),
+        titled("Your recovery phrase", (2, 5), card.width, ctx),
         theme,
     );
     let inner = block.inner(card);
@@ -123,7 +123,7 @@ fn draw_verify(frame: &mut Frame<'_>, area: Rect, verify: &Verify, ctx: &Ctx) {
     let theme = &ctx.theme;
     let [body, hints] = body_and_hints(area);
     let card = centered(body, body.width.min(84), 18);
-    let block = panel(titled("Prove you saved it", (3, 4), card.width, ctx), theme);
+    let block = panel(titled("Prove you saved it", (3, 5), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
     let [_, cards, message, note] = Layout::vertical([

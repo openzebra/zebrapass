@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use local::{BACKUP_DIR_MAX_LEN, DEVICE_PIN_LEN, SYNC_PROXY_MAX_LEN};
+use local::{BACKUP_DIR_MAX_LEN, DEVICE_PIN_LEN};
 use seed::SeedPhrase;
 use session::KdfProfile;
 use subtle::ConstantTimeEq;
@@ -19,33 +19,18 @@ use crate::vault::device::PIN_PROFILE;
 use crate::vault::ops::{FactorRef, Op, Rotation};
 
 impl Form {
-    /// Edit HTTPS/WSS sync server URLs (comma-separated).
+    /// Edit custom `zsync` server endpoints (comma-separated).
     #[must_use]
     pub fn sync_servers(current: &str) -> Self {
         Self::text_form(
             FormKind::SyncServers,
             "Sync servers",
             &[
-                "Enter https://host[:port]/secret-path URLs (comma-separated).",
-                "Leave empty to disable server sync, then Ctrl-S in Settings.",
+                "Enter host[:port] endpoints (comma-separated).",
+                "Leave empty for [ru, eu, zh].zebra.sh, then Ctrl-S in Settings.",
             ],
             current,
             1024,
-        )
-    }
-
-    /// Edit outbound `socks5h://` or `http://` proxy URL.
-    #[must_use]
-    pub fn sync_proxy(current: &str) -> Self {
-        Self::text_form(
-            FormKind::SyncProxy,
-            "Outbound proxy",
-            &[
-                "Enter socks5h://[user:pass@]host:port or http://host:port.",
-                "Leave empty for direct connections, then Ctrl-S in Settings.",
-            ],
-            current,
-            SYNC_PROXY_MAX_LEN,
         )
     }
 
@@ -199,7 +184,7 @@ impl Form {
                     Ok((Op::ExportBackup(PathBuf::from(path)), Task::Save))
                 }
             }
-            FormKind::SyncServers | FormKind::SyncProxy | FormKind::BackupDir => {
+            FormKind::SyncServers | FormKind::BackupDir => {
                 Err("Apply this change directly from Settings.")
             }
         }

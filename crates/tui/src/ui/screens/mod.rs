@@ -5,6 +5,7 @@ pub mod alert;
 pub mod busy;
 pub mod ceremony;
 pub mod create;
+pub mod create_sync;
 pub mod detail;
 pub mod devices;
 pub mod dialog;

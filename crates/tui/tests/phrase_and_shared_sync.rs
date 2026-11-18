@@ -1,10 +1,12 @@
-//! End-to-end TUI integration tests over HTTPS/WSS + `SplitHTTP` sync server
-//! (`Listen::Off` so zero LAN P2P sockets or broadcasts are used):
+//! End-to-end TUI integration tests over a 3-server `zsync` PQ TLS 1.3 mesh
+//! (`srv_ru <-> srv_eu <-> srv_zh`, with `Listen::Off` so zero LAN P2P sockets
+//! or broadcasts are used):
 //! 1. Same BIP39 phrase cloning across devices with different local factors
-//!    (Password on Device A, 6-digit Device PIN on Device B), auto-joining
-//!    personal + shared vaults, live 2-way edits, and live `VK` rotation.
+//!    (Password on Device A connected to `srv_ru`, 6-digit Device PIN on Device B
+//!    connected to `srv_zh`), auto-joining personal + shared vaults, live 2-way
+//!    edits, and live `VK` rotation across the server mesh.
 //! 2. Multi-user `SharedVault` invitation and real-time sync between two
-//!    distinct BIP39 phrases over internet HTTPS sync server only.
+//!    distinct BIP39 phrases connected to different servers (`srv_ru` and `srv_eu`).
 //! 3. `.zpbackup` export and restore roundtrip onto a fresh directory.
 
 #![allow(
@@ -25,7 +27,6 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
-use sync_https::{SyncServerConfig, SyncServerHandle, start_server};
 use tui::App;
 use tui::app::ctx::Task;
 use tui::app::flows::home::Filter;
@@ -34,24 +35,29 @@ use tui::app::flows::unlocked::View;
 use tui::app::screen::Screen;
 use tui::vault::ops::{Op, Rotation};
 use zeroize::Zeroizing;
+use zsync::{ZebraServerConfig, ZebraServerHandle, start_server};
 
 const PIN_B: &str = "482916";
-const SERVER_SLUG: &str = "zp-secret-tui-sync-2026";
 
 struct TestServer {
     rt: tokio::runtime::Runtime,
-    handle: Option<SyncServerHandle>,
-    url: String,
+    handle: Option<ZebraServerHandle>,
+    endpoint: String,
     ca_path: PathBuf,
     dir: PathBuf,
 }
 
 impl TestServer {
-    fn start(tag: &str) -> Self {
+    fn start(
+        tag: &str,
+        ca_pem: &[u8],
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        peers: Vec<Box<str>>,
+    ) -> Self {
         let dir = common::temp_dir(&format!("srv-{tag}"));
-        let (ca_pem, cert_pem, key_pem) = generate_test_pki(&dir, "DNS:localhost,IP:127.0.0.1");
         let ca_path = dir.join("ca.crt");
-        std::fs::write(&ca_path, &ca_pem).unwrap();
+        std::fs::write(&ca_path, ca_pem).unwrap();
 
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -59,20 +65,22 @@ impl TestServer {
             .build()
             .unwrap();
         let handle = rt
-            .block_on(start_server(SyncServerConfig {
+            .block_on(start_server(ZebraServerConfig {
                 listen: "127.0.0.1:0".parse().unwrap(),
-                cert_pem,
-                key_pem,
+                cert_pem: cert_pem.to_vec(),
+                key_pem: key_pem.to_vec(),
+                extra_ca_pem: Some(ca_pem.to_vec()),
                 data_dir: dir.join("data"),
-                secret_slug: SERVER_SLUG.into(),
-                public_origin: "https://localhost:0".into(),
+                peers,
+                mesh_interval: Duration::from_millis(120),
+                allow_loopback: true,
             }))
             .unwrap();
-        let url = handle.endpoint_url(SERVER_SLUG);
+        let endpoint = handle.endpoint.to_string();
         Self {
             rt,
             handle: Some(handle),
-            url,
+            endpoint,
             ca_path,
             dir,
         }
@@ -85,6 +93,50 @@ impl Drop for TestServer {
             self.rt.block_on(handle.stop());
         }
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+struct TestCluster {
+    srv_ru: TestServer,
+    srv_eu: TestServer,
+    srv_zh: TestServer,
+    pki_dir: PathBuf,
+}
+
+impl TestCluster {
+    fn start(tag: &str) -> Self {
+        let pki_dir = common::temp_dir(&format!("pki-{tag}"));
+        let (ca_pem, cert_pem, key_pem) = generate_test_pki(&pki_dir, "DNS:localhost,IP:127.0.0.1");
+        let ru_hub = TestServer::start("ru", &ca_pem, &cert_pem, &key_pem, Vec::new());
+        let eu_mirror = TestServer::start(
+            "eu",
+            &ca_pem,
+            &cert_pem,
+            &key_pem,
+            vec![ru_hub.endpoint.as_str().into()],
+        );
+        let zh_node = TestServer::start(
+            "zh",
+            &ca_pem,
+            &cert_pem,
+            &key_pem,
+            vec![
+                ru_hub.endpoint.as_str().into(),
+                eu_mirror.endpoint.as_str().into(),
+            ],
+        );
+        Self {
+            srv_ru: ru_hub,
+            srv_eu: eu_mirror,
+            srv_zh: zh_node,
+            pki_dir,
+        }
+    }
+}
+
+impl Drop for TestCluster {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.pki_dir);
     }
 }
 
@@ -200,7 +252,7 @@ fn generate_test_pki(dir: &Path, san: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 
 fn app_with_server(base: &Path, srv: &TestServer) -> App {
     let mut cfg = common::config(base);
-    cfg.sync_servers = vec![srv.url.clone().into_boxed_str()];
+    cfg.sync_servers = vec![srv.endpoint.clone().into_boxed_str()];
     cfg.extra_ca = Some(srv.ca_path.clone());
     common::app_with(&cfg, base, common::CAPS)
 }
@@ -277,12 +329,12 @@ fn lock_and_unlock(app: &mut App, secret: &str) {
 
 #[test]
 fn same_phrase_different_factors_clone_shared_autojoin_and_rekey() {
-    let srv = TestServer::start("same-phrase");
+    let cluster = TestCluster::start("same-phrase");
 
     let dir_a = common::temp_dir("same-a");
     let words = common::make_vault(&dir_a);
     common::sync_off_with(&dir_a, common::PASSWORD);
-    let mut app_a = app_with_server(&dir_a, &srv);
+    let mut app_a = app_with_server(&dir_a, &cluster.srv_ru);
     common::unlock(&mut app_a, common::PASSWORD);
 
     if let Screen::Unlocked(state) = &mut app_a.screen {
@@ -311,14 +363,18 @@ fn same_phrase_different_factors_clone_shared_autojoin_and_rekey() {
         state.home.filter = Filter::All;
     }
 
-    let deadline = Instant::now() + Duration::from_millis(600);
-    while Instant::now() < deadline {
-        common::tick(&mut app_a, Duration::from_millis(250));
-        std::thread::sleep(Duration::from_millis(30));
-    }
+    assert!(
+        pump_one(&mut app_a, Duration::from_secs(15), |app| {
+            common::unlocked_state(app).zsync.as_ref().is_some_and(|z| {
+                z.last_sync_ms.is_some() && z.personal_queue == tui::app::zsync::PersonalQueue::Idle
+            })
+        }),
+        "Device A never finished initial zsync push"
+    );
 
+    // Device B connects ONLY to srv_zh, testing automatic cross-server mesh propagation.
     let dir_b = common::temp_dir("same-b");
-    let mut app_b = app_with_server(&dir_b, &srv);
+    let mut app_b = app_with_server(&dir_b, &cluster.srv_zh);
     common::open_restore(&mut app_b);
     common::type_phrase(&mut app_b, &words);
     common::press(&mut app_b, KeyCode::Enter);
@@ -334,14 +390,13 @@ fn same_phrase_different_factors_clone_shared_autojoin_and_rekey() {
     common::wait(&mut app_b);
 
     assert!(
-        pump_one(&mut app_b, Duration::from_secs(30), |app| {
-            app.screen.name() == "unlocked" && !app.ctx.busy() && !common::is_placeholder(app)
+        pump_pair(&mut app_a, &mut app_b, Duration::from_secs(30), |_, b| {
+            b.screen.name() == "unlocked"
+                && !b.ctx.busy()
+                && !common::is_placeholder(b)
+                && common::titles_of(b).contains(&String::from("GitHub Prod"))
         }),
-        "Device B never adopted personal vault over HTTPS"
-    );
-    assert!(
-        common::titles_of(&app_b).contains(&String::from("GitHub Prod")),
-        "missing adopted record: {:?}",
+        "Device B never adopted personal vault with GitHub Prod over zsync mesh: {:?}",
         common::titles_of(&app_b)
     );
 
@@ -352,9 +407,9 @@ fn same_phrase_different_factors_clone_shared_autojoin_and_rekey() {
             let st_a = common::unlocked_state(a);
             let st_b = common::unlocked_state(b);
             let a_knows_b = st_a
-                .https
+                .zsync
                 .as_ref()
-                .is_some_and(|h| !h.peer_devices.is_empty());
+                .is_some_and(|z| !z.peer_devices.is_empty());
             let b_synced_shared = st_b.shared.first().is_some_and(|item| {
                 item.ready() && item.cache.iter().any(|r| &*r.title == "OPENAI_API_KEY")
             });
@@ -435,8 +490,8 @@ fn same_phrase_different_factors_clone_shared_autojoin_and_rekey() {
 }
 
 #[test]
-fn different_phrases_multi_user_shared_vault_over_internet_sync_server() {
-    let srv = TestServer::start("multi-user");
+fn multi_user_shared_vault_syncs_across_mesh() {
+    let cluster = TestCluster::start("multi-user");
 
     let dir_1 = common::temp_dir("mu-1");
     let dir_2 = common::temp_dir("mu-2");
@@ -445,8 +500,9 @@ fn different_phrases_multi_user_shared_vault_over_internet_sync_server() {
     common::sync_off_with(&dir_1, common::PASSWORD);
     common::sync_off_with(&dir_2, common::PASSWORD);
 
-    let mut app_1 = app_with_server(&dir_1, &srv);
-    let mut app_2 = app_with_server(&dir_2, &srv);
+    // User 1 connects to srv_ru; User 2 connects to srv_eu.
+    let mut app_1 = app_with_server(&dir_1, &cluster.srv_ru);
+    let mut app_2 = app_with_server(&dir_2, &cluster.srv_eu);
     common::unlock(&mut app_1, common::PASSWORD);
     common::unlock(&mut app_2, common::PASSWORD);
 
@@ -495,7 +551,7 @@ fn different_phrases_multi_user_shared_vault_over_internet_sync_server() {
                     item.ready() && item.cache.iter().any(|r| &*r.title == "AWS_PROD_KEY")
                 })
         }),
-        "User 2 never received AWS_PROD_KEY over HTTPS sync server"
+        "User 2 never received AWS_PROD_KEY over zsync mesh"
     );
 
     if let Screen::Unlocked(state) = &mut app_2.screen {
@@ -511,7 +567,7 @@ fn different_phrases_multi_user_shared_vault_over_internet_sync_server() {
                 .first()
                 .is_some_and(|item| item.cache.iter().any(|r| &*r.title == "CLOUDFLARE_TOKEN"))
         }),
-        "User 1 never received CLOUDFLARE_TOKEN from User 2"
+        "User 1 never received CLOUDFLARE_TOKEN from User 2 across mesh"
     );
 
     let _ = std::fs::remove_dir_all(&dir_1);

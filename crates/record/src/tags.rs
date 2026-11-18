@@ -85,10 +85,11 @@ pub const TAG_PREF_P2P_RELAYS: u16 = 0x021A;
 /// 1 byte, 0 or 1 (`Bytes`).
 pub const TAG_PREF_P2P_HOLD: u16 = 0x021B;
 
-/// Configured sync server URLs (`https://host[:port]/slug`), one per line (`Text`).
+/// Configured custom sync server endpoints (`host[:port]`), one per line (`Text`).
 pub const TAG_PREF_SYNC_SERVERS: u16 = 0x021C;
 
-/// Optional sync proxy URL (`socks5h://host:port` or `http://host:port`) (`Text`).
+// Tag `0x021D` (`TAG_PREF_SYNC_PROXY`, retired outbound proxy URL) is kept as a constant for ignore tests.
+/// Retired outbound proxy URL (`0x021D`), ignored on read.
 pub const TAG_PREF_SYNC_PROXY: u16 = 0x021D;
 
 /// Optional directory path for automatic rolling backups (`Text`).
@@ -100,6 +101,9 @@ pub const TAG_PREF_BACKUP_KEEP: u16 = 0x021F;
 /// Record copy usage on this device: packed 16-byte entries
 /// `id u32 LE ‖ count u32 LE ‖ last_ms u64 LE`, sorted by id (`Bytes`).
 pub const TAG_USAGE: u16 = 0x0220;
+
+/// Whether Zebra server cloud + live relay sync is enabled (`0` or `1`), 1 byte (`Bytes`).
+pub const TAG_PREF_SERVER_SYNC: u16 = 0x0221;
 
 // Tag `0x0230` is reserved: the device signing seed is never put in a
 // document, it is the first 32 bytes of the sealed sync identity payload.

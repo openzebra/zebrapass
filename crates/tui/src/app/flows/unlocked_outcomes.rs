@@ -109,7 +109,7 @@ impl Unlocked {
                 settings.saved = prefs.clone();
             }
         }
-        self.restart_https_sync(ctx);
+        self.restart_zsync(ctx);
         ctx.toast(
             Tone::Success,
             "Settings saved for this vault on this device.",

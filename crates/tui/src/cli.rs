@@ -21,13 +21,13 @@ pub const LOCK_AFTER_RANGE: std::ops::RangeInclusive<u64> = 30..=3600;
 /// Usage text for `--help` and argument errors.
 pub const USAGE: &str = "\
 usage: zebrapass [options]
-       zebrapass --server --listen <ip:port> --cert <pem> --key <pem> --secret-path <slug> [options]
+       zebrapass --server --listen <ip:port> --cert <pem> --key <pem> [options]
 
 client options:
   --vault <file>        open this vault file instead of the default location
   --data-dir <dir>      use <dir> instead of ~/.zebrapass
-  --sync-server <url>   add an HTTPS/WSS sync endpoint (repeatable)
-  --proxy <url>         tunnel HTTPS/WSS sync over socks5h:// or http:// proxy
+  --sync-server <host>  add a Zebra sync/relay server (host[:port], repeatable)
+  --no-server-sync      disable automatic connection to [ru, eu, zh].zebra.sh
   --extra-ca <pem>      trust additional CA certificate PEM for sync servers
   --theme <name>        stripes-dark (default), stripes-light, or mono
   --no-color            monochrome theme (also set by NO_COLOR)
@@ -41,13 +41,13 @@ client options:
   --trace-events        debug builds: log key kinds (never characters) to stderr
 
 server options (with --server):
-  --server              run the zero-knowledge PQ HTTPS/WSS + SplitHTTP sync relay
-  --listen <ip:port>    TCP bind address (e.g. 0.0.0.0:8443)
+  --server              run the zero-knowledge PQ TLS 1.3 sync, relay & mesh node
+  --listen <ip:port>    TCP bind address (e.g. 0.0.0.0:443)
   --cert <pem>          TLS certificate chain PEM file
   --key <pem>           TLS private key PEM file
-  --secret-path <slug>  camouflage URL path prefix (>= 16 chars)
-  --public-origin <url> origin string signed in requests (default: https://<listen>)
-  --data-dir <dir>      mailbox storage directory (default: ~/.zebrapass/server)
+  --peer <host[:port]>  peer Zebra server for parallel bidirectional mesh sync (repeatable)
+  --extra-ca <pem>      trust additional CA certificate PEM for dialing peers
+  --data-dir <dir>      encrypted repository directory (default: ~/.zebrapass/server)
 
   -h, --help            show this help
   -V, --version         show the version
@@ -60,10 +60,8 @@ pub struct Config {
     pub vault: Option<PathBuf>,
     /// Explicit data directory; `None` means `local::base_dir()`.
     pub data_dir: Option<PathBuf>,
-    /// Pre-configured HTTPS/WSS sync server URLs.
+    /// Pre-configured custom sync servers (`host[:port]`).
     pub sync_servers: Vec<Box<str>>,
-    /// Pre-configured outbound proxy (`socks5h://` or `http://`).
-    pub sync_proxy: Option<Box<str>>,
     /// Optional additional CA certificate PEM path.
     pub extra_ca: Option<PathBuf>,
     /// Auto-lock delay.
@@ -87,12 +85,12 @@ pub struct ServerArgs {
     pub cert: PathBuf,
     /// TLS private key PEM path.
     pub key: PathBuf,
-    /// Mailbox storage directory.
+    /// Encrypted repository storage directory.
     pub data_dir: Option<PathBuf>,
-    /// `WebTunnel` camouflage secret slug.
-    pub secret_path: Box<str>,
-    /// Public HTTPS origin signed into client requests.
-    pub public_origin: Option<Box<str>>,
+    /// Peer Zebra servers (`host[:port]`) for parallel mesh replication.
+    pub peers: Vec<Box<str>>,
+    /// Optional extra CA PEM path for connecting to peer servers.
+    pub extra_ca: Option<PathBuf>,
 }
 
 /// On/off switches, packed so the config stays small and `Copy`.
@@ -110,6 +108,8 @@ impl Flags {
     pub const FOCUS_LOCK: u8 = 1 << 3;
     /// Key kinds are traced to stderr (debug builds only).
     pub const TRACE: u8 = 1 << 4;
+    /// Default Zebra sync servers (`[ru, eu, zh].zebra.sh:443`) may be dialed.
+    pub const NET_SYNC: u8 = 1 << 5;
 
     /// Whether `bit` is set.
     #[must_use]
@@ -134,14 +134,14 @@ impl Default for Config {
             vault: None,
             data_dir: None,
             sync_servers: Vec::new(),
-            sync_proxy: None,
             extra_ca: None,
             lock_after: DEFAULT_LOCK_AFTER,
             clip_clear: DEFAULT_CLIP_CLEAR,
             theme: ThemeName::StripesDark,
             flags: Flags::default()
                 .with(Flags::ANIM, true)
-                .with(Flags::BENCH, true),
+                .with(Flags::BENCH, true)
+                .with(Flags::NET_SYNC, true),
             beacon: None,
         }
     }
@@ -152,7 +152,7 @@ impl Default for Config {
 pub enum Command {
     /// Start the interface.
     Run(Box<Config>),
-    /// Run the zero-knowledge HTTPS/WSS + `SplitHTTP` sync relay daemon.
+    /// Run the zero-knowledge PQ TLS 1.3 sync, relay & mesh daemon.
     Server(Box<ServerArgs>),
     /// Print usage and exit successfully.
     Help,
@@ -167,8 +167,8 @@ struct ServerDraft {
     cert: Option<PathBuf>,
     key: Option<PathBuf>,
     data_dir: Option<PathBuf>,
-    secret_path: Option<Box<str>>,
-    public_origin: Option<Box<str>>,
+    peers: Vec<Box<str>>,
+    extra_ca: Option<PathBuf>,
 }
 
 impl ServerDraft {
@@ -185,17 +185,12 @@ impl ServerDraft {
             }
             "--cert" => self.cert = Some(PathBuf::from(value(args, flag)?)),
             "--key" => self.key = Some(PathBuf::from(value(args, flag)?)),
-            "--secret-path" => {
-                let slug = value_str(args, flag)?;
-                if slug.len() < sync_https::limits::MIN_SECRET_SLUG_LEN {
-                    return Err(String::from(
-                        "--secret-path: must be at least 16 characters",
-                    ));
+            "--peer" => {
+                let peer = local::parse_sync_server_url(&value_str(args, flag)?, true)
+                    .map_err(str::to_owned)?;
+                if !self.peers.contains(&peer) && self.peers.len() < local::SYNC_SERVERS_MAX {
+                    self.peers.push(peer);
                 }
-                self.secret_path = Some(slug.into_boxed_str());
-            }
-            "--public-origin" => {
-                self.public_origin = Some(value_str(args, flag)?.into_boxed_str());
             }
             _ => return Ok(false),
         }
@@ -208,10 +203,8 @@ impl ServerDraft {
             cert: self.cert.ok_or("--server requires --cert <pem>")?,
             key: self.key.ok_or("--server requires --key <pem>")?,
             data_dir: self.data_dir,
-            secret_path: self
-                .secret_path
-                .ok_or("--server requires --secret-path <slug>")?,
-            public_origin: self.public_origin,
+            peers: self.peers,
+            extra_ca: self.extra_ca,
         })
     }
 }
@@ -254,13 +247,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, no_color: bool) -> Result
                     config.sync_servers.push(url);
                 }
             }
-            "--proxy" => {
-                config.sync_proxy = Some(
-                    local::parse_sync_proxy_url(&value_str(&mut args, flag)?)
-                        .map_err(str::to_owned)?,
-                );
+            "--no-server-sync" => config.flags = config.flags.with(Flags::NET_SYNC, false),
+            "--extra-ca" => {
+                let path = PathBuf::from(value(&mut args, flag)?);
+                srv.extra_ca = Some(path.clone());
+                config.extra_ca = Some(path);
             }
-            "--extra-ca" => config.extra_ca = Some(PathBuf::from(value(&mut args, flag)?)),
             "--theme" => {
                 config.theme = value_str(&mut args, flag)?.parse().map_err(|()| {
                     String::from("--theme: expected stripes-dark, stripes-light, or mono")
@@ -309,7 +301,7 @@ fn seconds(
         Ok(Duration::from_secs(secs))
     } else {
         Err(format!(
-            "{flag}: must be between {} and {} seconds",
+            "{flag}: must be between {} and {} s",
             range.start(),
             range.end()
         ))

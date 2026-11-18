@@ -80,6 +80,8 @@ pub fn make_vault(base: &Path) -> String {
         profile: KdfProfile::Fast,
         factor: Enrollment::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec())),
         records: Vec::new(),
+        server_sync: true,
+        sync_servers: Vec::new(),
     })
     .unwrap();
     drop(vault);

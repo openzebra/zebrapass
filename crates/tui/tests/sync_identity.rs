@@ -29,6 +29,8 @@ fn create_enrolls_a_device_identity_under_the_phrase_root() {
         profile: KdfProfile::Fast,
         factor: Enrollment::Password(Zeroizing::new(common::PASSWORD.as_bytes().to_vec())),
         records: Vec::new(),
+        server_sync: false,
+        sync_servers: Vec::new(),
     })
     .unwrap();
 

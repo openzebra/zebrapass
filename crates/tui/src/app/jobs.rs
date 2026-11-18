@@ -119,7 +119,7 @@ impl App {
         }
         let beacon = self.ctx.beacon;
         let mut unlocked = Unlocked::new(vault, vaults, current, beacon).with_held(held);
-        unlocked.start_https_sync(&self.ctx);
+        unlocked.start_zsync(&self.ctx);
         self.screen = Screen::Unlocked(Box::new(unlocked));
         self.ctx.idle.touch(self.ctx.now);
         self.ctx.redraw();
@@ -138,7 +138,7 @@ impl App {
         }
         let beacon = self.ctx.beacon;
         let mut unlocked = Unlocked::new(vault, vaults, current, beacon);
-        unlocked.start_https_sync(&self.ctx);
+        unlocked.start_zsync(&self.ctx);
         self.screen = Screen::Unlocked(Box::new(unlocked));
         self.ctx.idle.touch(self.ctx.now);
         self.ctx.toast(Tone::Success, message.to_owned());
@@ -147,21 +147,14 @@ impl App {
 }
 
 pub(super) fn seed_cli_sync_prefs(vault: &mut crate::vault::Vault, ctx: &crate::app::ctx::Ctx) {
-    if ctx.sync_servers.is_empty() && ctx.sync_proxy.is_none() {
+    if ctx.sync_servers.is_empty() {
         return;
     }
     let mut prefs = vault.meta.prefs.clone().unwrap_or_default();
-    let need_servers = prefs.sync_servers.is_empty() && !ctx.sync_servers.is_empty();
-    let need_proxy = prefs.sync_proxy.is_none() && ctx.sync_proxy.is_some();
-    if !need_servers && !need_proxy {
+    if !prefs.sync_servers.is_empty() {
         return;
     }
-    if need_servers {
-        prefs.sync_servers.clone_from(&ctx.sync_servers);
-    }
-    if need_proxy {
-        prefs.sync_proxy.clone_from(&ctx.sync_proxy);
-    }
+    prefs.sync_servers.clone_from(&ctx.sync_servers);
     vault.meta.prefs = Some(prefs);
     let _ = local::save_meta(&vault.paths, &vault.meta, &vault.session);
 }

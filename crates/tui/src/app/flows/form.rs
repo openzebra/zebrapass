@@ -35,10 +35,8 @@ pub enum FormKind {
     DropRecovery,
     /// Rename the vault on this device.
     Rename,
-    /// Configure HTTPS/WSS sync server URLs in Settings.
+    /// Configure custom `zsync` server endpoints in Settings.
     SyncServers,
-    /// Configure outbound `socks5h://` / `http://` proxy URL in Settings.
-    SyncProxy,
     /// Configure automatic rolling `.zpbackup` directory in Settings.
     BackupDir,
     /// Export an encrypted `.zpbackup` bundle now.

@@ -35,6 +35,8 @@ pub enum Scope {
     ImportPreview,
     /// Choosing this device's factor.
     Enroll,
+    /// Choosing cloud/mesh sync options on vault creation.
+    CreateSync,
     /// Unlock screen.
     Unlock,
     /// A long operation is running.
@@ -90,6 +92,7 @@ impl Scope {
             Self::ImportMapping => "CSV columns",
             Self::ImportPreview => "Import preview",
             Self::Enroll => "Unlock factor",
+            Self::CreateSync => "Server sync",
             Self::Unlock => "Unlock",
             Self::Busy => "Working",
             Self::Alert => "Security alert",
@@ -209,7 +212,7 @@ pub fn in_scope(scope: Scope) -> impl Iterator<Item = &'static Binding> {
 }
 
 /// Every scope, in help-screen order.
-pub const SCOPES: [Scope; 30] = [
+pub const SCOPES: [Scope; 31] = [
     Scope::Global,
     Scope::Home,
     Scope::Search,
@@ -236,6 +239,7 @@ pub const SCOPES: [Scope; 30] = [
     Scope::ImportPreview,
     Scope::Restore,
     Scope::Enroll,
+    Scope::CreateSync,
     Scope::Busy,
     Scope::Alert,
     Scope::Locked,

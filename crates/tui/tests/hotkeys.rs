@@ -213,6 +213,8 @@ fn enroll_enter_moves_password_to_repeat_then_confirms() {
     assert_eq!(create_state(&app).enroll.focus, EnrollFocus::Repeat);
     type_text(&mut app, PASSWORD);
     press(&mut app, KeyCode::Enter);
+    assert_eq!(create_state(&app).step, Step::Sync);
+    press(&mut app, KeyCode::Enter);
     wait(&mut app);
     assert_eq!(app.screen.name(), "unlocked");
 }

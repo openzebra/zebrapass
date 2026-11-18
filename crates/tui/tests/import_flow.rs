@@ -103,6 +103,11 @@ fn bitwarden_export_becomes_a_new_vault() {
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, PASSWORD);
     press(&mut app, KeyCode::Enter);
+    let Screen::Create(state) = &app.screen else {
+        panic!("not create")
+    };
+    assert_eq!(state.step, Step::Sync);
+    press(&mut app, KeyCode::Enter);
     wait(&mut app);
     assert_eq!(app.screen.name(), "unlocked");
     let Screen::Unlocked(state) = &app.screen else {

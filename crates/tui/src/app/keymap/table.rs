@@ -103,6 +103,13 @@ pub const KEYMAP: &[Binding] = bindings! {
     Enroll: key(KeyCode::Enter) => Confirm, "enroll";
     Enroll: key(KeyCode::Esc) => Back, "back";
 
+    CreateSync: key(KeyCode::Tab) => NextField, "field";
+    CreateSync: key(KeyCode::BackTab) => PrevField;
+    CreateSync: key(KeyCode::Up) => Up;
+    CreateSync: key(KeyCode::Down) => Down;
+    CreateSync: key(KeyCode::Enter) => Confirm, "create vault";
+    CreateSync: key(KeyCode::Esc) => Back, "back";
+
     Unlock: key(KeyCode::Enter) => Confirm;
     Unlock: key(KeyCode::Tab) => NextField;
     Unlock: key(KeyCode::BackTab) => PrevField;

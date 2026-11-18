@@ -20,11 +20,8 @@ pub const RELAYS_MAX: usize = 4;
 /// Maximum sync server endpoints saved per vault.
 pub const SYNC_SERVERS_MAX: usize = 8;
 
-/// Longest sync server URL in bytes (fits within invitation hints).
+/// Longest sync server endpoint string in bytes (fits within invitation hints).
 pub const SYNC_SERVER_MAX_LEN: usize = 255;
-
-/// Longest proxy URL in bytes.
-pub const SYNC_PROXY_MAX_LEN: usize = 256;
 
 /// Longest automatic backup directory path in bytes.
 pub const BACKUP_DIR_MAX_LEN: usize = 512;

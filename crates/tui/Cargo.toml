@@ -36,10 +36,10 @@ session = { path = "../session" }
 sharing = { path = "../sharing" }
 sha1.workspace = true
 subtle.workspace = true
-sync-https = { path = "../sync-https" }
 syncwire = { path = "../syncwire" }
 tokio.workspace = true
 zeroize.workspace = true
+zsync = { path = "../zsync" }
 
 [dev-dependencies]
 # Builds .kdbx databases for the import tests.

@@ -14,6 +14,7 @@ getrandom.workspace = true
 kdf = { path = "../kdf" }
 pqbip39.workspace = true
 secrecy.workspace = true
+secret = { path = "../secret" }
 
 [dev-dependencies]
 hex.workspace = true

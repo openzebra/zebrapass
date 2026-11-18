@@ -9,14 +9,14 @@
 use record::{
     Document, TAG_PREF_BACKUP_DIR, TAG_PREF_BACKUP_KEEP, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS,
     TAG_PREF_LOCK_AFTER, TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_HOLD, TAG_PREF_P2P_LISTEN,
-    TAG_PREF_P2P_RELAYS, TAG_PREF_REVEAL_HIDE, TAG_PREF_SYNC_PROXY, TAG_PREF_SYNC_SERVERS,
+    TAG_PREF_P2P_RELAYS, TAG_PREF_REVEAL_HIDE, TAG_PREF_SERVER_SYNC, TAG_PREF_SYNC_SERVERS,
     TAG_PREF_THEME, ValueType,
 };
 
 use crate::address::{parse_advertise, parse_relay_hint};
 use crate::limits::{BACKUP_KEEP_MAX, CLIP_CLEAR_S, LOCK_AFTER_S, RELAYS_MAX, REVEAL_HIDE_S};
 use crate::listen::Listen;
-use crate::sync_url::{parse_backup_dir, parse_sync_proxy_url, parse_sync_server_list};
+use crate::sync_url::{DEFAULT_SYNC_SERVERS, parse_backup_dir, parse_sync_server_list};
 
 const TAGS: [u16; 13] = [
     TAG_PREF_LOCK_AFTER,
@@ -28,8 +28,8 @@ const TAGS: [u16; 13] = [
     TAG_PREF_P2P_ADVERTISE,
     TAG_PREF_P2P_RELAYS,
     TAG_PREF_P2P_HOLD,
+    TAG_PREF_SERVER_SYNC,
     TAG_PREF_SYNC_SERVERS,
-    TAG_PREF_SYNC_PROXY,
     TAG_PREF_BACKUP_DIR,
     TAG_PREF_BACKUP_KEEP,
 ];
@@ -73,10 +73,11 @@ pub struct Prefs {
     /// This node holds a slot on the first saved relay and announces it; only
     /// ever on while a relay is saved.
     pub p2p_hold: bool,
-    /// Ordered HTTPS/WSS sync endpoints (`https://host[:port]/slug`).
+    /// Whether Zebra server sync and live relay are enabled (default `true`).
+    pub server_sync: bool,
+    /// Custom self-hosted sync server endpoints (`host[:port]`). Empty means
+    /// [`DEFAULT_SYNC_SERVERS`] (`ru.zebra.sh`, `eu.zebra.sh`, `zh.zebra.sh`).
     pub sync_servers: Vec<Box<str>>,
-    /// Optional `socks5h://` or `http://` proxy URL for sync endpoints.
-    pub sync_proxy: Option<Box<str>>,
     /// Optional directory path for automatic rolling `.zpbackup` snapshots.
     pub backup_dir: Option<Box<str>>,
     /// Number of rolling `.zpbackup` files to retain (`0` disables).
@@ -98,8 +99,8 @@ impl Default for Prefs {
             p2p_advertise: None,
             p2p_relays: Vec::new(),
             p2p_hold: false,
+            server_sync: true,
             sync_servers: Vec::new(),
-            sync_proxy: None,
             backup_dir: None,
             backup_keep: 0,
         }
@@ -107,6 +108,23 @@ impl Default for Prefs {
 }
 
 impl Prefs {
+    /// Effective sync server list: empty when `server_sync` is false, custom
+    /// `sync_servers` when configured, or [`DEFAULT_SYNC_SERVERS`] otherwise.
+    #[must_use]
+    pub fn effective_sync_servers(&self) -> Vec<String> {
+        if !self.server_sync {
+            return Vec::new();
+        }
+        if self.sync_servers.is_empty() {
+            DEFAULT_SYNC_SERVERS
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect()
+        } else {
+            self.sync_servers.iter().map(ToString::to_string).collect()
+        }
+    }
+
     /// Write every preference into `doc`.
     pub fn write(&self, doc: &mut Document) {
         doc.set_data(
@@ -136,11 +154,13 @@ impl Prefs {
         if self.p2p_hold {
             doc.set_data(TAG_PREF_P2P_HOLD, ValueType::Bytes, &[1]);
         }
+        doc.set_data(
+            TAG_PREF_SERVER_SYNC,
+            ValueType::Bytes,
+            &[u8::from(self.server_sync)],
+        );
         if !self.sync_servers.is_empty() {
             doc.set_text(TAG_PREF_SYNC_SERVERS, &self.sync_servers.join("\n"));
-        }
-        if let Some(proxy) = self.sync_proxy.as_deref() {
-            doc.set_text(TAG_PREF_SYNC_PROXY, proxy);
         }
         if let Some(dir) = self.backup_dir.as_deref() {
             doc.set_text(TAG_PREF_BACKUP_DIR, dir);
@@ -212,15 +232,17 @@ impl Prefs {
             Some(1) if !p2p_relays.is_empty() && !fetch_only => true,
             Some(_) => return Err(out_of_range()),
         };
+        let server_sync = match byte(doc, TAG_PREF_SERVER_SYNC)? {
+            None => defaults.server_sync,
+            Some(0) => false,
+            Some(1) => true,
+            Some(_) => return Err(out_of_range()),
+        };
         let sync_servers = doc
             .text(TAG_PREF_SYNC_SERVERS)?
             .map(|lines| parse_sync_server_list(lines, true).map_err(|_| out_of_range()))
             .transpose()?
             .unwrap_or_default();
-        let sync_proxy = doc
-            .text(TAG_PREF_SYNC_PROXY)?
-            .map(|proxy| parse_sync_proxy_url(proxy).map_err(|_| out_of_range()))
-            .transpose()?;
         let backup_dir = doc
             .text(TAG_PREF_BACKUP_DIR)?
             .map(|dir| parse_backup_dir(dir).map_err(|_| out_of_range()))
@@ -242,8 +264,8 @@ impl Prefs {
             p2p_advertise,
             p2p_relays,
             p2p_hold,
+            server_sync,
             sync_servers,
-            sync_proxy,
             backup_dir,
             backup_keep,
         })
@@ -297,8 +319,8 @@ mod tests {
             p2p_advertise: Some("93.184.216.34:7447".into()),
             p2p_relays: vec![format!("93.184.216.35:7447/{}", "ab".repeat(16)).into()],
             p2p_hold: true,
-            sync_servers: vec!["https://sync.example/my-slug".into()],
-            sync_proxy: Some("socks5h://127.0.0.1:1080".into()),
+            server_sync: false,
+            sync_servers: vec!["sync.example:8443".into()],
             backup_dir: Some("/tmp/zp-backups".into()),
             backup_keep: 5,
         }
@@ -386,6 +408,7 @@ mod tests {
         doc.set_data(record::TAG_PREF_SYNC_MODE, ValueType::Bytes, &[3]);
         doc.set_text(record::TAG_PREF_SERVER_ORIGIN, "http://plain.example");
         doc.set_data(record::TAG_PREF_SERVER_PIN, ValueType::Bytes, &[1]);
+        doc.set_text(record::TAG_PREF_SYNC_PROXY, "socks5h://127.0.0.1:1080");
         let read = Prefs::read(&doc).unwrap();
         assert_eq!(read, Some(custom()));
         let rewritten = written(&read.unwrap());
@@ -393,6 +416,7 @@ mod tests {
             record::TAG_PREF_SYNC_MODE,
             record::TAG_PREF_SERVER_ORIGIN,
             record::TAG_PREF_SERVER_PIN,
+            record::TAG_PREF_SYNC_PROXY,
         ] {
             assert!(rewritten.get(tag).is_none());
         }

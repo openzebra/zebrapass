@@ -1,16 +1,27 @@
-//! Validation for user-configured HTTPS/WSS sync server URLs, proxies, and
-//! automatic local backup directory preferences.
+//! Hardcoded `ZebraPass` sync servers, validation for user-configured
+//! self-hosted sync server endpoints (`host[:port]`), and automatic local
+//! backup directory preferences.
 
 use std::net::IpAddr;
 
 use crate::address::never_dialable;
-use crate::limits::{
-    BACKUP_DIR_MAX_LEN, SYNC_PROXY_MAX_LEN, SYNC_SERVER_MAX_LEN, SYNC_SERVERS_MAX,
-};
+use crate::limits::{BACKUP_DIR_MAX_LEN, SYNC_SERVER_MAX_LEN, SYNC_SERVERS_MAX};
 
-const SERVER_SHAPE: &str = "Use https://host[:port]/secret-path (or loopback http:// for tests).";
-const PROXY_SHAPE: &str = "Use socks5h://host:port or http://host:port.";
-const SLUG_SHAPE: &str = "Include a secret path, for example https://host/my-secret.";
+/// Default port for PQ TLS 1.3 `ZebraPass` sync & relay endpoints.
+pub const DEFAULT_SYNC_PORT: u16 = 443;
+
+/// Hardcoded official `ZebraPass` sync & relay cluster endpoints.
+pub const DEFAULT_SYNC_SERVERS: [&str; 3] =
+    ["ru.zebra.sh:443", "eu.zebra.sh:443", "zh.zebra.sh:443"];
+
+const SERVER_SHAPE: &str =
+    "Use host or host:port (for example eu.zebra.sh or sync.example.com:8443).";
+
+/// Owned default server list (`ru.zebra.sh:443`, `eu.zebra.sh:443`, `zh.zebra.sh:443`).
+#[must_use]
+pub fn default_sync_servers() -> Vec<Box<str>> {
+    DEFAULT_SYNC_SERVERS.iter().map(|s| (*s).into()).collect()
+}
 
 fn valid_hostname(host: &str) -> bool {
     if host.is_empty() || host.len() > 253 {
@@ -51,16 +62,15 @@ fn is_loopback_host(host: &str) -> bool {
         .is_ok_and(|ip| ip.to_canonical().is_loopback())
 }
 
-fn split_host_port(authority: &str, default_port: Option<u16>) -> Option<(&str, u16)> {
+fn split_host_port(authority: &str, default_port: u16) -> Option<(&str, u16)> {
     if authority.is_empty() || authority.contains('@') {
         return None;
     }
     if let Some(rest) = authority.strip_prefix('[') {
         let (addr, tail) = rest.split_once(']')?;
-        let ip: IpAddr = addr.parse().ok()?;
-        let _ = ip;
+        let _ip: IpAddr = addr.parse().ok()?;
         let port = if tail.is_empty() {
-            default_port?
+            default_port
         } else {
             let port_str = tail.strip_prefix(':')?;
             let p: u16 = port_str.parse().ok()?;
@@ -78,7 +88,7 @@ fn split_host_port(authority: &str, default_port: Option<u16>) -> Option<(&str, 
         }
         Some((host, p))
     } else {
-        Some((authority, default_port?))
+        Some((authority, default_port))
     }
 }
 
@@ -100,25 +110,13 @@ fn validate_host(host: &str, allow_loopback: bool) -> bool {
     valid_hostname(host)
 }
 
-fn valid_slug(slug: &str) -> bool {
-    !slug.is_empty()
-        && slug.len() <= 128
-        && !slug.contains("..")
-        && !slug.starts_with('/')
-        && !slug.ends_with('/')
-        && !slug.contains("//")
-        && slug
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/'))
-}
-
-/// Validate and normalize one HTTPS/WSS sync server URL (`https://host[:port]/slug`,
-/// `wss://host[:port]/slug`, or loopback `http://` / `ws://` for local servers and
-/// reverse-proxy tests).
+/// Validate and normalize one PQ TLS 1.3 sync server endpoint (`host[:port]`,
+/// optionally prefixed with `https://` or `tls://`).
 ///
 /// # Errors
 ///
-/// Human-readable validation message.
+/// Human-readable validation message when malformed, unroutable, or carrying a
+/// path/query/userinfo.
 pub fn parse_sync_server_url(input: &str, allow_loopback: bool) -> Result<Box<str>, &'static str> {
     let raw = input.trim();
     if raw.is_empty()
@@ -126,57 +124,48 @@ pub fn parse_sync_server_url(input: &str, allow_loopback: bool) -> Result<Box<st
         || raw.bytes().any(|b| b.is_ascii_control() || b == b' ')
         || raw.contains('?')
         || raw.contains('#')
+        || raw.contains('@')
     {
         return Err(SERVER_SHAPE);
     }
-    let (raw_scheme, rest) = raw.split_once("://").ok_or(SERVER_SHAPE)?;
-    let (scheme, default_port, tls) = match raw_scheme.to_ascii_lowercase().as_str() {
-        "https" => ("https", 443, true),
-        "wss" => ("wss", 443, true),
-        "http" => ("http", 80, false),
-        "ws" => ("ws", 80, false),
-        _ => return Err(SERVER_SHAPE),
+    let stripped = if let Some((scheme, rest)) = raw.split_once("://") {
+        if !matches!(scheme.to_ascii_lowercase().as_str(), "https" | "tls") {
+            return Err(SERVER_SHAPE);
+        }
+        rest
+    } else {
+        raw
     };
-    let Some((authority, raw_slug)) = rest.split_once('/') else {
-        return Err(SLUG_SHAPE);
-    };
-    let Some((host, port)) = split_host_port(authority, Some(default_port)) else {
+    let authority = stripped.strip_suffix('/').unwrap_or(stripped);
+    if authority.contains('/') {
+        return Err(SERVER_SHAPE);
+    }
+    let Some((host, port)) = split_host_port(authority, DEFAULT_SYNC_PORT) else {
         return Err(SERVER_SHAPE);
     };
-    if !tls && (!allow_loopback || !is_loopback_host(host)) {
-        return Err("Remote sync servers must use https:// or wss://.");
-    }
     if !validate_host(host, allow_loopback) {
         return Err("Other devices cannot reach that server address.");
     }
-    let slug = raw_slug.trim_end_matches('/');
-    if !valid_slug(slug) {
-        return Err(SLUG_SHAPE);
-    }
-    let lower_host = host.to_ascii_lowercase();
-    let canonical = if port == default_port {
-        format!("{scheme}://{lower_host}/{slug}")
-    } else {
-        format!("{scheme}://{lower_host}:{port}/{slug}")
-    };
+    let canonical = format!("{}:{port}", host.to_ascii_lowercase());
     if canonical.len() > SYNC_SERVER_MAX_LEN {
         return Err(SERVER_SHAPE);
     }
     Ok(canonical.into_boxed_str())
 }
 
-/// Validate a newline-separated list of sync server URLs.
+/// Validate a newline- or comma-separated list of sync server endpoints.
 ///
 /// # Errors
 ///
-/// When there are more than [`SYNC_SERVERS_MAX`] entries or any URL is invalid.
+/// When there are more than [`SYNC_SERVERS_MAX`] entries or any endpoint is
+/// invalid.
 pub fn parse_sync_server_list(
     lines: &str,
     allow_loopback: bool,
 ) -> Result<Vec<Box<str>>, &'static str> {
     let mut out = Vec::new();
-    for line in lines.lines() {
-        let trimmed = line.trim();
+    for item in lines.split(['\n', ',']) {
+        let trimmed = item.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -189,57 +178,6 @@ pub fn parse_sync_server_list(
         }
     }
     Ok(out)
-}
-
-/// Validate a `socks5h://[user:pass@]host:port`, `socks5://...`, or
-/// `http://[user:pass@]host:port` proxy URL.
-///
-/// # Errors
-///
-/// Human-readable validation message.
-pub fn parse_sync_proxy_url(input: &str) -> Result<Box<str>, &'static str> {
-    let raw = input.trim();
-    if raw.is_empty()
-        || raw.len() > SYNC_PROXY_MAX_LEN
-        || raw.bytes().any(|b| b.is_ascii_control() || b == b' ')
-        || raw.contains('?')
-        || raw.contains('#')
-    {
-        return Err(PROXY_SHAPE);
-    }
-    let (raw_scheme, rest) = raw.split_once("://").ok_or(PROXY_SHAPE)?;
-    let scheme = match raw_scheme.to_ascii_lowercase().as_str() {
-        "socks5h" | "socks5" => "socks5h",
-        "http" => "http",
-        _ => return Err(PROXY_SHAPE),
-    };
-    let rest = rest.strip_suffix('/').unwrap_or(rest);
-    if rest.contains('/') {
-        return Err(PROXY_SHAPE);
-    }
-    let (auth_part, host_port) = match rest.rsplit_once('@') {
-        Some((creds, hp)) => {
-            if creds.is_empty() || !creds.contains(':') {
-                return Err(PROXY_SHAPE);
-            }
-            (Some(creds), hp)
-        }
-        None => (None, rest),
-    };
-    let Some((host, port)) = split_host_port(host_port, None) else {
-        return Err(PROXY_SHAPE);
-    };
-    if !validate_host(host, true) {
-        return Err(PROXY_SHAPE);
-    }
-    let canonical = auth_part.map_or_else(
-        || format!("{scheme}://{}:{port}", host.to_ascii_lowercase()),
-        |creds| format!("{scheme}://{creds}@{}:{port}", host.to_ascii_lowercase()),
-    );
-    if canonical.len() > SYNC_PROXY_MAX_LEN {
-        return Err(PROXY_SHAPE);
-    }
-    Ok(canonical.into_boxed_str())
 }
 
 /// Validate an automatic local backup directory string preference.
@@ -262,45 +200,52 @@ pub fn parse_backup_dir(input: &str) -> Result<Box<str>, &'static str> {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use super::{parse_backup_dir, parse_sync_proxy_url, parse_sync_server_url};
+    use super::{
+        DEFAULT_SYNC_SERVERS, default_sync_servers, parse_backup_dir, parse_sync_server_list,
+        parse_sync_server_url,
+    };
 
     #[test]
-    fn sync_server_url_validation_accepts_https_wss_and_loopback_only_http() {
-        assert_eq!(
-            &*parse_sync_server_url("HTTPS://Sync.Example.com/my-slug/", false).unwrap(),
-            "https://sync.example.com/my-slug"
-        );
-        assert_eq!(
-            &*parse_sync_server_url("wss://relay.example.org:8443/v/zp", false).unwrap(),
-            "wss://relay.example.org:8443/v/zp"
-        );
-        assert_eq!(
-            &*parse_sync_server_url("http://127.0.0.1:9000/zp-test", true).unwrap(),
-            "http://127.0.0.1:9000/zp-test"
-        );
-        assert!(parse_sync_server_url("http://127.0.0.1:9000/zp-test", false).is_err());
-        assert!(parse_sync_server_url("http://sync.example.com/zp", true).is_err());
-        assert!(parse_sync_server_url("https://sync.example.com/", false).is_err());
-        assert!(parse_sync_server_url("https://sync.example.com/../etc", false).is_err());
-        assert!(parse_sync_server_url("https://169.254.169.254/zp", true).is_err());
+    fn default_servers_validate_cleanly() {
+        let defaults = default_sync_servers();
+        assert_eq!(defaults.len(), 3);
+        for (raw, norm) in DEFAULT_SYNC_SERVERS.iter().zip(defaults.iter()) {
+            assert_eq!(parse_sync_server_url(raw, false).unwrap().as_ref(), &**norm);
+        }
     }
 
     #[test]
-    fn proxy_url_validation_normalizes_socks5_and_checks_ports() {
+    fn sync_server_validation_normalizes_host_port_and_rejects_paths_and_http() {
         assert_eq!(
-            &*parse_sync_proxy_url("socks5://127.0.0.1:1080").unwrap(),
-            "socks5h://127.0.0.1:1080"
+            &*parse_sync_server_url("EU.Zebra.SH", false).unwrap(),
+            "eu.zebra.sh:443"
         );
         assert_eq!(
-            &*parse_sync_proxy_url("socks5h://user:pass@127.0.0.1:9050").unwrap(),
-            "socks5h://user:pass@127.0.0.1:9050"
+            &*parse_sync_server_url("https://Sync.Example.com:8443/", false).unwrap(),
+            "sync.example.com:8443"
         );
         assert_eq!(
-            &*parse_sync_proxy_url("http://127.0.0.1:8080/").unwrap(),
-            "http://127.0.0.1:8080"
+            &*parse_sync_server_url("tls://[2606:2800:220:1::1]:8443", false).unwrap(),
+            "[2606:2800:220:1::1]:8443"
         );
-        assert!(parse_sync_proxy_url("socks5h://127.0.0.1").is_err());
-        assert!(parse_sync_proxy_url("https://127.0.0.1:8080").is_err());
+        assert_eq!(
+            &*parse_sync_server_url("127.0.0.1:9000", true).unwrap(),
+            "127.0.0.1:9000"
+        );
+        assert!(parse_sync_server_url("127.0.0.1:9000", false).is_err());
+        assert!(parse_sync_server_url("http://sync.example.com", true).is_err());
+        assert!(parse_sync_server_url("https://sync.example.com/slug", false).is_err());
+        assert!(parse_sync_server_url("169.254.169.254:443", true).is_err());
+    }
+
+    #[test]
+    fn sync_server_list_splits_commas_and_newlines_and_dedups() {
+        let parsed =
+            parse_sync_server_list("ru.zebra.sh, eu.zebra.sh:443\nRU.Zebra.SH:443", false).unwrap();
+        assert_eq!(
+            parsed.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            vec!["ru.zebra.sh:443", "eu.zebra.sh:443"]
+        );
     }
 
     #[test]

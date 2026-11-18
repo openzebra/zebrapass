@@ -87,10 +87,10 @@ pub enum Row {
     LastCheckIn,
     /// Peers known and reachable.
     SyncPeers,
-    /// HTTPS/WSS sync server URLs.
+    /// Whether `zsync` cloud/mesh & live P2P relay sync is enabled.
+    ServerSync,
+    /// Custom self-hosted `zsync` server endpoints.
     SyncServers,
-    /// Outbound proxy URL (`socks5h://` / `http://`).
-    SyncProxy,
     /// Addresses of the account's other devices, typed by the owner.
     SyncDevices,
     /// Saved relays and whether this node holds a slot.
@@ -107,10 +107,6 @@ pub enum Row {
     BackupDir,
     /// Number of automatic rolling snapshots retained (`0` = off).
     BackupKeep,
-    /// Push a `.zpbackup` cloud backup to configured sync servers.
-    CloudBackupPush,
-    /// Pull and restore from a `.zpbackup` cloud backup.
-    CloudBackupPull,
     /// Clipboard clear delay.
     ClipClear,
     /// Lock always clears the clipboard.
@@ -148,7 +144,7 @@ pub enum Row {
 }
 
 /// Every row with its section, in display order.
-pub const ROWS: [(Section, Row); 41] = [
+pub const ROWS: [(Section, Row); 39] = [
     (Section::Security, Row::AutoLock),
     (Section::Security, Row::FocusLock),
     (Section::Security, Row::RevealHide),
@@ -166,8 +162,8 @@ pub const ROWS: [(Section, Row); 41] = [
     (Section::Sync, Row::SyncAdvertised),
     (Section::Sync, Row::SyncBeacon),
     (Section::Sync, Row::SyncNow),
+    (Section::Sync, Row::ServerSync),
     (Section::Sync, Row::SyncServers),
-    (Section::Sync, Row::SyncProxy),
     (Section::Clipboard, Row::ClipClear),
     (Section::Clipboard, Row::ClipOnLock),
     (Section::Appearance, Row::Theme),
@@ -188,8 +184,6 @@ pub const ROWS: [(Section, Row); 41] = [
     (Section::Backup, Row::BackupExport),
     (Section::Backup, Row::BackupDir),
     (Section::Backup, Row::BackupKeep),
-    (Section::Backup, Row::CloudBackupPush),
-    (Section::Backup, Row::CloudBackupPull),
 ];
 
 /// Auto-lock steps in seconds.
@@ -212,8 +206,8 @@ impl Row {
             Self::SyncStatus => "Status",
             Self::LastCheckIn => "Last check-in",
             Self::SyncPeers => "Peers",
+            Self::ServerSync => "Server sync",
             Self::SyncServers => "Sync servers",
-            Self::SyncProxy => "Outbound proxy",
             Self::SyncDevices => "Device addresses",
             Self::SyncRelays => "Relays",
             Self::SyncAdvertised => "Advertised address",
@@ -222,8 +216,6 @@ impl Row {
             Self::BackupExport => "Export encrypted backup",
             Self::BackupDir => "Auto-backup folder",
             Self::BackupKeep => "Retained snapshots",
-            Self::CloudBackupPush => "Upload server backup",
-            Self::CloudBackupPull => "Restore server backup",
             Self::ClipClear => "Clear clipboard after",
             Self::ClipOnLock => "Clear clipboard on lock",
             Self::Theme => "Theme",
@@ -260,6 +252,7 @@ impl Row {
             Self::AutoLock
                 | Self::FocusLock
                 | Self::RevealHide
+                | Self::ServerSync
                 | Self::BackupKeep
                 | Self::ClipClear
                 | Self::Theme
@@ -276,6 +269,7 @@ impl Row {
             Self::RevealHide => {
                 draft.reveal_hide_s = nudge(draft.reveal_hide_s, 1, forward, &REVEAL_HIDE_S);
             }
+            Self::ServerSync => draft.server_sync = !draft.server_sync,
             Self::BackupKeep => {
                 draft.backup_keep = nudge(draft.backup_keep, 1, forward, &(0..=BACKUP_KEEP_MAX));
             }
@@ -299,8 +293,8 @@ impl Row {
             Self::AutoLock => draft.lock_after_s = defaults.lock_after_s,
             Self::FocusLock => draft.focus_lock = defaults.focus_lock,
             Self::RevealHide => draft.reveal_hide_s = defaults.reveal_hide_s,
+            Self::ServerSync => draft.server_sync = defaults.server_sync,
             Self::SyncServers => draft.sync_servers = defaults.sync_servers,
-            Self::SyncProxy => draft.sync_proxy = defaults.sync_proxy,
             Self::BackupDir => draft.backup_dir = defaults.backup_dir,
             Self::BackupKeep => draft.backup_keep = defaults.backup_keep,
             Self::ClipClear => draft.clip_clear_s = defaults.clip_clear_s,
@@ -318,8 +312,8 @@ impl Row {
             Self::AutoLock => draft.lock_after_s != saved.lock_after_s,
             Self::FocusLock => draft.focus_lock != saved.focus_lock,
             Self::RevealHide => draft.reveal_hide_s != saved.reveal_hide_s,
+            Self::ServerSync => draft.server_sync != saved.server_sync,
             Self::SyncServers => draft.sync_servers != saved.sync_servers,
-            Self::SyncProxy => draft.sync_proxy != saved.sync_proxy,
             Self::BackupDir => draft.backup_dir != saved.backup_dir,
             Self::BackupKeep => draft.backup_keep != saved.backup_keep,
             Self::ClipClear => draft.clip_clear_s != saved.clip_clear_s,

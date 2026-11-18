@@ -89,7 +89,6 @@ fn request(words: &str, base: &Path, password: &str) -> AdoptRequest {
         addresses: Vec::new(),
         loopback: true,
         sync_servers: Vec::new(),
-        sync_proxy: None,
         extra_ca_pem: None,
     }
 }

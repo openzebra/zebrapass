@@ -1,7 +1,7 @@
 [package]
-name = "sync-https"
+name = "zsync"
 version = "0.1.0"
-description = "Zero-knowledge HTTPS/WSS and SplitHTTP sync and backup client and server."
+description = "Unified PQ TLS 1.3 versioned encrypted sync, parallel server mesh, and live P2P relay."
 publish = false
 edition.workspace = true
 license.workspace = true
@@ -9,24 +9,30 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+container = { path = "../container" }
 frame = { path = "../frame" }
 getrandom.workspace = true
 kdf = { path = "../kdf" }
 local = { path = "../local" }
 memberlog = { path = "../memberlog" }
+p2p-core = { path = "../p2p-core" }
 pq = { path = "../pq" }
 rustls.workspace = true
 rustls-pki-types.workspace = true
 secret = { path = "../secret" }
 session = { path = "../session" }
-# RFC 6455 §1.3 Sec-WebSocket-Accept handshake compliance only (never for keys or integrity).
-sha1.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 syncwire = { path = "../syncwire" }
 tokio.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+record = { path = "../record" }
+seed = { path = "../seed" }
+aead = { path = "../aead" }
 
 [lints]
 workspace = true

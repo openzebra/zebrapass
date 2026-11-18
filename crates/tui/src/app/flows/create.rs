@@ -1,10 +1,10 @@
-//! New vault wizard: setup → recovery phrase → verify → enroll.
+//! New vault wizard: setup → recovery phrase → verify → enroll → server sync.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Duration;
 
 use record::Document;
-use seed::SeedPhrase;
+use seed::{RootKind, SeedPhrase};
 use session::KdfProfile;
 
 use crate::app::action::Action;
@@ -48,7 +48,7 @@ pub fn estimate(fast: Duration, profile: KdfProfile) -> Duration {
 /// Wizard step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// Name and unlock cost.
+    /// Name, root account identity, and unlock cost.
     Setup,
     /// Show the phrase.
     Ceremony,
@@ -56,6 +56,8 @@ pub enum Step {
     Verify,
     /// This device's factor.
     Enroll,
+    /// Cloud / mesh sync and live P2P relay consent.
+    Sync,
 }
 
 /// Focus on the setup step.
@@ -63,8 +65,41 @@ pub enum Step {
 pub enum SetupField {
     /// Vault name.
     Name,
+    /// Account root identity source (`BIP39`, future `Email`, future `HardwareKey`).
+    Identity,
     /// Argon2id profile.
     Profile,
+}
+
+/// Focus on the server sync step.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SyncFocus {
+    /// Enable/disable server sync toggle.
+    #[default]
+    Toggle,
+    /// Optional custom server list input.
+    Servers,
+}
+
+/// State of step 5 (`Step::Sync`).
+#[derive(Debug)]
+pub struct SyncSetup {
+    /// Whether server sync & live relay are enabled (default `true`).
+    pub enabled: bool,
+    /// Active field on `Step::Sync`.
+    pub focus: SyncFocus,
+    /// Optional custom self-hosted sync server URLs (`host[:port]`).
+    pub servers: TextInput,
+}
+
+impl Default for SyncSetup {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            focus: SyncFocus::Toggle,
+            servers: TextInput::new(512),
+        }
+    }
 }
 
 /// Wizard state.
@@ -74,6 +109,8 @@ pub struct CreateState {
     pub step: Step,
     /// Vault name.
     pub name: TextInput,
+    /// Chosen root account identity (always `RootKind::Bip39` while future options are gated).
+    pub root_kind: RootKind,
     /// Index into [`PROFILES`].
     pub profile: usize,
     /// Focus on the setup step.
@@ -86,6 +123,10 @@ pub struct CreateState {
     pub verify: Option<Box<Verify>>,
     /// Factor step.
     pub enroll: EnrollState,
+    /// Chosen local unlock factor held until step 5 completes.
+    pub enrolled: Option<Enrollment>,
+    /// Server sync consent and optional custom server list.
+    pub sync: SyncSetup,
     /// Records imported from another manager, written with the vault.
     pub records: Vec<Document>,
     /// How many were imported, and from where; kept for the result notice.
@@ -102,12 +143,15 @@ impl CreateState {
         Self {
             step: Step::Setup,
             name: TextInput::with_value("Personal", MAX_VAULT_NAME),
+            root_kind: RootKind::Bip39,
             profile: DEFAULT_PROFILE,
             field: SetupField::Name,
             phrase: None,
             ceremony: Ceremony::default(),
             verify: None,
             enroll: EnrollState::new(false),
+            enrolled: None,
+            sync: SyncSetup::default(),
             records: Vec::new(),
             imported: None,
         }
@@ -130,21 +174,14 @@ impl CreateState {
             Step::Ceremony => Scope::Ceremony,
             Step::Verify => Scope::Verify,
             Step::Enroll => Scope::Enroll,
+            Step::Sync => Scope::CreateSync,
         }
     }
 
     /// Handle a key.
     pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         match self.step {
-            Step::Setup => {
-                if let Some(action) = resolve(Scope::Setup, event) {
-                    return self.on_setup(action, ctx);
-                }
-                if self.field == SetupField::Name {
-                    edit_text(&mut self.name, event);
-                }
-                Nav::Stay
-            }
+            Step::Setup => self.on_setup_key(event, ctx),
             Step::Ceremony | Step::Verify => {
                 resolve(self.scope(), event).map_or(Nav::Stay, |action| self.on_action(action, ctx))
             }
@@ -156,9 +193,62 @@ impl CreateState {
                     self.verify = None;
                     Nav::Stay
                 }
-                EnrollEvent::Done(factor) => self.finish(factor, ctx),
+                EnrollEvent::Done(factor) => {
+                    self.enrolled = Some(factor);
+                    self.sync.focus = SyncFocus::Toggle;
+                    self.step = Step::Sync;
+                    ctx.redraw();
+                    Nav::Stay
+                }
             },
+            Step::Sync => self.on_sync_key(event, ctx),
         }
+    }
+
+    fn on_setup_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
+        if let Some(action) = resolve(Scope::Setup, event) {
+            return self.on_setup(action, ctx);
+        }
+        match self.field {
+            SetupField::Name => {
+                let _ = edit_text(&mut self.name, event);
+            }
+            SetupField::Identity
+                if matches!(
+                    event.code,
+                    KeyCode::Left | KeyCode::Right | KeyCode::Char(' ')
+                ) =>
+            {
+                ctx.toast(
+                    Tone::Info,
+                    "Email and hardware-key root identities are coming in a future release.",
+                );
+            }
+            SetupField::Identity | SetupField::Profile => {}
+        }
+        Nav::Stay
+    }
+
+    fn on_sync_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
+        if let Some(action) = resolve(Scope::CreateSync, event) {
+            return self.on_action(action, ctx);
+        }
+        match self.sync.focus {
+            SyncFocus::Toggle
+                if matches!(
+                    event.code,
+                    KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+                ) =>
+            {
+                self.sync.enabled = !self.sync.enabled;
+                ctx.redraw();
+            }
+            SyncFocus::Servers => {
+                let _ = edit_text(&mut self.sync.servers, event);
+            }
+            SyncFocus::Toggle => {}
+        }
+        Nav::Stay
     }
 
     /// A key was released (key-release terminals only).
@@ -175,6 +265,10 @@ impl CreateState {
                 self.name.insert_str(text);
             }
             Step::Enroll => self.enroll.on_paste(text),
+            Step::Sync => {
+                self.sync.focus = SyncFocus::Servers;
+                self.sync.servers.insert_str(text.trim());
+            }
             Step::Setup | Step::Ceremony | Step::Verify => {}
         }
     }
@@ -201,47 +295,81 @@ impl CreateState {
                 }
                 Nav::Stay
             }
-            Step::Verify => {
-                if action == Action::Back {
-                    self.verify = None;
-                    self.step = Step::Ceremony;
-                    return Nav::Stay;
-                }
-                if action == Action::Skip {
-                    self.verify = None;
-                    self.step = Step::Enroll;
-                    return Nav::Stay;
-                }
-                let (Some(verify), Some(phrase)) = (self.verify.as_mut(), self.phrase.as_ref())
-                else {
-                    return Nav::Stay;
-                };
-                match verify.on_action(action, phrase, ctx.now) {
-                    VerifyEvent::Stay | VerifyEvent::Failed => {}
-                    VerifyEvent::Skipped | VerifyEvent::Passed => {
-                        self.verify = None;
-                        self.step = Step::Enroll;
-                    }
-                }
-                Nav::Stay
-            }
+            Step::Verify => self.on_verify_action(action, ctx),
             Step::Enroll => Nav::Stay,
+            Step::Sync => self.on_sync_action(action, ctx),
         }
+    }
+
+    fn on_verify_action(&mut self, action: Action, ctx: &Ctx) -> Nav {
+        if action == Action::Back {
+            self.verify = None;
+            self.step = Step::Ceremony;
+            return Nav::Stay;
+        }
+        if action == Action::Skip {
+            self.verify = None;
+            self.step = Step::Enroll;
+            return Nav::Stay;
+        }
+        let (Some(verify), Some(phrase)) = (self.verify.as_mut(), self.phrase.as_ref()) else {
+            return Nav::Stay;
+        };
+        match verify.on_action(action, phrase, ctx.now) {
+            VerifyEvent::Stay | VerifyEvent::Failed => {}
+            VerifyEvent::Skipped | VerifyEvent::Passed => {
+                self.verify = None;
+                self.step = Step::Enroll;
+            }
+        }
+        Nav::Stay
+    }
+
+    fn on_sync_action(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
+        match action {
+            Action::Back => {
+                self.enrolled = None;
+                self.step = Step::Enroll;
+                ctx.redraw();
+            }
+            Action::NextField | Action::PrevField | Action::Up | Action::Down => {
+                self.sync.focus = match self.sync.focus {
+                    SyncFocus::Toggle => SyncFocus::Servers,
+                    SyncFocus::Servers => SyncFocus::Toggle,
+                };
+                ctx.redraw();
+            }
+            Action::Confirm => return self.finish(ctx),
+            _ => {}
+        }
+        Nav::Stay
     }
 
     fn on_setup(&mut self, action: Action, ctx: &mut Ctx) -> Nav {
         match action {
-            Action::NextField | Action::PrevField => {
+            Action::NextField => {
                 self.field = match self.field {
-                    SetupField::Name => SetupField::Profile,
+                    SetupField::Name => SetupField::Identity,
+                    SetupField::Identity => SetupField::Profile,
                     SetupField::Profile => SetupField::Name,
                 };
             }
-            Action::Up | Action::Down => {
-                self.field = SetupField::Profile;
-                let down = action == Action::Down;
-                self.profile = step(self.profile, down, PROFILES.len());
+            Action::PrevField => {
+                self.field = match self.field {
+                    SetupField::Name => SetupField::Profile,
+                    SetupField::Identity => SetupField::Name,
+                    SetupField::Profile => SetupField::Identity,
+                };
             }
+            Action::Up | Action::Down => match self.field {
+                SetupField::Identity if action == Action::Up => self.field = SetupField::Name,
+                SetupField::Identity => self.field = SetupField::Profile,
+                SetupField::Name | SetupField::Profile => {
+                    self.field = SetupField::Profile;
+                    let down = action == Action::Down;
+                    self.profile = step(self.profile, down, PROFILES.len());
+                }
+            },
             Action::Confirm => self.leave_setup(ctx),
             Action::Back => return Nav::To(crate::app::flows::gate::initial_screen(ctx)),
             _ => {}
@@ -277,8 +405,20 @@ impl CreateState {
         }
     }
 
-    fn finish(&mut self, factor: Enrollment, ctx: &mut Ctx) -> Nav {
-        let Some(phrase) = self.phrase.take() else {
+    fn finish(&mut self, ctx: &mut Ctx) -> Nav {
+        let raw_servers = self.sync.servers.value().trim();
+        let sync_servers = if raw_servers.is_empty() {
+            Vec::new()
+        } else {
+            match local::parse_sync_server_list(&raw_servers.replace(',', "\n"), true) {
+                Ok(list) => list,
+                Err(err) => {
+                    ctx.toast(Tone::Warn, err);
+                    return Nav::Stay;
+                }
+            }
+        };
+        let (Some(phrase), Some(factor)) = (self.phrase.take(), self.enrolled.take()) else {
             return Nav::Stay;
         };
         let request = NewVault {
@@ -291,6 +431,8 @@ impl CreateState {
                 .unwrap_or(KdfProfile::Balanced),
             factor,
             records: std::mem::take(&mut self.records),
+            server_sync: self.sync.enabled,
+            sync_servers,
         };
         ctx.start(Job::Create(Box::new(request)), Task::Create);
         Nav::Stay
@@ -309,6 +451,8 @@ impl CreateState {
         );
         self.step = Step::Setup;
         self.enroll = EnrollState::new(false);
+        self.enrolled = None;
+        self.sync = SyncSetup::default();
     }
 }
 

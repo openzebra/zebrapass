@@ -9,6 +9,7 @@ mod en_words;
 mod identity;
 mod phrase;
 mod rng;
+mod root;
 
 /// The canonical BIP39 English wordlist. Public data: autocomplete and
 /// decoy words may read it; only [`SeedPhrase`] validates phrases.
@@ -19,3 +20,4 @@ pub use identity::ec_identity_pk;
 pub use kdf::client_id;
 pub use phrase::SeedPhrase;
 pub use rng::OsFill;
+pub use root::{RootInput, RootKind, derive_root_seed, derive_storage_id};

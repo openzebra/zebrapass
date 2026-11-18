@@ -331,6 +331,8 @@ fn vim_keys_navigate_and_switch_cards_without_eating_passwords() {
             profile: KdfProfile::Fast,
             factor: Enrollment::Password(Zeroizing::new(tricky_pw.as_bytes().to_vec())),
             records: Vec::new(),
+            server_sync: false,
+            sync_servers: Vec::new(),
         })
         .unwrap();
         drop(vault);

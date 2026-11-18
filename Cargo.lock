@@ -1481,6 +1481,7 @@ dependencies = [
  "kdf",
  "pqbip39",
  "secrecy",
+ "secret",
 ]
 
 [[package]]
@@ -1767,30 +1768,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sync-https"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "frame",
- "getrandom 0.4.3",
- "kdf",
- "local",
- "memberlog",
- "pq",
- "rustls",
- "rustls-pki-types",
- "secret",
- "session",
- "sha1",
- "sha2",
- "syncwire",
- "tokio",
- "tokio-rustls",
- "webpki-roots",
- "zeroize",
-]
-
-[[package]]
 name = "syncwire"
 version = "0.1.0"
 dependencies = [
@@ -1875,10 +1852,10 @@ dependencies = [
  "sha1",
  "sharing",
  "subtle",
- "sync-https",
  "syncwire",
  "tokio",
  "zeroize",
+ "zsync",
 ]
 
 [[package]]
@@ -2249,3 +2226,32 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zsync"
+version = "0.1.0"
+dependencies = [
+ "aead",
+ "anyhow",
+ "container",
+ "frame",
+ "getrandom 0.4.3",
+ "kdf",
+ "local",
+ "memberlog",
+ "p2p-core",
+ "pq",
+ "record",
+ "rustls",
+ "rustls-pki-types",
+ "secret",
+ "seed",
+ "session",
+ "sha2",
+ "subtle",
+ "syncwire",
+ "tokio",
+ "tokio-rustls",
+ "webpki-roots",
+ "zeroize",
+]

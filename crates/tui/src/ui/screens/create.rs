@@ -1,11 +1,12 @@
-//! Create wizard, step 1 of 4: name and unlock cost. The encryption stack is
-//! fixed and only described. Later steps delegate to the ceremony and enroll
-//! screens.
+//! Create wizard, step 1 of 5: name, account identity, and unlock cost.
+//! The encryption stack is fixed and only described. Later steps delegate to
+//! ceremony, enroll, and sync consent screens.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use seed::RootKind;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::create::{CreateState, PROFILES, SetupField, Step, estimate, profile_info};
@@ -21,7 +22,8 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
         Step::Ceremony | Step::Verify => {
             crate::ui::screens::ceremony::draw(frame, area, state, ctx);
         }
-        Step::Enroll => crate::ui::screens::enroll::draw(frame, area, &state.enroll, (4, 4), ctx),
+        Step::Enroll => crate::ui::screens::enroll::draw(frame, area, &state.enroll, (4, 5), ctx),
+        Step::Sync => crate::ui::screens::create_sync::draw(frame, area, state, ctx),
     }
 }
 
@@ -58,20 +60,21 @@ fn timing(profile: session::KdfProfile, ctx: &Ctx) -> String {
 fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
     let theme = &ctx.theme;
     let [body, hints] = body_and_hints(area);
-    let card = centered(body, body.width.min(82), 22);
+    let card = centered(body, body.width.min(82), 23);
     let title = state.imported.map_or_else(
         || String::from("New vault"),
         |(count, source)| format!("New vault · {count} records from {source}"),
     );
-    let block = panel(titled(&title, (1, 4), card.width, ctx), theme);
+    let block = panel(titled(&title, (1, 5), card.width, ctx), theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
-    let [name_label, name_box, _, cost, _, crypto, next] = Layout::vertical([
+    let spacer = u16::from(inner.height >= 19);
+    let [name_label, name_box, identity, cost, _, crypto, next] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(3),
         Constraint::Length(1),
-        Constraint::Length(5),
-        Constraint::Length(1),
+        Constraint::Length(4 + spacer),
+        Constraint::Length(spacer),
         Constraint::Length(4),
         Constraint::Min(3),
     ])
@@ -101,6 +104,7 @@ fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
             note,
         );
     }
+    frame.render_widget(Paragraph::new(identity_line(state, ctx)), identity);
     frame.render_widget(Paragraph::new(cost_lines(state, wide, ctx)), cost);
     frame.render_widget(Paragraph::new(crypto_lines(wide, ctx)), crypto);
     if let Some(spot) = row(next, 0) {
@@ -113,6 +117,32 @@ fn setup(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx) {
         button(frame, rect, "Next  →", true, true, theme);
     }
     hint_bar(frame, hints, crate::app::keymap::Scope::Setup, "", ctx);
+}
+
+fn identity_line(state: &CreateState, ctx: &Ctx) -> Line<'static> {
+    let theme = &ctx.theme;
+    let label_style = if state.field == SetupField::Identity {
+        theme.accent()
+    } else {
+        theme.strong()
+    };
+    let mut spans = vec![Span::styled("  Identity ", label_style)];
+    for kind in RootKind::ALL {
+        let chosen = state.root_kind == kind;
+        let mark = radio(chosen, theme);
+        let text = if kind.supported() {
+            format!("{mark} {}  ", kind.label())
+        } else {
+            format!("{mark} {} (future)  ", kind.label())
+        };
+        let style = if chosen {
+            theme.accent()
+        } else {
+            theme.muted()
+        };
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
 }
 
 /// Unlock-cost radios: how long opening the vault takes on this machine.

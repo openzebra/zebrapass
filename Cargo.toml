@@ -19,7 +19,7 @@ members = [
     "crates/memberlog",
     "crates/sharing",
     "crates/p2p-net",
-    "crates/sync-https",
+    "crates/zsync",
     "crates/tui",
 ]
 resolver = "2"
@@ -51,10 +51,10 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 zeroize = "=1.9.0"
 subtle = "=2.6.1"
-# Async runtime of the device-sync transport (crates/p2p-net and crates/sync-https). The channel
+# Async runtime of the device-sync transport (crates/p2p-net and crates/zsync). The channel
 # inside is our own post-quantum one.
 tokio = { version = "=1.53.1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "sync"] }
-# Outer TLS 1.3 transport (crates/sync-https only, never inside crypto crates).
+# Outer TLS 1.3 transport (crates/zsync only, never inside crypto crates).
 rustls = { version = "=0.23.40", default-features = false, features = ["aws_lc_rs", "tls12", "std", "prefer-post-quantum"] }
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["tls12"] }
 rustls-pki-types = { version = "=1.14.1", default-features = false, features = ["std", "alloc"] }

@@ -5,7 +5,7 @@ mod derive;
 mod hkdf;
 mod p2p;
 mod profile;
-mod sync_https;
+mod zsync;
 
 pub use argon2::argon2id;
 pub use derive::{
@@ -25,8 +25,8 @@ pub use p2p::{
     share_grant_key, shared_beacon_key,
 };
 pub use profile::KdfProfile;
-pub use sync_https::{
-    INFO_BACKUP_COMMIT, INFO_BACKUP_SEAL, INFO_CLOUD_BACKUP, INFO_PERSONAL_REKEY,
-    INFO_SYNC_ENVELOPE, INFO_SYNC_MAILBOX, backup_keys, cloud_backup_key, personal_envelope_key,
-    personal_mailbox_id, personal_rekey_key, shared_envelope_key, shared_mailbox_id,
+pub use zsync::{
+    INFO_BACKUP_COMMIT, INFO_BACKUP_SEAL, INFO_PERSONAL_REKEY, INFO_SHARED_STORAGE,
+    INFO_ZSYNC_ENVELOPE, INFO_ZSYNC_RELAY_SLOT, backup_keys, personal_envelope_key,
+    personal_rekey_key, shared_envelope_key, shared_storage_id, storage_id, zsync_relay_slot,
 };

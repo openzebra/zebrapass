@@ -71,8 +71,8 @@ pub struct Unlocked {
     /// Peer-to-peer node, while there is a shared vault to serve or the
     /// personal vault may be served to this account's other devices.
     pub p2p: Option<Box<P2p>>,
-    /// HTTPS/WSS + `SplitHTTP` sync client and live worker, when configured.
-    pub https: Option<Box<crate::app::https_sync::HttpsSync>>,
+    /// Unified PQ TLS 1.3 sync client, watch worker, and live relay holder.
+    pub zsync: Option<Box<crate::app::zsync::ZebraSync>>,
     /// This device's sync identity, when the vault has one.
     pub identity: Option<Arc<SyncIdentity>>,
     /// Where LAN beacons go and are heard, when the command line says.
@@ -136,7 +136,7 @@ impl Unlocked {
             cache,
             shared,
             p2p,
-            https: None,
+            zsync: None,
             identity,
             beacon,
             held: None,
@@ -325,7 +325,7 @@ impl Unlocked {
     /// Timers: reveals and hold-to-confirm.
     pub fn on_tick(&mut self, ctx: &mut Ctx) -> Nav {
         self.poll_p2p(ctx);
-        self.poll_https(ctx);
+        self.poll_zsync(ctx);
         let mut hid = false;
         if let Some(detail) = self.home.detail.as_mut() {
             hid |= detail.reveal.tick(ctx.now, ctx.reveal_after);
