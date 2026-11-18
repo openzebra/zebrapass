@@ -1,4 +1,4 @@
-//! Unlock screen: one balanced card with storage, factor, secret, and actions.
+//! Unlock screen: one balanced card with vault card deck, factor, secret, and actions.
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -11,35 +11,33 @@ use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::widgets::chrome::{button, hint_bar, modal, panel, row_style};
 use crate::ui::widgets::field::{boxed, secret_line_with_placeholder};
-use crate::ui::widgets::fingerprint::{grouped_hex, stripe_print};
+use crate::ui::widgets::fingerprint::stripe_print;
 use crate::ui::widgets::meter::bar;
 use crate::ui::widgets::stripes::rule;
-use crate::vault::discover::VaultRef;
+use crate::ui::widgets::vault_card::{card_codename, card_tint, short_tag, sigil_rows};
+use crate::ui::widgets::vault_deck::{CARD_DECK_HEIGHT, CARD_FACE_WIDTH, CardSummary, draw_deck};
 
-const CARD_WIDTH: u16 = 64;
-const CONTROL_WIDTH: u16 = 44;
-
-fn vault_title(vault: Option<&VaultRef>) -> String {
-    vault.and_then(|vault| vault.vault_id).map_or_else(
-        || String::from("Vault"),
-        |id| format!("Vault {}", grouped_hex(&id, 2)),
-    )
-}
+const CARD_WIDTH: u16 = 66;
+const CONTROL_WIDTH: u16 = CARD_FACE_WIDTH;
 
 /// Draw the unlock screen.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
     let [body, hints] = body_and_hints(area);
-    let roomy = body.height >= 23;
-    let card = centered(
-        body,
-        body.width.min(CARD_WIDTH),
-        if roomy { 23 } else { 19 },
-    );
+    let target_height = if body.height >= 25 {
+        25
+    } else if body.height >= 21 {
+        21
+    } else {
+        19
+    };
+    let card = centered(body, body.width.min(CARD_WIDTH), target_height);
     let block = panel("", &ctx.theme);
     let inner = block.inner(card);
     frame.render_widget(block, card);
-    if roomy {
+    if target_height == 25 {
         draw_roomy(frame, inner, state, ctx);
+    } else if target_height == 21 {
+        draw_medium(frame, inner, state, ctx);
     } else {
         draw_compact(frame, inner, state, ctx);
     }
@@ -56,7 +54,7 @@ fn draw_roomy(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
         title,
         subtitle,
         _,
-        storage,
+        deck,
         _,
         factors,
         _,
@@ -69,7 +67,7 @@ fn draw_roomy(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(3),
+        Constraint::Length(CARD_DECK_HEIGHT),
         Constraint::Length(1),
         Constraint::Length(3),
         Constraint::Length(1),
@@ -79,6 +77,60 @@ fn draw_roomy(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
     ])
     .areas(area);
     draw_brand(frame, brand, "quantum-safe", ctx);
+    draw_heading(frame, title, subtitle, state, ctx);
+    draw_vault_card(frame, deck, state, ctx);
+    draw_factors(frame, factors, state, ctx);
+    draw_input(frame, input, state, ctx);
+    draw_error(frame, error, state, ctx);
+    draw_actions(frame, actions, state, ctx);
+}
+
+fn draw_medium(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let [brand, title, subtitle, deck, factors, input, error, actions] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(CARD_DECK_HEIGHT),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(2),
+        Constraint::Length(3),
+    ])
+    .areas(area);
+    draw_brand(frame, brand, "quantum-safe", ctx);
+    draw_heading(frame, title, subtitle, state, ctx);
+    draw_vault_card(frame, deck, state, ctx);
+    draw_factors(frame, factors, state, ctx);
+    draw_input(frame, input, state, ctx);
+    draw_error(frame, error, state, ctx);
+    draw_actions(frame, actions, state, ctx);
+}
+
+fn draw_compact(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let [brand, deck, factors, input, error, actions] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(CARD_DECK_HEIGHT),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(2),
+        Constraint::Length(3),
+    ])
+    .areas(area);
+    draw_brand(frame, brand, "locked", ctx);
+    draw_vault_card(frame, deck, state, ctx);
+    draw_factors(frame, factors, state, ctx);
+    draw_input(frame, input, state, ctx);
+    draw_error(frame, error, state, ctx);
+    draw_actions(frame, actions, state, ctx);
+}
+
+fn draw_heading(
+    frame: &mut Frame<'_>,
+    title: Rect,
+    subtitle: Rect,
+    state: &UnlockState,
+    ctx: &Ctx,
+) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!("{}  Unlock your vault", ctx.theme.glyphs.vk),
@@ -89,38 +141,12 @@ fn draw_roomy(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
     );
     let subtitle_text = state.directory.as_ref().map_or_else(
         |error| error.message().to_owned(),
-        |_| String::from("This storage is locked"),
+        |_| String::from("This vault is locked"),
     );
     frame.render_widget(
         Paragraph::new(Span::styled(subtitle_text, ctx.theme.muted())).alignment(Alignment::Center),
         subtitle,
     );
-    draw_storage(frame, storage, state, ctx);
-    draw_factors(frame, factors, state, ctx);
-    draw_input(frame, input, state, ctx);
-    draw_error(frame, error, state, ctx);
-    draw_actions(frame, actions, state, ctx);
-}
-
-fn draw_compact(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
-    let [brand, storage, _, factors, _, input, error, _, actions] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(3),
-    ])
-    .areas(area);
-    draw_brand(frame, brand, "locked", ctx);
-    draw_storage(frame, storage, state, ctx);
-    draw_factors(frame, factors, state, ctx);
-    draw_input(frame, input, state, ctx);
-    draw_error(frame, error, state, ctx);
-    draw_actions(frame, actions, state, ctx);
 }
 
 fn draw_brand(frame: &mut Frame<'_>, area: Rect, right: &str, ctx: &Ctx) {
@@ -141,25 +167,21 @@ fn draw_brand(frame: &mut Frame<'_>, area: Rect, right: &str, ctx: &Ctx) {
     );
 }
 
-fn draw_storage(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
-    let label = if state.vaults.is_empty() {
-        String::from("Storage")
-    } else {
-        format!(
-            "Storage {}/{}  ·  {}",
-            state.current + 1,
-            state.vaults.len(),
-            vault_title(state.vault())
-        )
+fn draw_vault_card(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
+    let (prev_id, next_id) = state.neighbor_vault_ids();
+    let last_unlocked = state.vault().is_some_and(|vault| vault.last_unlocked);
+    let summary = CardSummary {
+        generation: state.directory.as_ref().ok().map(|dir| dir.generation),
+        index: state.current,
+        total: state.vaults.len(),
+        presence: state.presence(),
+        id: state.active_vault_id(),
+        prev_id,
+        next_id,
+        last_unlocked,
+        focused: state.focus == UnlockFocus::Storage,
     };
-    button(
-        frame,
-        area,
-        &label,
-        false,
-        state.focus == UnlockFocus::Storage,
-        &ctx.theme,
-    );
+    draw_deck(frame, area, &summary, &ctx.theme);
 }
 
 fn draw_factors(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
@@ -270,26 +292,48 @@ fn draw_error(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx)
 
 fn draw_picker(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, cursor: usize, ctx: &Ctx) {
     let theme = &ctx.theme;
-    let height = u16::try_from(state.vaults.len().min(10) + 2).unwrap_or(12);
-    let rect = centered(area, 56, height);
+    let total = state.vaults.len();
+    let visible = total.clamp(1, 10);
+    let start = cursor
+        .saturating_sub(visible / 2)
+        .min(total.saturating_sub(visible));
+    let height = u16::try_from(visible + 2).unwrap_or(12);
+    let rect = centered(area, area.width.min(60), height);
     frame.render_widget(Clear, rect);
-    let inner = modal(frame, rect, "Choose a storage", theme);
+    let inner = modal(frame, rect, "Choose a vault card", theme);
     let lines: Vec<Line<'_>> = state
         .vaults
         .iter()
         .enumerate()
+        .skip(start)
+        .take(visible)
         .map(|(index, vault)| {
             let chosen = index == cursor;
             let pointer = if chosen { theme.glyphs.pointer } else { " " };
-            let print = vault
+            let id = vault.vault_id.as_ref();
+            let tint = card_tint(id, theme);
+            let [_, crown, _] = sigil_rows(id, theme.ascii);
+            let print: String = vault
                 .vault_id
-                .map_or_default(|id| stripe_print(&id, theme.glyphs));
+                .map_or_default(|bytes| stripe_print(&bytes, theme.glyphs))
+                .chars()
+                .take(12)
+                .collect();
+            let star = if vault.last_unlocked {
+                theme.glyphs.star
+            } else {
+                " "
+            };
             Line::from(vec![
                 Span::styled(format!("{pointer} "), theme.accent()),
+                Span::styled(crown, tint),
+                Span::styled(format!("  {} ", theme.glyphs.vk), tint),
                 Span::styled(
-                    format!("{:<22}", vault_title(Some(vault))),
+                    format!("{:<16}", card_codename(id)),
                     row_style(chosen, theme),
                 ),
+                Span::styled(format!("{star} "), theme.accent()),
+                Span::styled(format!("{:<10} ", short_tag(id)), theme.muted()),
                 Span::styled(print, theme.zebra()),
             ])
         })

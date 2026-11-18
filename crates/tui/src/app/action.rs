@@ -46,6 +46,12 @@ actions! {
     NextField,
     /// Previous field or pane.
     PrevField,
+    /// Previous vault card.
+    PrevVault,
+    /// Next vault card.
+    NextVault,
+    /// Focus the secret input.
+    FocusInput,
     /// Open / select / confirm.
     Confirm,
     /// Back / clear / cancel.

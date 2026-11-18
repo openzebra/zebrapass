@@ -8,6 +8,9 @@ pub const MAX_VAULT_FILE: u64 = 512 * 1024 * 1024;
 /// Most vault directories listed under the data directory.
 pub const MAX_VAULTS: usize = 256;
 
+/// Largest `vaults.recent` MRU file read from the data directory (`256 * 16`).
+pub const MAX_RECENT_VAULTS_BYTES: u64 = (MAX_VAULTS * 16) as u64;
+
 /// Longest vault display name, in bytes.
 pub const MAX_VAULT_NAME: usize = 64;
 

@@ -66,10 +66,12 @@ impl From<&WrapEntry<'_>> for Factor {
 /// The wrap directory of a vault file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WrapDirectory {
-    /// Directory generation as stored. Unauthenticated until unlock.
-    pub generation: u64,
     /// Factors in file order.
     pub factors: Box<[Factor]>,
+    /// Directory generation as stored. Unauthenticated until unlock.
+    pub generation: u64,
+    /// Public vault id from the static header.
+    pub vault_id: [u8; 16],
 }
 
 /// Read the wrap directory of `file` without unlocking it.
@@ -87,7 +89,8 @@ pub fn wrap_directory(file: &VaultFile) -> anyhow::Result<WrapDirectory> {
         .map(Factor::from)
         .collect::<Box<[_]>>();
     Ok(WrapDirectory {
-        generation: parsed.generation,
         factors,
+        generation: parsed.generation,
+        vault_id: parsed.header.vault_id,
     })
 }

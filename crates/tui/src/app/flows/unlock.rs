@@ -114,6 +114,29 @@ impl UnlockState {
         self.vaults.get(self.current)
     }
 
+    /// Public vault id of the selected vault, from its folder or header.
+    #[must_use]
+    pub fn active_vault_id(&self) -> Option<[u8; 16]> {
+        self.vault()
+            .and_then(|vault| vault.vault_id)
+            .or_else(|| self.directory.as_ref().ok().map(|dir| dir.vault_id))
+    }
+
+    /// Public vault ids of the previous and next cards in carousel wrap order.
+    #[must_use]
+    pub fn neighbor_vault_ids(&self) -> (Option<[u8; 16]>, Option<[u8; 16]>) {
+        let count = self.vaults.len();
+        if count < 2 {
+            return (None, None);
+        }
+        let prev = (self.current + count - 1) % count;
+        let next = (self.current + 1) % count;
+        (
+            self.vaults.get(prev).and_then(|vault| vault.vault_id),
+            self.vaults.get(next).and_then(|vault| vault.vault_id),
+        )
+    }
+
     /// The device wrap this machine holds a key file for.
     #[must_use]
     pub fn owned_device(&self) -> Option<[u8; 16]> {

@@ -1,10 +1,11 @@
-//! Focus navigation and button activation for the unlock screen.
+//! Focus navigation, arrow/vim storage switching, and button activation for
+//! the unlock screen.
 
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
-use crate::app::flows::editing::edit_secret;
+use crate::app::flows::editing::{edit_secret, printable};
 use crate::app::flows::gate::WelcomeState;
 use crate::app::flows::unlock::{Mode, REVEAL_PASSWORD, UnlockFocus, UnlockState};
 use crate::app::keymap::{Scope, resolve};
@@ -17,16 +18,26 @@ impl UnlockState {
         if let Some(cursor) = self.picker {
             return self.on_picker(event, cursor, ctx);
         }
+        // Printable characters always type into the focused secret field so
+        // vim bindings (h/j/k/l/[/]/i/space) never eat password characters.
+        if self.focus == UnlockFocus::Input && printable(event).is_some() {
+            return self.type_into_input(event);
+        }
         if let Some(action) = resolve(Scope::Unlock, event) {
-            let editing_cursor =
-                self.focus == UnlockFocus::Input && matches!(action, Action::Left | Action::Right);
+            let editing_cursor = self.focus == UnlockFocus::Input
+                && !self.active_input_empty()
+                && matches!(action, Action::Left | Action::Right);
             if !editing_cursor {
                 return self.on_action(action, ctx);
             }
         }
-        if self.focus != UnlockFocus::Input {
-            return Nav::Stay;
+        if self.focus == UnlockFocus::Input {
+            return self.type_into_input(event);
         }
+        Nav::Stay
+    }
+
+    fn type_into_input(&mut self, event: &KeyEvent) -> Nav {
         let input = match self.mode {
             Mode::Password => &mut self.password,
             Mode::Device => &mut self.pin,
@@ -35,22 +46,45 @@ impl UnlockState {
         Nav::Stay
     }
 
+    fn active_input_empty(&self) -> bool {
+        match self.mode {
+            Mode::Password => self.password.is_empty(),
+            Mode::Device => self.pin.is_empty(),
+        }
+    }
+
     fn on_picker(&mut self, event: &KeyEvent, cursor: usize, ctx: &mut Ctx) -> Nav {
-        if resolve(Scope::Unlock, event) == Some(Action::Quit) {
+        let resolved = resolve(Scope::Unlock, event);
+        if resolved == Some(Action::Quit) {
             return Nav::Quit;
         }
+        let count = self.vaults.len();
+        if count == 0 {
+            self.picker = None;
+            return Nav::Stay;
+        }
+        if matches!(resolved, Some(Action::PrevVault)) {
+            self.picker = Some((cursor + count - 1) % count);
+            return Nav::Stay;
+        }
+        if matches!(resolved, Some(Action::NextVault)) {
+            self.picker = Some((cursor + 1) % count);
+            return Nav::Stay;
+        }
         match event.code {
-            KeyCode::Up | KeyCode::Left | KeyCode::BackTab => {
-                self.picker = Some(cursor.saturating_sub(1));
+            KeyCode::Up | KeyCode::Left | KeyCode::BackTab | KeyCode::Char('k' | 'h') => {
+                self.picker = Some((cursor + count - 1) % count);
             }
-            KeyCode::Down | KeyCode::Right | KeyCode::Tab => {
-                self.picker = Some((cursor + 1).min(self.vaults.len().saturating_sub(1)));
+            KeyCode::Down | KeyCode::Right | KeyCode::Tab | KeyCode::Char('j' | 'l') => {
+                self.picker = Some((cursor + 1) % count);
             }
-            KeyCode::Enter => {
+            KeyCode::Home | KeyCode::Char('g') => self.picker = Some(0),
+            KeyCode::End | KeyCode::Char('G') => self.picker = Some(count - 1),
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 self.picker = None;
                 self.choose(cursor, ctx);
             }
-            KeyCode::Esc => self.picker = None,
+            KeyCode::Esc | KeyCode::Char('q') => self.picker = None,
             _ => {}
         }
         Nav::Stay
@@ -73,6 +107,9 @@ impl UnlockState {
             Action::Confirm => return self.activate(ctx),
             Action::NextField => self.move_focus(true, ctx),
             Action::PrevField => self.move_focus(false, ctx),
+            Action::PrevVault => self.cycle_storage(false, ctx),
+            Action::NextVault => self.cycle_storage(true, ctx),
+            Action::FocusInput => self.focus = UnlockFocus::Input,
             Action::Left => self.horizontal(false, ctx),
             Action::Right => self.horizontal(true, ctx),
             Action::Up => self.vertical(false),
@@ -82,21 +119,32 @@ impl UnlockState {
                     ctx.redraw();
                 }
             }
-            Action::Back => {
-                self.password.clear();
-                self.pin.clear();
-                self.reveal_off(ctx);
-            }
+            Action::Back => self.on_back(ctx),
             Action::Quit => return Nav::Quit,
             _ => {}
         }
         Nav::Stay
     }
 
+    fn on_back(&mut self, ctx: &mut Ctx) {
+        let had_text = !self.password.is_empty() || !self.pin.is_empty();
+        let was_revealed = self.reveal.is_shown(REVEAL_PASSWORD);
+        self.password.clear();
+        self.pin.clear();
+        self.reveal_off(ctx);
+        if !had_text && !was_revealed && self.focus == UnlockFocus::Input {
+            self.focus = if self.vaults.len() > 1 {
+                UnlockFocus::Storage
+            } else {
+                UnlockFocus::Factor
+            };
+        }
+    }
+
     fn activate(&mut self, ctx: &mut Ctx) -> Nav {
         match self.focus {
             UnlockFocus::Storage if self.vaults.len() > 1 => self.picker = Some(self.current),
-            UnlockFocus::Storage => ctx.toast(Tone::Info, "Only one storage on this device."),
+            UnlockFocus::Storage => ctx.toast(Tone::Info, "Only one vault card on this device."),
             UnlockFocus::Factor => self.focus = UnlockFocus::Input,
             UnlockFocus::Input | UnlockFocus::Unlock => self.submit(ctx),
             UnlockFocus::New => {
@@ -130,7 +178,7 @@ impl UnlockState {
 
     fn horizontal(&mut self, forward: bool, ctx: &mut Ctx) {
         match self.focus {
-            UnlockFocus::Storage => self.cycle_storage(forward, ctx),
+            UnlockFocus::Storage | UnlockFocus::Input => self.cycle_storage(forward, ctx),
             UnlockFocus::Factor => self.cycle_mode(forward, ctx),
             UnlockFocus::Unlock | UnlockFocus::New => {
                 self.focus = if self.focus == UnlockFocus::Unlock {
@@ -139,15 +187,13 @@ impl UnlockState {
                     UnlockFocus::Unlock
                 };
             }
-            UnlockFocus::Input => {}
         }
     }
 
     const fn vertical(&mut self, down: bool) {
         self.focus = match (self.focus, down) {
-            (UnlockFocus::Storage, true) | (UnlockFocus::Factor | UnlockFocus::Input, false) => {
-                UnlockFocus::Factor
-            }
+            (UnlockFocus::Storage, true) | (UnlockFocus::Input, false) => UnlockFocus::Factor,
+            (UnlockFocus::Factor, false) if self.vaults.len() > 1 => UnlockFocus::Storage,
             (UnlockFocus::Factor, true) | (UnlockFocus::Unlock | UnlockFocus::New, false) => {
                 UnlockFocus::Input
             }

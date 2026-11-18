@@ -6,7 +6,7 @@ use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::screen::Screen;
 use crate::app::worker::JobResult;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::discover::discover;
+use crate::vault::discover::{discover, remember_unlocked};
 use crate::vault::error::UnlockError;
 
 impl App {
@@ -29,19 +29,7 @@ impl App {
                 state.on_result(vault, outcome, &mut self.ctx);
             }
             (JobResult::Opened(outcome), Screen::Unlock(state)) if waited => match outcome {
-                Ok(vault) => {
-                    if let Some(prefs) = vault.meta.prefs.as_ref() {
-                        self.ctx.apply_prefs(prefs);
-                    }
-                    let vaults = std::mem::take(&mut state.vaults);
-                    let (current, beacon) = (state.current, self.ctx.beacon);
-                    let mut unlocked =
-                        Unlocked::new(vault, vaults, current, beacon).with_held(state.held.take());
-                    unlocked.start_https_sync(&self.ctx);
-                    self.screen = Screen::Unlocked(Box::new(unlocked));
-                    self.ctx.idle.touch(self.ctx.now);
-                    self.ctx.redraw();
-                }
+                Ok(vault) => self.finish_unlock(vault),
                 Err(
                     error @ (UnlockError::Rollback { .. }
                     | UnlockError::Conflict { .. }
@@ -106,8 +94,40 @@ impl App {
         }
     }
 
+    fn finish_unlock(&mut self, vault: Box<crate::vault::Vault>) {
+        let Screen::Unlock(state) = &mut self.screen else {
+            return;
+        };
+        let held = state.held.take();
+        remember_unlocked(&self.ctx.base, vault.session.vault_id());
+        let (vaults, current) = if self.ctx.vault_file.is_none() {
+            let refreshed = discover(&self.ctx.base);
+            let at = refreshed
+                .iter()
+                .position(|known| known.vault_id.as_ref() == Some(vault.session.vault_id()))
+                .unwrap_or(0);
+            (refreshed, at)
+        } else {
+            let mut existing = std::mem::take(&mut state.vaults);
+            if let Some(active) = existing.get_mut(state.current) {
+                active.last_unlocked = true;
+            }
+            (existing, state.current)
+        };
+        if let Some(prefs) = vault.meta.prefs.as_ref() {
+            self.ctx.apply_prefs(prefs);
+        }
+        let beacon = self.ctx.beacon;
+        let mut unlocked = Unlocked::new(vault, vaults, current, beacon).with_held(held);
+        unlocked.start_https_sync(&self.ctx);
+        self.screen = Screen::Unlocked(Box::new(unlocked));
+        self.ctx.idle.touch(self.ctx.now);
+        self.ctx.redraw();
+    }
+
     pub(super) fn opened(&mut self, mut vault: Box<crate::vault::Vault>, message: &str) {
         seed_cli_sync_prefs(&mut vault, &self.ctx);
+        remember_unlocked(&self.ctx.base, vault.session.vault_id());
         let vaults = discover(&self.ctx.base);
         let current = vaults
             .iter()
