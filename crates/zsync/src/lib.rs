@@ -19,6 +19,7 @@ mod repo;
 mod repo_disk;
 mod server;
 mod tls;
+mod tls_pin;
 mod wire;
 mod wire_aux;
 mod wire_codec;

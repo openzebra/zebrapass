@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use local::parse_sync_server_url;
+use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
@@ -13,7 +14,8 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::limits::IO_TIMEOUT;
+use crate::limits::{IO_TIMEOUT, MAX_EXTRA_CERTS};
+use crate::tls_pin::PinnedOrWebPkiVerifier;
 
 /// Parsed canonical sync/relay server endpoint (`host:port`).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,25 +63,42 @@ impl Endpoint {
 }
 
 /// Build the PQ TLS 1.3 `rustls` client configuration (`X25519MLKEM768`
-/// preferred via `aws-lc-rs`, `WebPKI` roots + optional extra CA PEMs).
+/// preferred via `aws-lc-rs`, `WebPKI` roots + optional extra CA / pinned PEMs).
 ///
 /// # Errors
 ///
-/// Invalid extra CA PEM certificates or TLS builder rejection.
+/// Invalid extra CA/pin PEM certificates or TLS builder rejection.
 pub fn client_config(extra_roots_pem: Option<&[u8]>) -> anyhow::Result<Arc<ClientConfig>> {
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if let Some(pem) = extra_roots_pem {
-        for item in CertificateDer::pem_slice_iter(pem) {
-            let cert = item.map_err(|_| anyhow!("invalid extra CA certificate PEM"))?;
-            roots.add(cert)?;
-        }
-    }
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let mut cfg = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let mut cfg = if let Some(pem) = extra_roots_pem {
+        let mut pins = Vec::new();
+        for item in CertificateDer::pem_slice_iter(pem) {
+            if pins.len() >= MAX_EXTRA_CERTS {
+                anyhow::bail!("too many certificates in extra CA PEM");
+            }
+            let cert = item.map_err(|_| anyhow!("invalid extra CA certificate PEM"))?;
+            let _ = roots.add(cert.clone());
+            pins.push(cert);
+        }
+        if pins.is_empty() {
+            anyhow::bail!("no certificates found in extra CA PEM");
+        }
+        let webpki = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+            .build()?;
+        let verifier = Arc::new(PinnedOrWebPkiVerifier::new(webpki, pins));
+        ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth()
+    } else {
+        ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    };
     cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(Arc::new(cfg))
 }

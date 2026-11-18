@@ -863,3 +863,125 @@ fn tamper_and_revocation_regressions() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn generate_self_signed(dir: &Path, name: &str, san: &str) -> (Vec<u8>, Vec<u8>) {
+    let key = dir.join(format!("{name}.key"));
+    let crt = dir.join(format!("{name}.crt"));
+    let cnf = dir.join(format!("{name}.cnf"));
+    std::fs::write(
+        &cnf,
+        format!(
+            "[req]\ndistinguished_name = dn\nx509_extensions = v3_ext\nprompt = no\n\
+             [dn]\nCN = ZebraPass SelfSigned\n\
+             [v3_ext]\nbasicConstraints = critical, CA:TRUE\n\
+             keyUsage = critical, digitalSignature, keyCertSign\n\
+             subjectAltName = {san}\n"
+        ),
+    )
+    .unwrap();
+    run_openssl(&[
+        "ecparam",
+        "-name",
+        "prime256v1",
+        "-genkey",
+        "-noout",
+        "-out",
+        key.to_str().unwrap(),
+    ]);
+    run_openssl(&[
+        "req",
+        "-x509",
+        "-new",
+        "-nodes",
+        "-key",
+        key.to_str().unwrap(),
+        "-sha256",
+        "-days",
+        "7",
+        "-config",
+        cnf.to_str().unwrap(),
+        "-out",
+        crt.to_str().unwrap(),
+    ]);
+    (std::fs::read(&crt).unwrap(), std::fs::read(&key).unwrap())
+}
+
+#[test]
+fn self_signed_x509_pin_accepts_matching_san_and_rejects_mismatch_or_unpinned() {
+    let dir = temp_dir("self-signed-pin");
+    let (ok_cert, ok_key) = generate_self_signed(&dir, "ok", "IP:127.0.0.1");
+    let (bad_san_cert, bad_san_key) = generate_self_signed(&dir, "bad", "IP:192.0.2.1");
+
+    block_on(async {
+        let srv_ok = start_server(ZebraServerConfig {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            cert_pem: ok_cert.clone(),
+            key_pem: ok_key,
+            extra_ca_pem: Some(ok_cert.clone()),
+            data_dir: dir.join("srv-ok"),
+            peers: Vec::new(),
+            mesh_interval: Duration::from_secs(60),
+            allow_loopback: true,
+        })
+        .await
+        .unwrap();
+        let srv_bad_san = start_server(ZebraServerConfig {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            cert_pem: bad_san_cert.clone(),
+            key_pem: bad_san_key,
+            extra_ca_pem: Some(bad_san_cert.clone()),
+            data_dir: dir.join("srv-bad"),
+            peers: Vec::new(),
+            mesh_interval: Duration::from_secs(60),
+            allow_loopback: true,
+        })
+        .await
+        .unwrap();
+
+        let phrase = SeedPhrase::generate_24().unwrap();
+        let client_id = kdf::client_id(phrase.seed()).unwrap();
+        let identity = SyncIdentity::enroll(phrase.seed(), &client_id, [11; 16], u64::MAX).unwrap();
+        let empty = || PersonalStateInput {
+            vault_bytes: &[],
+            head_meta_plain: &[],
+            generation: 0,
+            head_epoch: 0,
+            records: &[],
+            revocations: &[],
+            rekeys: &[],
+            push_head_always: false,
+        };
+
+        let ok_ep = srv_ok.endpoint.to_string();
+        let pinned_ok =
+            ZebraClient::new(std::slice::from_ref(&ok_ep), Some(&ok_cert), true).unwrap();
+        pinned_ok
+            .reconcile_personal(&identity, empty())
+            .await
+            .expect("pinned self-signed cert with matching SAN succeeds");
+
+        let unpinned = ZebraClient::new(&[ok_ep], None, true).unwrap();
+        assert!(
+            unpinned
+                .reconcile_personal(&identity, empty())
+                .await
+                .is_err(),
+            "unpinned self-signed cert must fail closed"
+        );
+
+        let bad_ep = srv_bad_san.endpoint.to_string();
+        let pinned_bad_san = ZebraClient::new(&[bad_ep], Some(&bad_san_cert), true).unwrap();
+        assert!(
+            pinned_bad_san
+                .reconcile_personal(&identity, empty())
+                .await
+                .is_err(),
+            "pinned self-signed cert with mismatched SAN must fail closed"
+        );
+
+        srv_ok.stop().await;
+        srv_bad_san.stop().await;
+    });
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

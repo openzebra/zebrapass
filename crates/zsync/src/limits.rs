@@ -59,3 +59,6 @@ pub const RELAY_MAX_BYTES: u64 = 64 << 20;
 
 /// Maximum clock skew accepted on signed watch requests (5 minutes).
 pub const WATCH_MAX_SKEW_SECS: u64 = 300;
+
+/// Maximum certificates loaded from `--extra-ca` PEM input.
+pub const MAX_EXTRA_CERTS: usize = 32;
