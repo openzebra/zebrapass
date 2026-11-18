@@ -15,7 +15,7 @@ use crate::app::flows::history::HistoryState;
 use crate::app::flows::home::{Pane, RowKind};
 use crate::app::flows::settings::SettingsModal;
 use crate::app::flows::unlocked::{Unlocked, View};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::secure::reveal::RevealKey;
 use crate::secure::totp::Totp;
@@ -23,7 +23,7 @@ use crate::ui::layout::Breakpoint;
 use crate::ui::widgets::toast::Tone;
 use crate::vault::create::unix_ms;
 use crate::vault::ops::Op;
-use crate::vault::records::{custom_text, set_custom_text, CUSTOM_FAVORITE};
+use crate::vault::records::{CUSTOM_FAVORITE, custom_text, set_custom_text};
 
 /// Rows a page key moves.
 const PAGE: usize = 10;
@@ -155,7 +155,7 @@ fn cycle_pane(state: &mut Unlocked, forward: bool, ctx: &Ctx) {
     let order: &[Pane] = if width(ctx) == Breakpoint::Wide {
         &[Pane::Filters, Pane::List, Pane::Detail]
     } else {
-        &[Pane::List, Pane::Detail]
+        &[Pane::List, Pane::Detail, Pane::Filters]
     };
     let at = order
         .iter()
@@ -235,10 +235,10 @@ fn copy_focused(state: &mut Unlocked, ctx: &mut Ctx) {
 }
 
 fn back(state: &mut Unlocked, ctx: &mut Ctx) {
-    if let Some(detail) = state.home.detail.as_mut() {
-        if detail.reveal.hide() {
-            ctx.redraw();
-        }
+    if let Some(detail) = state.home.detail.as_mut()
+        && detail.reveal.hide()
+    {
+        ctx.redraw();
     }
     if state.home.stacked || state.home.pane == Pane::Detail {
         state.home.stacked = false;

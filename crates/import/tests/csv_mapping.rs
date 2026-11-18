@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use import::{csv_columns, Credentials, Load, Slot, Source, Target, TARGETS};
+use import::{Credentials, Load, Slot, Source, TARGETS, Target, csv_columns};
 use record::{TAG_TITLE, TAG_USERNAME};
 
 fn fixture(name: &str) -> PathBuf {
@@ -72,8 +72,9 @@ fn an_edited_mapping_is_used_when_reading() {
     let doc = &parsed.items[0].doc;
     assert_eq!(doc.text(TAG_TITLE).unwrap(), Some("Bank, Inc."));
     assert_eq!(doc.text(TAG_USERNAME).unwrap(), Some("dave"));
-    assert!(doc
-        .fields()
-        .iter()
-        .all(|field| !record::is_custom(field.tag)));
+    assert!(
+        doc.fields()
+            .iter()
+            .all(|field| !record::is_custom(field.tag))
+    );
 }

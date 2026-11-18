@@ -1,12 +1,12 @@
 //! Vault health dashboard.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::panels::{health_rows, HealthRow};
+use crate::app::flows::panels::{HealthRow, health_rows};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::Scope;
 use crate::ui::layout::body_and_hints;

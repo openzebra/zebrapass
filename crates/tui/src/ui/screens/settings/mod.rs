@@ -5,13 +5,13 @@
 mod sync_value;
 mod value;
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::settings::rows::{changes, Row, Section};
+use crate::app::flows::settings::rows::{Row, Section, changes};
 use crate::app::flows::settings::{Focus, SettingsModal};
 use crate::app::flows::unlocked::Unlocked;
 use crate::ui::layout::centered;

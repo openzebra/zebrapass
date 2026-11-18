@@ -88,7 +88,7 @@ impl RevealGuard {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{RevealGuard, RevealKey, REVEAL_TIMEOUT};
+    use super::{REVEAL_TIMEOUT, RevealGuard, RevealKey};
 
     #[test]
     fn reveal_times_out_and_toggles() {

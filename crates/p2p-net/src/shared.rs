@@ -3,18 +3,18 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use local::{
-    is_pending, load_peers, open_shared_vault, read_member_log, read_shared_state, save_member_log,
-    save_peers, shared_paths_for, verdict_of, SharedRef, SharedVault, SyncIdentity, Verdict,
+    SharedRef, SharedVault, SyncIdentity, Verdict, is_pending, load_peers, open_shared_vault,
+    read_member_log, read_shared_state, save_member_log, save_peers, shared_paths_for, verdict_of,
 };
-use memberlog::{Entry, ENTRY_WIRE_LEN, MAX_ENTRIES};
+use memberlog::{ENTRY_WIRE_LEN, Entry, MAX_ENTRIES};
 use p2p_core::Account;
 use secret::Secret;
 use syncwire::{encode_peers, encode_snapshot_prefix};
 use zeroize::Zeroizing;
 
-use crate::personal::{personal_view, PersonalServe};
+use crate::personal::{PersonalServe, personal_view};
 use crate::shared_join::parse_rekey;
 use crate::view::{Provider, SnapshotSource, VaultView};
 
@@ -79,8 +79,7 @@ impl SharedProvider {
     /// for the open vault to apply.
     pub fn take_pushed(&self) -> Vec<Vec<u8>> {
         self.personal_serve()
-            .map(|serve| serve.take_inbox())
-            .unwrap_or_default()
+            .map_or_default(|serve| serve.take_inbox())
     }
 
     fn personal_for(&self, vault_id: &[u8; 16]) -> Option<Arc<PersonalServe>> {
@@ -97,8 +96,7 @@ impl SharedProvider {
     pub fn take_delivered(&self) -> Vec<[u8; 16]> {
         self.delivered
             .lock()
-            .map(|mut list| std::mem::take(&mut *list))
-            .unwrap_or_default()
+            .map_or_default(|mut list| std::mem::take(&mut *list))
     }
 
     /// Stop serving a vault.
@@ -270,11 +268,7 @@ impl SharedProvider {
 
 impl Provider for SharedProvider {
     fn views(&self) -> Vec<VaultView> {
-        let served = self
-            .served
-            .lock()
-            .map(|list| list.clone())
-            .unwrap_or_default();
+        let served = self.served.lock().map_or_default(|list| list.clone());
         let serving = self.personal.lock().is_ok_and(|slot| slot.is_some());
         let personal = serving
             .then(|| personal_view(&self.identity, self.book.dialing()))
@@ -307,12 +301,12 @@ impl Provider for SharedProvider {
         ) else {
             return;
         };
-        if log.role_of(&own.client_id).is_none() && account != &own.client_id {
-            if let Ok(mut list) = self.delivered.lock() {
-                if !list.contains(vault_id) {
-                    list.push(*vault_id);
-                }
-            }
+        if log.role_of(&own.client_id).is_none()
+            && account != &own.client_id
+            && let Ok(mut list) = self.delivered.lock()
+            && !list.contains(vault_id)
+        {
+            list.push(*vault_id);
         }
     }
 
@@ -399,8 +393,7 @@ impl Provider for SharedProvider {
     fn peer_hints(&self, vault_id: &[u8; 16]) -> Vec<String> {
         self.reference(vault_id)
             .and_then(|reference| read_member_log(&self.base, &reference).ok())
-            .map(|log| self.book.hints(&log))
-            .unwrap_or_default()
+            .map_or_default(|log| self.book.hints(&log))
     }
 
     fn needs_snapshot(&self, vault_id: &[u8; 16], rekey: Option<&[u8]>) -> bool {
@@ -438,16 +431,12 @@ impl Provider for SharedProvider {
 
     fn beacon_targets(&self) -> Vec<(Secret<[u8; 32]>, [u8; 16])> {
         let mut out = Vec::new();
-        if let Some(gate) = self.identity.account_gate() {
-            if let (Ok(key), Ok(route)) = (kdf::p2p_beacon_key(gate), kdf::account_route_id(gate)) {
-                out.push((key, route));
-            }
+        if let Some(gate) = self.identity.account_gate()
+            && let (Ok(key), Ok(route)) = (kdf::p2p_beacon_key(gate), kdf::account_route_id(gate))
+        {
+            out.push((key, route));
         }
-        let served = self
-            .served
-            .lock()
-            .map(|list| list.clone())
-            .unwrap_or_default();
+        let served = self.served.lock().map_or_default(|list| list.clone());
         for reference in &served {
             for seed in reference.seeds() {
                 if let Ok(key) = kdf::shared_beacon_key(seed.expose(), &reference.vault_id) {
@@ -460,12 +449,16 @@ impl Provider for SharedProvider {
 }
 
 pub fn decode_entries(log_bytes: &[u8]) -> Result<Vec<Entry>> {
-    if log_bytes.len() % ENTRY_WIRE_LEN != 0 || log_bytes.len() / ENTRY_WIRE_LEN > MAX_ENTRIES {
+    if !log_bytes.len().is_multiple_of(ENTRY_WIRE_LEN)
+        || log_bytes.len() / ENTRY_WIRE_LEN > MAX_ENTRIES
+    {
         return Err(unavailable());
     }
     log_bytes
-        .chunks_exact(ENTRY_WIRE_LEN)
-        .map(Entry::decode)
+        .as_chunks::<ENTRY_WIRE_LEN>()
+        .0
+        .iter()
+        .map(|chunk| Entry::decode(chunk.as_slice()))
         .collect()
 }
 

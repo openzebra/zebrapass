@@ -1,20 +1,20 @@
 //! Editor keys and save.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use record::{Document, ValueType, TAG_TITLE};
+use record::{Document, TAG_TITLE, ValueType};
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog};
-use crate::app::flows::editing::{edit_secret, edit_text, printable, Edit};
-use crate::app::flows::editor::{EditorState, Part, Slot, Value, ADD_KINDS};
+use crate::app::flows::editing::{Edit, edit_secret, edit_text, printable};
+use crate::app::flows::editor::{ADD_KINDS, EditorState, Part, Slot, Value};
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::unlocked::{Unlocked, View};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::secure::reveal::RevealKey;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::records::{set_custom_text, CUSTOM_FAVORITE, CUSTOM_TAGS};
+use crate::vault::records::{CUSTOM_FAVORITE, CUSTOM_TAGS, set_custom_text};
 
 /// Handle a key in the editor.
 pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {

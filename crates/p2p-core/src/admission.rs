@@ -12,9 +12,9 @@
 //!    cheap to refuse. A memory-hard puzzle would not be: checking a guess
 //!    would cost the responder as much as making it.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use hmac::{Hmac, KeyInit, Mac};
-use secret::{ct_eq_32, Secret};
+use secret::{Secret, ct_eq_32};
 use sha2::{Digest, Sha256};
 
 use crate::auth::failed;
@@ -106,11 +106,7 @@ pub fn check_gate(
     for key in keys {
         matched |= ct_eq_32(&gate_tag(key, body)?, tag);
     }
-    if matched {
-        Ok(())
-    } else {
-        Err(failed())
-    }
+    if matched { Ok(()) } else { Err(failed()) }
 }
 
 /// Identifies one hello; the puzzle and the cookie are bound to it.

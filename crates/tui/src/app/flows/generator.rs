@@ -6,8 +6,8 @@ use zeroize::Zeroizing;
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
-use crate::app::keymap::{resolve, Scope};
-use crate::secure::generator::{generate, CharSets, GenSpec};
+use crate::app::keymap::{Scope, resolve};
+use crate::secure::generator::{CharSets, GenSpec, generate};
 use crate::ui::widgets::toast::Tone;
 
 /// What the generator decided.

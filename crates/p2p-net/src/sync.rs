@@ -3,10 +3,10 @@
 //! side lacks, record by record.
 
 use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use session::{reconcile, FrontierEntry};
+use session::{FrontierEntry, reconcile};
 use syncwire::decode_frontier;
 use syncwire::limits::PIPELINE_DEPTH;
 

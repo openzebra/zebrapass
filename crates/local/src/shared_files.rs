@@ -6,9 +6,9 @@
 use std::path::Path;
 
 use frame::{
-    decode_frames, encode_frames, open, parse, seal, spans, FrameMeta, ALG_CASCADE, KIND_REVISION,
+    ALG_CASCADE, FrameMeta, KIND_REVISION, decode_frames, encode_frames, open, parse, seal, spans,
 };
-use memberlog::{Entry, MemberLog, MAX_ENTRIES};
+use memberlog::{Entry, MAX_ENTRIES, MemberLog};
 use record::Document;
 use secret::Secret;
 

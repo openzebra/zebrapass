@@ -48,18 +48,24 @@ fn a_header_with_a_bad_type_direction_or_length_ends_the_stream() {
     let mut out = Vec::new();
     let mut bad = wire(MsgType::Ping, 1, &[0; 8], Direction::Request);
     bad[0] = 99;
-    assert!(Reassembler::new(Direction::Request)
-        .feed(&bad, &mut out)
-        .is_err());
+    assert!(
+        Reassembler::new(Direction::Request)
+            .feed(&bad, &mut out)
+            .is_err()
+    );
     let pong = wire(MsgType::Pong, 1, &[0; 8], Direction::Response);
-    assert!(Reassembler::new(Direction::Request)
-        .feed(&pong, &mut out)
-        .is_err());
+    assert!(
+        Reassembler::new(Direction::Request)
+            .feed(&pong, &mut out)
+            .is_err()
+    );
     let mut long = wire(MsgType::Busy, 1, &[], Direction::Response);
     long[8] = 1;
-    assert!(Reassembler::new(Direction::Response)
-        .feed(&long, &mut out)
-        .is_err());
+    assert!(
+        Reassembler::new(Direction::Response)
+            .feed(&long, &mut out)
+            .is_err()
+    );
     assert!(out.is_empty());
 }
 
@@ -111,21 +117,25 @@ fn the_pipeline_holds_four_and_frees_a_place_per_answer() {
 #[test]
 fn an_unsolicited_duplicate_or_mismatched_reply_ends_the_connection() {
     let mut dispatcher = Dispatcher::new(1000);
-    assert!(dispatcher
-        .on_message(message(MsgType::Pong, 5, &[0; 8], Direction::Response))
-        .is_err());
+    assert!(
+        dispatcher
+            .on_message(message(MsgType::Pong, 5, &[0; 8], Direction::Response))
+            .is_err()
+    );
     let a = dispatcher
         .request(MsgType::Frontier, 0, 0)
         .unwrap()
         .unwrap();
-    assert!(dispatcher
-        .on_message(message(
-            MsgType::Announce,
-            a.req_id,
-            &[],
-            Direction::Response
-        ))
-        .is_err());
+    assert!(
+        dispatcher
+            .on_message(message(
+                MsgType::Announce,
+                a.req_id,
+                &[],
+                Direction::Response
+            ))
+            .is_err()
+    );
     let a = dispatcher.request(MsgType::Rekey, 0, 0).unwrap().unwrap();
     dispatcher
         .on_message(message(
@@ -135,14 +145,16 @@ fn an_unsolicited_duplicate_or_mismatched_reply_ends_the_connection() {
             Direction::Response,
         ))
         .unwrap();
-    assert!(dispatcher
-        .on_message(message(
-            MsgType::Refused,
-            a.req_id,
-            &[],
-            Direction::Response
-        ))
-        .is_err());
+    assert!(
+        dispatcher
+            .on_message(message(
+                MsgType::Refused,
+                a.req_id,
+                &[],
+                Direction::Response
+            ))
+            .is_err()
+    );
 }
 
 #[test]

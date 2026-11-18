@@ -1,9 +1,9 @@
 //! Locked overlay.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::gate::{LockReason, LockedState};

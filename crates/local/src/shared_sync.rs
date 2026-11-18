@@ -11,9 +11,9 @@
 use memberlog::{Action, MemberLog, Role};
 use record::Document;
 use session::{
+    Accepted, Attestation, Revocation, Session, SessionError, Trust, TrustedAccount,
     accept_revision, attest_latest, delete_record, fresh_record_id, frontier, latest_frame,
-    open_record, verify_snapshot, write_record, Accepted, Attestation, Revocation, Session,
-    SessionError, Trust, TrustedAccount,
+    open_record, verify_snapshot, write_record,
 };
 use syncwire::{decode_bundle, encode_bundle, encode_frontier};
 

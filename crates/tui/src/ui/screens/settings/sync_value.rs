@@ -15,6 +15,17 @@ const UNKNOWN: &str = "—";
 pub fn sync_value(row: Row, state: &Unlocked, ctx: &Ctx) -> String {
     let p2p = state.p2p.as_deref();
     match row {
+        Row::SyncStatus if p2p.is_none() && state.https.is_some() => {
+            state.https.as_deref().map_or_else(
+                || String::from("server sync"),
+                |https| match https.last_transport {
+                    sync_https::WorkerTransport::WssLive => String::from("HTTPS + WSS live"),
+                    sync_https::WorkerTransport::SplitHttpFallback => {
+                        String::from("HTTPS SplitHTTP (TSPU-safe)")
+                    }
+                },
+            )
+        }
         Row::SyncStatus if p2p.is_none() && state.listen_mode() == Listen::Off => {
             String::from("off")
         }

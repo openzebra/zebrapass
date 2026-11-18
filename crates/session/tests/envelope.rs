@@ -26,11 +26,11 @@
 mod common;
 
 use aead::BodyAlg;
-use container::{VaultFile, COMMIT_LEN, HEADER_LEN, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_T_MIN};
-use kdf::{derive_vault_keys, KdfProfile};
+use container::{COMMIT_LEN, HEADER_LEN, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_T_MIN, VaultFile};
+use kdf::{KdfProfile, derive_vault_keys};
 use secret::Secret;
 use session::{
-    add_chip_unlock, change_master, create, remove_chip_unlock, unlock, ChipKeys, Seen, UnlockCreds,
+    ChipKeys, Seen, UnlockCreds, add_chip_unlock, change_master, create, remove_chip_unlock, unlock,
 };
 
 const SEED: [u8; 64] = [0x5E; 64];
@@ -160,12 +160,14 @@ fn correctness_seen_blocks_rollback_to_older_file() {
         generation: 1,
         commit_tag: [0u8; 32],
     };
-    assert!(unlock(
-        &old_file,
-        &UnlockCreds::master(&SEED),
-        Some(seen_same_gen_wrong_tag)
-    )
-    .is_err());
+    assert!(
+        unlock(
+            &old_file,
+            &UnlockCreds::master(&SEED),
+            Some(seen_same_gen_wrong_tag)
+        )
+        .is_err()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -372,12 +374,14 @@ fn int_wrapdir_invariants_enforced() {
     let mut duplicated = bytes[..ENTRY_END].to_vec();
     duplicated.extend_from_slice(&pw_rec);
     duplicated.extend_from_slice(&bytes[ENTRY_END..]);
-    assert!(unlock(
-        &VaultFile::new(duplicated),
-        &UnlockCreds::master(&SEED),
-        None
-    )
-    .is_err());
+    assert!(
+        unlock(
+            &VaultFile::new(duplicated),
+            &UnlockCreds::master(&SEED),
+            None
+        )
+        .is_err()
+    );
 
     // A repeated device id does not parse.
     let (publics, _key) = common::device();

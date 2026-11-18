@@ -78,10 +78,10 @@ impl Transfer {
             .served
             .fetch_add(u64::try_from(len).unwrap_or(u64::MAX), Ordering::Relaxed)
             .saturating_add(u64::try_from(len).unwrap_or(u64::MAX));
-        if total >= self.blob.total() {
-            if let Ok(mut permit) = self.permit.lock() {
-                permit.take();
-            }
+        if total >= self.blob.total()
+            && let Ok(mut permit) = self.permit.lock()
+        {
+            permit.take();
         }
     }
 }

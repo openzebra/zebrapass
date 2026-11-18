@@ -30,15 +30,18 @@ p2p-net = { path = "../p2p-net" }
 ratatui.workspace = true
 record = { path = "../record" }
 secrecy.workspace = true
+secret = { path = "../secret" }
 seed = { path = "../seed" }
 session = { path = "../session" }
 sharing = { path = "../sharing" }
 sha1.workspace = true
 subtle.workspace = true
+sync-https = { path = "../sync-https" }
+syncwire = { path = "../syncwire" }
+tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-secret = { path = "../secret" }
 # Builds .kdbx databases for the import tests.
 keepass = { workspace = true, features = ["save_kdbx4"] }
 

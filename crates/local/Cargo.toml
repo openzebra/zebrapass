@@ -13,18 +13,19 @@ anyhow.workspace = true
 ec = { path = "../ec" }
 frame = { path = "../frame" }
 getrandom.workspace = true
+hmac.workspace = true
 kdf = { path = "../kdf" }
 memberlog = { path = "../memberlog" }
 pq = { path = "../pq" }
 record = { path = "../record" }
 secret = { path = "../secret" }
 session = { path = "../session" }
+sha2.workspace = true
 syncwire = { path = "../syncwire" }
 zeroize.workspace = true
 
 [dev-dependencies]
 seed = { path = "../seed" }
-sha2.workspace = true
 
 [lints]
 workspace = true

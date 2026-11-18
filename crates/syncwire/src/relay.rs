@@ -11,7 +11,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::limits::{
     RELAY_CHALLENGE_LEN, RELAY_CLAIM_LEN, RELAY_HEADER_LEN, RELAY_MAX_DIFFICULTY, RELAY_OPEN_LEN,
@@ -356,7 +356,8 @@ impl FromStr for RelayHint {
             return Err(invalid());
         }
         let mut slot = [0u8; 16];
-        for (byte, pair) in slot.iter_mut().zip(digits.as_bytes().chunks_exact(2)) {
+        let (pairs, _) = digits.as_bytes().as_chunks::<2>();
+        for (byte, pair) in slot.iter_mut().zip(pairs) {
             let pair = std::str::from_utf8(pair).map_err(|_| invalid())?;
             *byte = u8::from_str_radix(pair, 16).map_err(|_| invalid())?;
         }

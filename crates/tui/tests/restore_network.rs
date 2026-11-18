@@ -18,15 +18,15 @@ mod common;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
+use tui::App;
 use tui::app::flows::restore::{RestoreField, RestoreState, RestoreStep};
 use tui::app::screen::Screen;
 use tui::vault::discover::discover;
-use tui::App;
 
 use common::{
-    add_records, announcing_device, app, beacon, ctrl, fetch_only_with, free_udp_port,
+    PASSWORD, add_records, announcing_device, app, beacon, ctrl, fetch_only_with, free_udp_port,
     keep_to_this_device, make_vault, open_restore, press, render, restore_empty, temp_dir, tick,
-    titles_of, type_phrase, type_text, unlock, wait, wait_adopted, PASSWORD,
+    titles_of, type_phrase, type_text, unlock, wait, wait_adopted,
 };
 
 const SECOND_PASSWORD: &str = "another-long-password-for-B-77";

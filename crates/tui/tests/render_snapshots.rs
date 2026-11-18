@@ -16,13 +16,13 @@
 mod common;
 
 use crossterm::event::KeyCode;
-use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE, TAG_URL, TAG_USERNAME};
+use record::{Document, TAG_PASSWORD, TAG_TITLE, TAG_URL, TAG_USERNAME, ValueType};
 use tui::app::ctx::Task;
 use tui::app::screen::Screen;
 use tui::vault::ops::Op;
 
 use common::{
-    app, ctrl, make_vault, press, render, render_all, temp_dir, type_text, unlock, wait, PASSWORD,
+    PASSWORD, app, ctrl, make_vault, press, render, render_all, temp_dir, type_text, unlock, wait,
 };
 
 fn assert_all(screens: &[String], needles: &[&str]) {

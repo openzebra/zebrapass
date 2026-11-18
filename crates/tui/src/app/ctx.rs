@@ -122,6 +122,12 @@ pub struct Ctx {
     pub size: (u16, u16),
     /// Where LAN beacons go and are heard; see [`crate::cli::Config::beacon`].
     pub beacon: Option<p2p_net::BeaconConfig>,
+    /// Pre-configured HTTPS/WSS sync servers from the CLI.
+    pub sync_servers: Vec<Box<str>>,
+    /// Pre-configured outbound proxy from the CLI.
+    pub sync_proxy: Option<Box<str>>,
+    /// Extra trusted CA PEM bytes from `--extra-ca`.
+    pub extra_ca_pem: Option<Vec<u8>>,
 }
 
 impl Ctx {
@@ -129,8 +135,12 @@ impl Ctx {
     ///
     /// # Errors
     ///
-    /// When the worker thread cannot start.
+    /// When the worker thread cannot start or `--extra-ca` cannot be read.
     pub fn new(config: &Config, base: PathBuf, caps: Caps, now: Instant) -> std::io::Result<Self> {
+        let extra_ca_pem = match &config.extra_ca {
+            Some(path) => Some(std::fs::read(path)?),
+            None => None,
+        };
         Ok(Self {
             now,
             tick: 0,
@@ -154,6 +164,9 @@ impl Ctx {
             full_redraw: false,
             size: (120, 40),
             beacon: config.beacon,
+            sync_servers: config.sync_servers.clone(),
+            sync_proxy: config.sync_proxy.clone(),
+            extra_ca_pem,
         })
     }
 

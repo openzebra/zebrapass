@@ -1,0 +1,32 @@
+[package]
+name = "sync-https"
+version = "0.1.0"
+description = "Zero-knowledge HTTPS/WSS and SplitHTTP sync and backup client and server."
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+frame = { path = "../frame" }
+getrandom.workspace = true
+kdf = { path = "../kdf" }
+local = { path = "../local" }
+memberlog = { path = "../memberlog" }
+pq = { path = "../pq" }
+rustls.workspace = true
+rustls-pki-types.workspace = true
+secret = { path = "../secret" }
+session = { path = "../session" }
+# RFC 6455 §1.3 Sec-WebSocket-Accept handshake compliance only (never for keys or integrity).
+sha1.workspace = true
+sha2.workspace = true
+syncwire = { path = "../syncwire" }
+tokio.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

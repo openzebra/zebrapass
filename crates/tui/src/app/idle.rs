@@ -57,7 +57,7 @@ pub fn clock(left: Duration) -> String {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{clock, Idle};
+    use super::{Idle, clock};
 
     #[test]
     fn expires_after_the_delay_and_resets_on_touch() {

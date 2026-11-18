@@ -1,7 +1,7 @@
 //! Signed device revocations a vault has accepted. Each entry is kept with
 //! its signature so it can be passed on to a peer that missed it.
 
-use record::{Document, ValueType, TAG_SYNC_REVOKED_MIN};
+use record::{Document, TAG_SYNC_REVOKED_MIN, ValueType};
 use session::{DeviceCert, Revocation, SYNC_VK_LEN};
 use syncwire::{decode_revocation, encode_revocation};
 

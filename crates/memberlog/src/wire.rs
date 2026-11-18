@@ -2,10 +2,10 @@
 //! does not use must be zero, so one entry has exactly one encoding and one
 //! hash.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pq::{SYNC_SIG_LEN, SYNC_VK_LEN};
 use syncwire::reader::Reader;
-use syncwire::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use syncwire::{CERT_WIRE_LEN, decode_cert, encode_cert};
 
 use crate::entry::{Action, Entry};
 use crate::role::Role;

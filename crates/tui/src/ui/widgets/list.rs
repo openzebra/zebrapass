@@ -1,9 +1,9 @@
 //! Virtualized record list: only the rows that fit are built.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::ui::widgets::chrome::{age, row_style};

@@ -7,7 +7,7 @@
 //! Revoking a device is paired with a vault-key rotation: the revocation
 //! stops the handshake and the sync metadata, the rotation stops the data.
 
-use pq::{sync_sign, sync_verify, REVOKE_CTX, SYNC_VK_LEN};
+use pq::{REVOKE_CTX, SYNC_VK_LEN, sync_sign, sync_verify};
 
 use crate::error::SessionError;
 use crate::sync_msg::frame_parts;

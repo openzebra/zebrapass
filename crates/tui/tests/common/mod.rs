@@ -14,16 +14,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use secrecy::{ExposeSecret, SecretString};
 use seed::SeedPhrase;
 use session::KdfProfile;
+use tui::App;
 use tui::app::ctx::Caps;
 use tui::app::screen::Screen;
 use tui::cli::{Config, Flags};
-use tui::vault::create::{create, Enrollment, NewVault};
-use tui::App;
+use tui::vault::create::{Enrollment, NewVault, create};
 use zeroize::Zeroizing;
 
 /// Password used by test vaults.
@@ -106,8 +106,8 @@ pub fn fetch_only_with(base: &Path, password: &str) {
 
 fn listen_with(base: &Path, password: &str, listen: local::Listen) {
     use tui::vault::discover::discover;
-    use tui::vault::open::{unlock_vault, Credential};
-    use tui::vault::ops::{apply, Op};
+    use tui::vault::open::{Credential, unlock_vault};
+    use tui::vault::ops::{Op, apply};
     let paths = discover(base).first().unwrap().paths.clone();
     let password = Credential::Password(Zeroizing::new(password.as_bytes().to_vec()));
     let mut vault = unlock_vault(paths, password).unwrap();
@@ -181,10 +181,10 @@ pub fn unlock(app: &mut App, password: &str) {
 /// The node's check-in timer runs on the real clock, so each tick also
 /// expires it: a test waiting for sync does not wait out the interval.
 pub fn tick(app: &mut App, by: Duration) {
-    if let Screen::Unlocked(state) = &mut app.screen {
-        if let Some(node) = state.p2p.as_deref_mut() {
-            node.expire_check_timer();
-        }
+    if let Screen::Unlocked(state) = &mut app.screen
+        && let Some(node) = state.p2p.as_deref_mut()
+    {
+        node.expire_check_timer();
     }
     let now = app.ctx.now + by;
     app.on_tick(now);
@@ -280,8 +280,8 @@ pub fn beacon(bind_port: u16, send_to_port: u16) -> p2p_net::BeaconConfig {
 /// Save the beacon listening mode in the vault under `base`.
 pub fn announce_on_the_network(base: &Path) {
     use tui::vault::discover::discover;
-    use tui::vault::open::{unlock_vault, Credential};
-    use tui::vault::ops::{apply, Op};
+    use tui::vault::open::{Credential, unlock_vault};
+    use tui::vault::ops::{Op, apply};
     let paths = discover(base).first().unwrap().paths.clone();
     let password = Credential::Password(Zeroizing::new(PASSWORD.as_bytes().to_vec()));
     let mut vault = unlock_vault(paths, password).unwrap();
@@ -373,7 +373,7 @@ pub fn wait_adopted(app: &mut App, within: Duration) {
 /// it open.
 pub fn add_records(base: &Path, titles: &[&str]) {
     use tui::vault::discover::discover;
-    use tui::vault::open::{unlock_vault, Credential};
+    use tui::vault::open::{Credential, unlock_vault};
     let paths = discover(base).first().unwrap().paths.clone();
     let mut vault = unlock_vault(
         paths,

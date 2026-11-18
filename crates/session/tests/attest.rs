@@ -8,11 +8,11 @@
 
 use record::{Document, TAG_TITLE};
 use session::{
-    accept_revision, attest_latest, create, delete_record, frontier, issue_device_cert,
-    issue_revocation, latest_frame, list_records, open_record, plain_digest, rotate_vault_key,
-    sync_verifying_key, unlock, verify_snapshot, write_record, write_vault_meta, Attestation,
-    BodyAlg, DeviceCert, DeviceSignKey, KdfProfile, RotateCreds, Session, SessionError, Trust,
-    TrustedAccount, UnlockCreds, VaultFile, SYNC_VK_LEN,
+    Attestation, BodyAlg, DeviceCert, DeviceSignKey, KdfProfile, RotateCreds, SYNC_VK_LEN, Session,
+    SessionError, Trust, TrustedAccount, UnlockCreds, VaultFile, accept_revision, attest_latest,
+    create, delete_record, frontier, issue_device_cert, issue_revocation, latest_frame,
+    list_records, open_record, plain_digest, rotate_vault_key, sync_verifying_key, unlock,
+    verify_snapshot, write_record, write_vault_meta,
 };
 
 const SEED: [u8; 64] = [0x42; 64];
@@ -201,7 +201,10 @@ fn every_forgery_is_refused_and_changes_nothing() {
 
     // Nothing was kept.
     assert_eq!(b.0.as_bytes(), before.as_slice());
-    assert!(list_records(&b.1).unwrap().is_empty());
+    assert_eq!(
+        list_records(&b.1).unwrap(),
+        [] as [session::RecordSummary; 0]
+    );
 }
 
 #[test]
@@ -216,7 +219,10 @@ fn a_reader_cannot_write_even_with_a_valid_signature() {
         why(accept(&mut b, &frame, &attestation, &alice_reads)),
         "not a writer"
     );
-    assert!(list_records(&b.1).unwrap().is_empty());
+    assert_eq!(
+        list_records(&b.1).unwrap(),
+        [] as [session::RecordSummary; 0]
+    );
 }
 
 #[test]
@@ -384,7 +390,7 @@ fn contexts_are_distinct() {
 
 #[test]
 fn two_frontiers_say_what_each_side_lacks_and_agree_on_who_wins() {
-    use session::{reconcile, FrontierEntry};
+    use session::{FrontierEntry, reconcile};
     let entry = |id: u32, revision: u64, origin: u8| FrontierEntry {
         record_id: id,
         revision,
@@ -460,7 +466,10 @@ fn a_revoked_signer_is_refused_live_and_in_a_snapshot() {
         |_| None,
     );
     assert_eq!(why(live), "device cert rejected");
-    assert!(list_records(&b.1).unwrap().is_empty());
+    assert_eq!(
+        list_records(&b.1).unwrap(),
+        [] as [session::RecordSummary; 0]
+    );
 }
 
 #[test]
@@ -470,13 +479,15 @@ fn a_snapshot_with_a_planted_vault_record_is_refused() {
     let mut a = sessions.pop().unwrap();
     let (attestation, _) = write(&alice, &mut a, 7, "wifi");
     let accounts = [account(&alice, true)];
-    assert!(verify_snapshot(
-        &a.1,
-        std::slice::from_ref(&attestation),
-        &trust(&accounts, &[]),
-        NOW
-    )
-    .is_ok());
+    assert!(
+        verify_snapshot(
+            &a.1,
+            std::slice::from_ref(&attestation),
+            &trust(&accounts, &[]),
+            NOW
+        )
+        .is_ok()
+    );
 
     write_vault_meta(&mut a.1, &mut a.0, &titled("planted")).unwrap();
     let planted = verify_snapshot(&a.1, &[attestation], &trust(&accounts, &[]), NOW);

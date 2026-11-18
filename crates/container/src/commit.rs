@@ -1,7 +1,7 @@
 //! File framing: static header, wrap directory, body, and an unverified commit tag.
 
-use crate::header::{check_magic, StaticHeader};
-use crate::limits::{self, read_array, COMMIT_LEN, HEADER_LEN, MIN_FILE_LEN};
+use crate::header::{StaticHeader, check_magic};
+use crate::limits::{self, COMMIT_LEN, HEADER_LEN, MIN_FILE_LEN, read_array};
 use crate::wrap_dir::WrapDir;
 use crate::wrap_entry::WrapEntry;
 
@@ -20,7 +20,7 @@ impl VaultFile {
 
     /// Borrow the encoded file.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 

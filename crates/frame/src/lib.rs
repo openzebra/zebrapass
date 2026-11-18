@@ -14,8 +14,8 @@ mod log;
 mod seal;
 
 pub use cascade::CASCADE_OVERHEAD;
-pub use header::{aad, encode_header, parse, FrameMeta, Header, DOMAIN_FRAME, HEADER_LEN};
-pub use index::{frame_at, latest, parse_index, FrameRef};
+pub use header::{DOMAIN_FRAME, FrameMeta, HEADER_LEN, Header, aad, encode_header, parse};
+pub use index::{FrameRef, frame_at, latest, parse_index};
 pub use limits::MAX_FRAME_PLAINTEXT;
 pub use log::{decode_frames, encode_frames, spans};
 pub use seal::{open, seal};

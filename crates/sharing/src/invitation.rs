@@ -12,17 +12,17 @@
 //! The invitee still has to check the inviter's fingerprint with the inviter
 //! out loud: anyone who saw the card can wrap a seed to it.
 
-use anyhow::{anyhow, Result};
-use memberlog::{Entry, MemberLog, ENTRY_WIRE_LEN};
-use pq::{sync_sign, sync_verify, INVITE_CTX, SYNC_SIG_LEN, SYNC_VK_LEN};
+use anyhow::{Result, anyhow};
+use memberlog::{ENTRY_WIRE_LEN, Entry, MemberLog};
+use pq::{INVITE_CTX, SYNC_SIG_LEN, SYNC_VK_LEN, sync_sign, sync_verify};
 use secret::Secret;
-use session::{frame_parts, DeviceCert, DeviceSignKey};
+use session::{DeviceCert, DeviceSignKey, frame_parts};
 use sha2::{Digest, Sha256};
 use syncwire::reader::Reader;
-use syncwire::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use syncwire::{CERT_WIRE_LEN, decode_cert, encode_cert};
 
 use crate::card::ContactCard;
-use crate::fingerprint::{account_fingerprint, vault_fingerprint, vault_number, Fingerprint};
+use crate::fingerprint::{Fingerprint, account_fingerprint, vault_fingerprint, vault_number};
 use crate::text;
 
 const DOMAIN_GRANT: &[u8] = b"brby/v2/invitation-grant";
@@ -40,8 +40,8 @@ pub const MAX_NAME: usize = 64;
 /// Most address hints an invitation carries.
 pub const MAX_HINTS: usize = 4;
 
-/// Longest address hint in bytes (`host:port`).
-pub const MAX_HINT: usize = 64;
+/// Longest address hint in bytes (`host:port` or `https://host[:port]/slug`).
+pub const MAX_HINT: usize = 255;
 
 const SEED_LEN: usize = 64;
 const MAX_SEALED: usize = 512;

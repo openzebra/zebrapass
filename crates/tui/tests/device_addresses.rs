@@ -17,13 +17,13 @@ mod common;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
-use tui::app::flows::unlocked::Unlocked;
 use tui::App;
+use tui::app::flows::unlocked::Unlocked;
 
 use common::{
-    add_address, address_of, announcing_device, beacon, fetch_only_with, free_udp_port,
+    PASSWORD, add_address, address_of, announcing_device, beacon, fetch_only_with, free_udp_port,
     is_placeholder, make_vault, open_address_list, pair, press, render, restore_empty, temp_dir,
-    tick, tick_both, titles_of, type_text, unlock, wait, PASSWORD,
+    tick, tick_both, titles_of, type_text, unlock, wait,
 };
 
 const WITHIN: Duration = Duration::from_secs(60);
@@ -162,7 +162,7 @@ fn a_foreign_account_at_the_address_is_turned_away_at_the_handshake() {
         "nothing was adopted\n{}",
         render(&b, 120, 40)
     );
-    assert!(titles_of(&b).is_empty());
+    assert_eq!(titles_of(&b), [] as [std::string::String; 0]);
 }
 
 #[test]

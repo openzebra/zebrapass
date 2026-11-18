@@ -136,7 +136,7 @@ pub fn decrypt_body(
     clippy::unwrap_in_result
 )]
 mod tests {
-    use super::{decrypt_body, encrypt_body, BodyAlg};
+    use super::{BodyAlg, decrypt_body, encrypt_body};
 
     #[test]
     fn body_alg_ids() {

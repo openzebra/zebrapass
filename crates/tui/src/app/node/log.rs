@@ -43,7 +43,6 @@ pub enum LastResult {
 
 impl EventLog {
     /// Lines, oldest first.
-    #[must_use]
     pub fn lines(&self) -> impl ExactSizeIterator<Item = &LogLine> {
         self.lines.iter()
     }

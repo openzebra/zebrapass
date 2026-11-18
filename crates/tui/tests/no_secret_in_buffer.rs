@@ -19,7 +19,7 @@ use std::time::Duration;
 use crossterm::event::KeyCode;
 
 use common::{
-    app, ctrl, make_vault, press, render_all, temp_dir, tick, type_text, unlock, wait, PASSWORD,
+    PASSWORD, app, ctrl, make_vault, press, render_all, temp_dir, tick, type_text, unlock, wait,
 };
 
 const SECRET: &str = "Zq9-hunter2-sekret";

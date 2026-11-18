@@ -12,8 +12,8 @@
 
 use local::DeviceKey;
 use session::{
-    add_chip_unlock, unlock, wrap_directory, ChipPublics, Factor, Seen, Session, UnlockCreds,
-    VaultFile,
+    ChipPublics, Factor, Seen, Session, UnlockCreds, VaultFile, add_chip_unlock, unlock,
+    wrap_directory,
 };
 
 /// A fresh device key and its publics.

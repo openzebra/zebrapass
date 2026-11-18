@@ -35,6 +35,14 @@ pub enum FormKind {
     DropRecovery,
     /// Rename the vault on this device.
     Rename,
+    /// Configure HTTPS/WSS sync server URLs in Settings.
+    SyncServers,
+    /// Configure outbound `socks5h://` / `http://` proxy URL in Settings.
+    SyncProxy,
+    /// Configure automatic rolling `.zpbackup` directory in Settings.
+    BackupDir,
+    /// Export an encrypted `.zpbackup` bundle now.
+    BackupExport,
 }
 
 /// Focusable inputs, in display order.
@@ -260,16 +268,28 @@ impl Form {
         form.focus_first()
     }
 
+    pub(super) fn text_form(
+        kind: FormKind,
+        title: &str,
+        body: &[&str],
+        current: &str,
+        max: usize,
+    ) -> Self {
+        let mut form = Self::blank(kind, title, body);
+        form.text = Some(TextInput::with_value(current, max));
+        form.focus_first()
+    }
+
     /// Rename.
     #[must_use]
     pub fn rename(current: &str) -> Self {
-        let mut form = Self::blank(
+        Self::text_form(
             FormKind::Rename,
             "Rename vault",
             &["The name is stored on this device only."],
-        );
-        form.text = Some(TextInput::with_value(current, MAX_VAULT_NAME));
-        form.focus_first()
+            current,
+            MAX_VAULT_NAME,
+        )
     }
 
     /// Present inputs in order.

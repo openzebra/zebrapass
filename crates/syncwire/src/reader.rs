@@ -1,7 +1,7 @@
 //! Bounds-checked cursor over untrusted bytes. Every read is length-checked;
 //! callers bound each declared length before it is used.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// A cursor that only moves forward and never reads past the end.
 pub struct Reader<'a> {

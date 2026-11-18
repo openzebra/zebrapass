@@ -1,12 +1,12 @@
 //! Unlock screen: one balanced card with storage, factor, secret, and actions.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::unlock::{Mode, UnlockFocus, UnlockState, MAX_BACKOFF, REVEAL_PASSWORD};
+use crate::app::flows::unlock::{MAX_BACKOFF, Mode, REVEAL_PASSWORD, UnlockFocus, UnlockState};
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::widgets::chrome::{button, hint_bar, modal, panel, row_style};
@@ -50,22 +50,34 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
 }
 
 fn draw_roomy(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, ctx: &Ctx) {
-    let [brand, _, title, subtitle, _, storage, _, factors, _, input, error, actions] =
-        Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(2),
-            Constraint::Length(3),
-        ])
-        .areas(area);
+    let [
+        brand,
+        _,
+        title,
+        subtitle,
+        _,
+        storage,
+        _,
+        factors,
+        _,
+        input,
+        error,
+        actions,
+    ] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(2),
+        Constraint::Length(3),
+    ])
+    .areas(area);
     draw_brand(frame, brand, "quantum-safe", ctx);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -271,8 +283,7 @@ fn draw_picker(frame: &mut Frame<'_>, area: Rect, state: &UnlockState, cursor: u
             let pointer = if chosen { theme.glyphs.pointer } else { " " };
             let print = vault
                 .vault_id
-                .map(|id| stripe_print(&id, theme.glyphs))
-                .unwrap_or_default();
+                .map_or_default(|id| stripe_print(&id, theme.glyphs));
             Line::from(vec![
                 Span::styled(format!("{pointer} "), theme.accent()),
                 Span::styled(

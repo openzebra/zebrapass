@@ -5,10 +5,10 @@
 use std::fmt::Write as _;
 
 use local::Listen;
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::unlocked::Unlocked;
@@ -55,7 +55,7 @@ fn bcast_targets_text(port: u16) -> String {
 fn relay_text(p2p: Option<&crate::app::node::P2p>) -> String {
     match p2p {
         Some(p2p) if p2p.relayed.is_some() => {
-            let slot = p2p.relayed.map(|hint| hint.to_string()).unwrap_or_default();
+            let slot = p2p.relayed.map_or_default(|hint| hint.to_string());
             format!("ZPRY · holding {slot}")
         }
         Some(p2p) if p2p.holds => String::from("ZPRY · hold wanted · no slot yet"),
@@ -120,10 +120,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, scroll: usize, state: &Unlocked, 
                 "TCP/ZPMX:7447 · UDP/ZPBCv2:7448 · KEM/ML-KEM-1024+P256 · SIG/ML-DSA-87 · AEAD/CAS-0xA005",
             ),
         ),
-        line(
-            "proto.off",
-            String::from("QUIC:off · DHT:off · uTP:off"),
-        ),
+        line("proto.off", String::from("QUIC:off · DHT:off · uTP:off")),
         Line::from(Span::styled(
             fit(
                 &format!(
@@ -252,7 +249,7 @@ fn append_events(
     theme: &crate::ui::theme::Theme,
 ) {
     let room = usize::from(inner_height).saturating_sub(lines.len() + 1);
-    let events: Vec<_> = p2p.map(|p2p| p2p.log.lines().collect()).unwrap_or_default();
+    let events: Vec<_> = p2p.map_or_default(|p2p| p2p.log.lines().collect());
     if events.is_empty() {
         lines.push(Line::from(Span::styled(
             " waiting for network events...",

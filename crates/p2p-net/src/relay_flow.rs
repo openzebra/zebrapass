@@ -2,8 +2,8 @@
 //! connect to one, or take a pending connection.
 
 use std::net::IpAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use p2p_core::relay_pow_ok;
@@ -252,21 +252,17 @@ pub async fn janitor(state: Arc<State>) {
     loop {
         sleep(Duration::from_secs(1)).await;
         let limit = state.limits.pending_timeout;
-        let expired: Vec<Pending> = state
-            .tables
-            .lock()
-            .map(|mut tables| {
-                let old: Vec<[u8; 16]> = tables
-                    .pending
-                    .iter()
-                    .filter(|(_, parked)| parked.created.elapsed() >= limit)
-                    .map(|(id, _)| *id)
-                    .collect();
-                old.iter()
-                    .filter_map(|id| tables.pending.remove(id))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let expired: Vec<Pending> = state.tables.lock().map_or_default(|mut tables| {
+            let old: Vec<[u8; 16]> = tables
+                .pending
+                .iter()
+                .filter(|(_, parked)| parked.created.elapsed() >= limit)
+                .map(|(id, _)| *id)
+                .collect();
+            old.iter()
+                .filter_map(|id| tables.pending.remove(id))
+                .collect()
+        });
         for parked in expired {
             parked.active.fetch_sub(1, Ordering::Relaxed);
             let kind = state.turn(&Turned::Refused);

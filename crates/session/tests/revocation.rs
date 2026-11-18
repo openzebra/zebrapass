@@ -6,7 +6,7 @@
 )]
 
 use session::{
-    issue_device_cert, issue_revocation, DeviceCert, DeviceSignKey, Revocation, SYNC_VK_LEN,
+    DeviceCert, DeviceSignKey, Revocation, SYNC_VK_LEN, issue_device_cert, issue_revocation,
 };
 
 const ROOT: [u8; 32] = [0x07; 32];

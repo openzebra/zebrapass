@@ -1,9 +1,9 @@
 //! The device addresses an owner typed, with the field that adds one.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::addresses::Addresses;

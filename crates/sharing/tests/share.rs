@@ -10,8 +10,8 @@ use local::SyncIdentity;
 use memberlog::{Action, MemberLog, Role};
 use secret::Secret;
 use sharing::{
-    account_fingerprint, vault_number, ContactCard, Invitation, Inviter, Offer, MAX_CARD_AGE_MS,
-    MAX_INVITE_WIRE_LEN,
+    ContactCard, Invitation, Inviter, MAX_CARD_AGE_MS, MAX_INVITE_WIRE_LEN, Offer,
+    account_fingerprint, vault_number,
 };
 
 const NOW: u64 = 1_700_000_000_000;
@@ -249,18 +249,24 @@ fn a_card_made_again_later_still_opens_the_same_invitation() {
 fn issuing_refuses_people_who_are_not_in_the_log_and_signers_who_are_not_members() {
     let (alice, bob, mallory) = (person(1), person(2), person(9));
     let log = alice.new_vault();
-    assert!(alice
-        .issue_raw(&log, &bob.card(), &seed(), "x", &[])
-        .is_err());
+    assert!(
+        alice
+            .issue_raw(&log, &bob.card(), &seed(), "x", &[])
+            .is_err()
+    );
 
     let mut log = alice.new_vault();
     alice.adds(&mut log, &bob.card(), Role::Writer);
-    assert!(mallory
-        .issue_raw(&log, &bob.card(), &seed(), "x", &[])
-        .is_err());
-    assert!(alice
-        .issue_raw(&log, &bob.card(), &seed(), &"n".repeat(65), &[])
-        .is_err());
+    assert!(
+        mallory
+            .issue_raw(&log, &bob.card(), &seed(), "x", &[])
+            .is_err()
+    );
+    assert!(
+        alice
+            .issue_raw(&log, &bob.card(), &seed(), &"n".repeat(65), &[])
+            .is_err()
+    );
 }
 
 #[test]
@@ -394,7 +400,8 @@ fn the_inviters_address_hints_arrive_signed_and_bounded() {
     let issue = |hints: &[String]| alice.issue_raw(&log, &bob.card(), &seed(), "Family", hints);
     assert!(issue(&vec![String::from("a:1"); 4]).is_ok());
     assert!(issue(&vec![String::from("a:1"); 5]).is_err());
-    assert!(issue(&["x".repeat(65)]).is_err());
+    assert!(issue(&["x".repeat(sharing::MAX_HINT)]).is_ok());
+    assert!(issue(&["x".repeat(sharing::MAX_HINT + 1)]).is_err());
     assert!(issue(&[String::new()]).is_err());
     assert!(issue(&[String::from("naïve:1")]).is_err());
 }

@@ -15,13 +15,13 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use local::Listen;
+use tui::App;
 use tui::app::flows::unlocked::Unlocked;
 use tui::app::screen::Screen;
-use tui::App;
 
 use common::{
-    announcing_device, app, beacon, free_udp_port, make_vault, press, render, restore_empty,
-    temp_dir, type_text, unlock, wait, wait_adopted, PASSWORD,
+    PASSWORD, announcing_device, app, beacon, free_udp_port, make_vault, press, render,
+    restore_empty, temp_dir, type_text, unlock, wait, wait_adopted,
 };
 
 fn state(app: &App) -> &Unlocked {

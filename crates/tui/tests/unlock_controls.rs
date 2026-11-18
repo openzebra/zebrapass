@@ -11,12 +11,12 @@
 mod common;
 
 use crossterm::event::KeyCode;
-use tui::app::flows::unlock::{Mode, UnlockFocus, UnlockState};
-use tui::app::keymap::{hints, label, Scope};
-use tui::app::screen::Screen;
 use tui::App;
+use tui::app::flows::unlock::{Mode, UnlockFocus, UnlockState};
+use tui::app::keymap::{Scope, hints, label};
+use tui::app::screen::Screen;
 
-use common::{app, ctrl, make_vault, press, render, temp_dir, type_text, wait, PASSWORD};
+use common::{PASSWORD, app, ctrl, make_vault, press, render, temp_dir, type_text, wait};
 
 fn unlock(app: &App) -> &UnlockState {
     let Screen::Unlock(state) = &app.screen else {

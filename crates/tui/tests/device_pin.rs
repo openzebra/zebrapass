@@ -20,14 +20,14 @@ use seed::SeedPhrase;
 use session::KdfProfile;
 use tui::app::flows::unlock::Mode;
 use tui::app::screen::Screen;
-use tui::vault::create::{create, Enrollment, NewVault};
+use tui::vault::create::{Enrollment, NewVault, create};
 use tui::vault::device::owned_id;
 use tui::vault::error::UnlockError;
-use tui::vault::open::{unlock_vault, Credential, Vault};
-use tui::vault::ops::{apply, FactorRef, Op, Outcome, Rotation};
+use tui::vault::open::{Credential, Vault, unlock_vault};
+use tui::vault::ops::{FactorRef, Op, Outcome, Rotation, apply};
 use zeroize::Zeroizing;
 
-use common::{app, press, temp_dir, type_text, wait, PASSWORD};
+use common::{PASSWORD, app, press, temp_dir, type_text, wait};
 
 const PIN: &str = "482916";
 

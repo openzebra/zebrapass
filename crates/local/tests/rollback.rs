@@ -14,10 +14,10 @@
 
 use aead::BodyAlg;
 use kdf::KdfProfile;
-use local::{create_vault, load_local_meta, mark_seen, LocalMeta};
-use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
+use local::{LocalMeta, create_vault, load_local_meta, mark_seen};
+use record::{Document, TAG_PASSWORD, TAG_TITLE, ValueType};
 use seed::SeedPhrase;
-use session::{unlock, UnlockCreds, VaultFile};
+use session::{UnlockCreds, VaultFile, unlock};
 
 /// A fresh directory under the system temp dir; caller removes it.
 fn temp_base(tag: &str) -> std::path::PathBuf {

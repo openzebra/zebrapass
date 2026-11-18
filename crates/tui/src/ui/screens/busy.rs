@@ -2,10 +2,10 @@
 //! progress, and the step list is static text on purpose: showing which
 //! internal step failed would be an oracle.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::{Ctx, Pending, Task};
 use crate::ui::layout::centered;

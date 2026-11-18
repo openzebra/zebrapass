@@ -7,16 +7,18 @@
 //! never a silent default.
 
 use record::{
-    Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER,
-    TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_HOLD, TAG_PREF_P2P_LISTEN, TAG_PREF_P2P_RELAYS,
-    TAG_PREF_REVEAL_HIDE, TAG_PREF_THEME,
+    Document, TAG_PREF_BACKUP_DIR, TAG_PREF_BACKUP_KEEP, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS,
+    TAG_PREF_LOCK_AFTER, TAG_PREF_P2P_ADVERTISE, TAG_PREF_P2P_HOLD, TAG_PREF_P2P_LISTEN,
+    TAG_PREF_P2P_RELAYS, TAG_PREF_REVEAL_HIDE, TAG_PREF_SYNC_PROXY, TAG_PREF_SYNC_SERVERS,
+    TAG_PREF_THEME, ValueType,
 };
 
 use crate::address::{parse_advertise, parse_relay_hint};
-use crate::limits::{CLIP_CLEAR_S, LOCK_AFTER_S, RELAYS_MAX, REVEAL_HIDE_S};
+use crate::limits::{BACKUP_KEEP_MAX, CLIP_CLEAR_S, LOCK_AFTER_S, RELAYS_MAX, REVEAL_HIDE_S};
 use crate::listen::Listen;
+use crate::sync_url::{parse_backup_dir, parse_sync_proxy_url, parse_sync_server_list};
 
-const TAGS: [u16; 9] = [
+const TAGS: [u16; 13] = [
     TAG_PREF_LOCK_AFTER,
     TAG_PREF_CLIP_CLEAR,
     TAG_PREF_REVEAL_HIDE,
@@ -26,6 +28,10 @@ const TAGS: [u16; 9] = [
     TAG_PREF_P2P_ADVERTISE,
     TAG_PREF_P2P_RELAYS,
     TAG_PREF_P2P_HOLD,
+    TAG_PREF_SYNC_SERVERS,
+    TAG_PREF_SYNC_PROXY,
+    TAG_PREF_BACKUP_DIR,
+    TAG_PREF_BACKUP_KEEP,
 ];
 
 const FLAG_ANIM: u8 = 1;
@@ -67,6 +73,14 @@ pub struct Prefs {
     /// This node holds a slot on the first saved relay and announces it; only
     /// ever on while a relay is saved.
     pub p2p_hold: bool,
+    /// Ordered HTTPS/WSS sync endpoints (`https://host[:port]/slug`).
+    pub sync_servers: Vec<Box<str>>,
+    /// Optional `socks5h://` or `http://` proxy URL for sync endpoints.
+    pub sync_proxy: Option<Box<str>>,
+    /// Optional directory path for automatic rolling `.zpbackup` snapshots.
+    pub backup_dir: Option<Box<str>>,
+    /// Number of rolling `.zpbackup` files to retain (`0` disables).
+    pub backup_keep: u8,
 }
 
 impl Default for Prefs {
@@ -84,6 +98,10 @@ impl Default for Prefs {
             p2p_advertise: None,
             p2p_relays: Vec::new(),
             p2p_hold: false,
+            sync_servers: Vec::new(),
+            sync_proxy: None,
+            backup_dir: None,
+            backup_keep: 0,
         }
     }
 }
@@ -117,6 +135,18 @@ impl Prefs {
         }
         if self.p2p_hold {
             doc.set_data(TAG_PREF_P2P_HOLD, ValueType::Bytes, &[1]);
+        }
+        if !self.sync_servers.is_empty() {
+            doc.set_text(TAG_PREF_SYNC_SERVERS, &self.sync_servers.join("\n"));
+        }
+        if let Some(proxy) = self.sync_proxy.as_deref() {
+            doc.set_text(TAG_PREF_SYNC_PROXY, proxy);
+        }
+        if let Some(dir) = self.backup_dir.as_deref() {
+            doc.set_text(TAG_PREF_BACKUP_DIR, dir);
+        }
+        if self.backup_keep > 0 {
+            doc.set_data(TAG_PREF_BACKUP_KEEP, ValueType::Bytes, &[self.backup_keep]);
         }
     }
 
@@ -182,6 +212,23 @@ impl Prefs {
             Some(1) if !p2p_relays.is_empty() && !fetch_only => true,
             Some(_) => return Err(out_of_range()),
         };
+        let sync_servers = doc
+            .text(TAG_PREF_SYNC_SERVERS)?
+            .map(|lines| parse_sync_server_list(lines, true).map_err(|_| out_of_range()))
+            .transpose()?
+            .unwrap_or_default();
+        let sync_proxy = doc
+            .text(TAG_PREF_SYNC_PROXY)?
+            .map(|proxy| parse_sync_proxy_url(proxy).map_err(|_| out_of_range()))
+            .transpose()?;
+        let backup_dir = doc
+            .text(TAG_PREF_BACKUP_DIR)?
+            .map(|dir| parse_backup_dir(dir).map_err(|_| out_of_range()))
+            .transpose()?;
+        let backup_keep = byte(doc, TAG_PREF_BACKUP_KEEP)?.unwrap_or(defaults.backup_keep);
+        if backup_keep > BACKUP_KEEP_MAX {
+            return Err(out_of_range());
+        }
         Ok(Self {
             lock_after_s,
             clip_clear_s,
@@ -195,6 +242,10 @@ impl Prefs {
             p2p_advertise,
             p2p_relays,
             p2p_hold,
+            sync_servers,
+            sync_proxy,
+            backup_dir,
+            backup_keep,
         })
     }
 
@@ -228,7 +279,7 @@ fn out_of_range() -> anyhow::Error {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use record::{Document, ValueType, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER};
+    use record::{Document, TAG_PREF_CLIP_CLEAR, TAG_PREF_FLAGS, TAG_PREF_LOCK_AFTER, ValueType};
 
     use super::{Listen, Prefs};
 
@@ -246,6 +297,10 @@ mod tests {
             p2p_advertise: Some("93.184.216.34:7447".into()),
             p2p_relays: vec![format!("93.184.216.35:7447/{}", "ab".repeat(16)).into()],
             p2p_hold: true,
+            sync_servers: vec!["https://sync.example/my-slug".into()],
+            sync_proxy: Some("socks5h://127.0.0.1:1080".into()),
+            backup_dir: Some("/tmp/zp-backups".into()),
+            backup_keep: 5,
         }
     }
 

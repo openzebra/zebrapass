@@ -1,9 +1,9 @@
 //! Wire form of a list of peer records.
 
-use anyhow::{anyhow, Result};
-use session::{PeerRecord, MAX_HINTS, MAX_HINT_LEN, SYNC_SIG_LEN};
+use anyhow::{Result, anyhow};
+use session::{MAX_HINT_LEN, MAX_HINTS, PeerRecord, SYNC_SIG_LEN};
 
-use crate::cert::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use crate::cert::{CERT_WIRE_LEN, decode_cert, encode_cert};
 use crate::reader::Reader;
 
 /// First four bytes of an encoded list.

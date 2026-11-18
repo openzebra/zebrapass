@@ -5,9 +5,9 @@ use kdf::KdfProfile;
 use session::Factor;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::settings::posture::{posture, Facts};
-use crate::app::flows::settings::rows::Row;
 use crate::app::flows::settings::SettingsModal;
+use crate::app::flows::settings::posture::{Facts, posture};
+use crate::app::flows::settings::rows::Row;
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::prefs::theme_of;
 use crate::ui::widgets::chrome::checkbox;
@@ -56,9 +56,41 @@ pub fn value(row: Row, state: &Unlocked, modal: &SettingsModal, ctx: &Ctx) -> St
         | Row::SyncAdvertised
         | Row::SyncBeacon
         | Row::SyncNow => sync_value(row, state, ctx),
-        Row::RotateKey | Row::ForgetDevice | Row::ClearHistory | Row::Import => {
-            String::from("Enter")
+        Row::SyncServers => {
+            if draft.sync_servers.is_empty() {
+                String::from("none · Enter sets URLs")
+            } else {
+                format!(
+                    "{} configured · {}",
+                    draft.sync_servers.len(),
+                    draft.sync_servers.first().map_or("", AsRef::as_ref)
+                )
+            }
         }
+        Row::SyncProxy => draft
+            .sync_proxy
+            .as_deref()
+            .unwrap_or("direct · Enter sets proxy")
+            .to_owned(),
+        Row::BackupDir => draft
+            .backup_dir
+            .as_deref()
+            .unwrap_or("off · Enter sets folder")
+            .to_owned(),
+        Row::BackupKeep => {
+            if draft.backup_keep == 0 {
+                String::from("off")
+            } else {
+                format!("{} snapshots", draft.backup_keep)
+            }
+        }
+        Row::BackupExport
+        | Row::CloudBackupPush
+        | Row::CloudBackupPull
+        | Row::RotateKey
+        | Row::ForgetDevice
+        | Row::ClearHistory
+        | Row::Import => String::from("Enter"),
         Row::ClipClear => format!("{} s", draft.clip_clear_s),
         Row::ClipOnLock => String::from("always"),
         Row::Theme if ctx.no_color => format!("{} (NO_COLOR wins)", theme_of(draft.theme).label()),

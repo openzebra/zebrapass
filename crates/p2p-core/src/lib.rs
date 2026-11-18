@@ -17,13 +17,13 @@ mod relay_pow;
 pub mod suite;
 mod wire;
 
-pub use admission::{CookieSecret, Load, COOKIE_WINDOW_MS, GATE_WINDOW_MS, MAX_DIFFICULTY};
+pub use admission::{COOKIE_WINDOW_MS, CookieSecret, GATE_WINDOW_MS, Load, MAX_DIFFICULTY};
 pub use auth::{Account, Local, Role};
-pub use beacon::{open_beacon, seal_beacon, BEACON_WINDOW_MS, MAX_BEACON};
-pub use channel::{Channel, RecvHalf, SendHalf, Side, MAX_MESSAGES, MAX_PLAINTEXT, OVERHEAD};
+pub use beacon::{BEACON_WINDOW_MS, MAX_BEACON, open_beacon, seal_beacon};
+pub use channel::{Channel, MAX_MESSAGES, MAX_PLAINTEXT, OVERHEAD, RecvHalf, SendHalf, Side};
 pub use handshake::{Accept, Established, Initiator, Responder};
 pub use mux::{Dispatcher, Done, Inbound, Message, Outcome, Reassembler, Reply};
-pub use relay_pow::{relay_pow_ok, relay_pow_solve, relay_random, RELAY_POW_DOMAIN};
+pub use relay_pow::{RELAY_POW_DOMAIN, relay_pow_ok, relay_pow_solve, relay_random};
 
 /// Offset of the kind byte in every handshake message.
 pub use suite::KIND_OFFSET;

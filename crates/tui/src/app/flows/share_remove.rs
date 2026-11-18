@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use local::{apply_rotation, plan_rotation, Replace};
+use anyhow::{Result, anyhow};
+use local::{Replace, apply_rotation, plan_rotation};
 use memberlog::Role;
-use sharing::{account_fingerprint, Fingerprint};
+use sharing::{Fingerprint, account_fingerprint};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::share::Step;
@@ -164,6 +164,7 @@ impl Unlocked {
                 build_cache(&vault.session).unwrap_or_default(),
             )
         };
+        let next_vault_id = next.vault_id;
         let next = Arc::new(next);
         item.reference = Arc::clone(&next);
         item.people = people;
@@ -173,6 +174,11 @@ impl Unlocked {
         if let Some(p2p) = self.p2p.as_deref() {
             p2p.provider.serve(next);
         }
+        if let Some(https) = self.https.as_deref() {
+            https.update_boxes(&self.shared);
+        }
+        self.sync_push_shared_full(&next_vault_id);
+        self.sync_push_personal(None);
         Ok(people.saturating_sub(1))
     }
 }

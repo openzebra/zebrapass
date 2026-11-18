@@ -17,18 +17,18 @@ use std::time::Duration;
 
 use crossterm::event::KeyCode;
 use p2p_net::Event;
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::Color;
-use ratatui::Terminal;
-use tui::app::flows::dialog::Dialog;
-use tui::app::node::log::{EventLog, LOG_CAP};
-use tui::app::node::CheckOutcome;
-use tui::ui::screens::p2p_status::{summary, Light};
 use tui::App;
+use tui::app::flows::dialog::Dialog;
+use tui::app::node::CheckOutcome;
+use tui::app::node::log::{EventLog, LOG_CAP};
+use tui::ui::screens::p2p_status::{Light, summary};
 
 use common::{
-    adopted_pair, app, make_vault, press, render, sync_off_with, temp_dir, tick, tick_both, unlock,
-    unlocked_state as state, PASSWORD,
+    PASSWORD, adopted_pair, app, make_vault, press, render, sync_off_with, temp_dir, tick,
+    tick_both, unlock, unlocked_state as state,
 };
 
 const WITHIN: Duration = Duration::from_secs(60);
@@ -65,17 +65,13 @@ fn checked_in(app: &App, outcome: CheckOutcome) -> bool {
 }
 
 fn log_text(app: &App) -> String {
-    state(app)
-        .p2p
-        .as_ref()
-        .map(|p2p| {
-            p2p.log
-                .lines()
-                .map(|line| line.text.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default()
+    state(app).p2p.as_ref().map_or_default(|p2p| {
+        p2p.log
+            .lines()
+            .map(|line| line.text.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 #[test]
@@ -178,9 +174,11 @@ fn the_log_and_the_screens_hold_no_record_title() {
         .lines()
         .skip_while(|line| !line.contains("p2p net"))
         .collect();
-    assert!(dialog
-        .iter()
-        .all(|line| !line.contains("wifi") && !line.contains("bank")));
+    assert!(
+        dialog
+            .iter()
+            .all(|line| !line.contains("wifi") && !line.contains("bank"))
+    );
 }
 
 #[test]
@@ -215,10 +213,11 @@ fn the_event_log_keeps_the_newest_two_hundred_lines() {
         ));
     }
     assert_eq!(log.lines().len(), LOG_CAP);
-    assert!(log
-        .lines()
-        .last()
-        .unwrap()
-        .text
-        .contains(&format!("{}", 1000 + LOG_CAP + 49)));
+    assert!(
+        log.lines()
+            .last()
+            .unwrap()
+            .text
+            .contains(&format!("{}", 1000 + LOG_CAP + 49))
+    );
 }

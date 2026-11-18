@@ -22,33 +22,33 @@ mod revocation;
 mod snapshot;
 
 pub use attestation::{
+    ATTESTATION_MAGIC, ATTESTATION_WIRE_LEN, ATTESTATION_WIRE_VERSION, MAX_FRONTIER,
     decode_attestation, decode_bundle, decode_frontier, encode_attestation, encode_bundle,
-    encode_frontier, ATTESTATION_MAGIC, ATTESTATION_WIRE_LEN, ATTESTATION_WIRE_VERSION,
-    MAX_FRONTIER,
+    encode_frontier,
 };
 pub use beacon::{
-    decode_beacon, encode_beacon, Beacon, BEACON_MAGIC, BEACON_WIRE_MAX, BEACON_WIRE_VERSION,
-    MAX_BEACON_RELAYS, MAX_BEACON_VAULTS,
+    BEACON_MAGIC, BEACON_WIRE_MAX, BEACON_WIRE_VERSION, Beacon, MAX_BEACON_RELAYS,
+    MAX_BEACON_VAULTS, decode_beacon, encode_beacon,
 };
-pub use cert::{decode_cert, encode_cert, CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION};
+pub use cert::{CERT_MAGIC, CERT_WIRE_LEN, CERT_WIRE_VERSION, decode_cert, encode_cert};
 pub use mux::{Direction, Header, MsgType};
 pub use mux_body::{Chunk, ChunkRequest, Extent, Ping, SnapHead, Want, WhoAmI};
-pub use peer::{decode_peers, encode_peers, MAX_PEERS, PEER_MAGIC, PEER_WIRE_VERSION};
+pub use peer::{MAX_PEERS, PEER_MAGIC, PEER_WIRE_VERSION, decode_peers, encode_peers};
 pub use personal::{
-    decode_announce, decode_personal_frame, encode_announce, encode_personal_frame, Announce,
-    ANNOUNCE_MAGIC, ANNOUNCE_WIRE_LEN, ANNOUNCE_WIRE_VERSION, PERSONAL_FRAME_MAGIC,
-    PERSONAL_FRAME_WIRE_VERSION,
+    ANNOUNCE_MAGIC, ANNOUNCE_WIRE_LEN, ANNOUNCE_WIRE_VERSION, Announce, PERSONAL_FRAME_MAGIC,
+    PERSONAL_FRAME_WIRE_VERSION, decode_announce, decode_personal_frame, encode_announce,
+    encode_personal_frame,
 };
-pub use record::{decode_record, encode_record, RECORD_MAGIC, RECORD_WIRE_VERSION};
+pub use record::{RECORD_MAGIC, RECORD_WIRE_VERSION, decode_record, encode_record};
 pub use relay::{
-    decode_incoming, decode_open, encode_incoming, encode_open, Challenge, Claim, RelayHeader,
-    RelayHint, RelayType, Reserved, Side as RelaySide, RELAY_MAGIC, RELAY_WIRE_VERSION,
+    Challenge, Claim, RELAY_MAGIC, RELAY_WIRE_VERSION, RelayHeader, RelayHint, RelayType, Reserved,
+    Side as RelaySide, decode_incoming, decode_open, encode_incoming, encode_open,
 };
 pub use revocation::{
-    decode_revocation, encode_revocation, REVOCATION_MAGIC, REVOCATION_WIRE_LEN,
-    REVOCATION_WIRE_VERSION,
+    REVOCATION_MAGIC, REVOCATION_WIRE_LEN, REVOCATION_WIRE_VERSION, decode_revocation,
+    encode_revocation,
 };
 pub use snapshot::{
-    decode_snapshot, encode_snapshot, encode_snapshot_prefix, MAX_SNAPSHOT_ATTESTATIONS,
-    SNAPSHOT_MAGIC, SNAPSHOT_WIRE_VERSION,
+    MAX_SNAPSHOT_ATTESTATIONS, SNAPSHOT_MAGIC, SNAPSHOT_WIRE_VERSION, decode_snapshot,
+    encode_snapshot, encode_snapshot_prefix,
 };

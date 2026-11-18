@@ -20,7 +20,7 @@ use tui::app::screen::Screen;
 use tui::vault::discover::discover;
 use tui::vault::ops::Op;
 
-use common::{app, make_vault, press, render, temp_dir, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, render, temp_dir, unlock, wait};
 
 fn titled(title: &str) -> Document {
     let mut doc = Document::new();

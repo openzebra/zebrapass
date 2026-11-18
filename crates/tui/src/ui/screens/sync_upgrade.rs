@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use crate::app::flows::restore::REVEAL_LAST;
 use crate::app::flows::share_upgrade::UpgradePrompt;
 use crate::ui::screens::restore::word_grid;
-use crate::ui::screens::sync::{blank, heading, say, INDENT};
+use crate::ui::screens::sync::{INDENT, blank, heading, say};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::field::secret_line;
 

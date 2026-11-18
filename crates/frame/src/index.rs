@@ -4,7 +4,7 @@
 //! it: unknown kinds and algorithms get a range exactly like known ones,
 //! so a rewrite can copy them byte for byte.
 
-use crate::header::{parse, HEADER_LEN};
+use crate::header::{HEADER_LEN, parse};
 use crate::{KIND_REVISION, KIND_TOMBSTONE, TAG_LEN};
 
 /// One frame located in the body.
@@ -137,7 +137,7 @@ mod tests {
     use secret::Secret;
 
     use crate::header::FrameMeta;
-    use crate::{seal, ALG_AEGIS256, KIND_REVISION, KIND_TOMBSTONE};
+    use crate::{ALG_AEGIS256, KIND_REVISION, KIND_TOMBSTONE, seal};
 
     use super::{frame_at, latest, parse_index};
 
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn empty_body_is_an_empty_index() {
-        assert!(parse_index(&[]).unwrap().is_empty());
+        assert_eq!(parse_index(&[]).unwrap(), [] as [super::FrameRef; 0]);
     }
 
     #[test]

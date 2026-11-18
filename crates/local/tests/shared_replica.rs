@@ -11,13 +11,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use local::{
-    adopt_shared_file, apply_rotation, create_shared_vault, join_shared_vault, open_shared_vault,
-    plan_rotation, verdict_of, Edit, Replace, SharedRef, SharedVault, SyncIdentity, Verdict,
+    Edit, Replace, SharedRef, SharedVault, SyncIdentity, Verdict, adopt_shared_file,
+    apply_rotation, create_shared_vault, join_shared_vault, open_shared_vault, plan_rotation,
+    verdict_of,
 };
 use memberlog::{Action, Role};
 use record::{Document, TAG_TITLE};
 use session::{
-    attest_latest, list_records, open_record, reconcile, write_record, KdfProfile, VaultFile,
+    KdfProfile, VaultFile, attest_latest, list_records, open_record, reconcile, write_record,
 };
 use syncwire::{decode_bundle, decode_frontier};
 
@@ -185,7 +186,7 @@ fn updates_and_deletions_travel_both_ways() {
         .edit(&alice.reference, &alice.id, Edit::Delete(id))
         .unwrap();
     exchange(&mut bob, &mut alice);
-    assert!(titles(&bob).is_empty());
+    assert_eq!(titles(&bob), [] as [String; 0]);
     assert!(
         bob.vault
             .edit(&bob.reference, &bob.id, Edit::Update(id, titled("again")))
@@ -222,7 +223,7 @@ fn a_reader_cannot_add_to_the_vault_by_any_route() {
     let bundle = syncwire::encode_bundle(&attestation, &frame).unwrap();
     let error = alice.vault.accept(&alice.reference, &bundle).unwrap_err();
     assert_eq!(verdict_of(&error), Verdict::Refused);
-    assert!(titles(&alice).is_empty());
+    assert_eq!(titles(&alice), [] as [String; 0]);
     drop(bob);
 }
 
@@ -285,7 +286,7 @@ fn a_member_removed_by_rotation_is_refused_when_pushing() {
         Verdict::Refused,
         "not in the member log any more"
     );
-    assert!(titles(&alice).is_empty());
+    assert_eq!(titles(&alice), [] as [String; 0]);
 }
 
 #[test]
@@ -324,6 +325,6 @@ fn attestations_and_records_survive_a_reopen_and_a_rotation() {
     let (attestation, frame) = decode_bundle(&served).unwrap();
     assert_eq!(attestation.signer.device_id, bob.id.devices()[0].device_id);
     attestation.verify(bob.id.root_vk(), 1).unwrap();
-    assert!(!frame.is_empty());
+    assert_ne!(frame, []);
     assert_eq!(alice.vault.attest.len(), 1);
 }

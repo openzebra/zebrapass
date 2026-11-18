@@ -1,7 +1,7 @@
 //! Wire form of [`SyncRecord`].
 
-use anyhow::{anyhow, Result};
-use session::{SyncRecord, SYNC_SIG_LEN};
+use anyhow::{Result, anyhow};
+use session::{SYNC_SIG_LEN, SyncRecord};
 
 use crate::limits::{MAX_FRAME, MAX_ORIGIN};
 use crate::reader::Reader;

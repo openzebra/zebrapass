@@ -8,10 +8,10 @@
 
 use std::path::Path;
 
-use local::{load_local_meta, mark_seen, LocalMeta, Paths};
+use local::{LocalMeta, Paths, load_local_meta, mark_seen};
 use seed::SeedPhrase;
 use session::{
-    check_seen, unlock, wrap_directory, Seen, Session, UnlockCreds, VaultFile, WrapDirectory,
+    Seen, Session, UnlockCreds, VaultFile, WrapDirectory, check_seen, unlock, wrap_directory,
 };
 use zeroize::Zeroizing;
 

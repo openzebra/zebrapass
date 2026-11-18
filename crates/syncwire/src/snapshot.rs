@@ -2,10 +2,10 @@
 //! device that must take a whole vault, so the receiver can check that every
 //! record was signed by a writer.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use session::Attestation;
 
-use crate::attestation::{decode_attestation, encode_attestation, ATTESTATION_WIRE_LEN};
+use crate::attestation::{ATTESTATION_WIRE_LEN, decode_attestation, encode_attestation};
 use crate::reader::Reader;
 
 /// First four bytes of an encoded snapshot.

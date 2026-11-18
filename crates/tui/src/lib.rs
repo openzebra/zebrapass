@@ -14,8 +14,10 @@
 pub mod app;
 pub mod cli;
 pub mod secure;
+pub mod server_cmd;
 pub mod ui;
 pub mod vault;
 
-pub use app::event::run;
 pub use app::App;
+pub use app::event::run;
+pub use server_cmd::run_server;

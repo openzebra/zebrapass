@@ -4,8 +4,8 @@
 //! presents the publics plus the 32-byte response, and `session::rotate`
 //! reseals PRF wraps during key rotation.
 
-use container::{encode_prf_entry, PrfWrap, StaticHeader, WrapEntry};
-use kdf::{hkdf_sha512, INFO_PRF_WRAP};
+use container::{PrfWrap, StaticHeader, WrapEntry, encode_prf_entry};
+use kdf::{INFO_PRF_WRAP, hkdf_sha512};
 use secret::Secret;
 
 use crate::wad::{self, prf_wad};
@@ -30,7 +30,7 @@ pub struct PrfGrant {
 impl PrfGrant {
     /// Borrow the grant encoding.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 }
@@ -94,10 +94,10 @@ pub fn open_prf(
 /// `no prf wrap for this grant` when the file has no matching entry.
 pub fn find_prf<'a>(entries: &'a [WrapEntry<'a>], id: &[u8; 16]) -> anyhow::Result<PrfWrap<'a>> {
     for entry in entries {
-        if let WrapEntry::Prf(wrap) = entry {
-            if wrap.id == *id {
-                return Ok(*wrap);
-            }
+        if let WrapEntry::Prf(wrap) = entry
+            && wrap.id == *id
+        {
+            return Ok(*wrap);
         }
     }
     anyhow::bail!("no prf wrap for this grant")
@@ -147,11 +147,11 @@ fn assemble_prf(
 )]
 mod tests {
     use container::{
-        StaticHeader, WrapEntry, BODY_AEGIS256, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN, KDF_T_MIN,
-        WRAP_AEGIS256,
+        BODY_AEGIS256, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN, KDF_T_MIN, StaticHeader,
+        WRAP_AEGIS256, WrapEntry,
     };
 
-    use super::{open_prf, seal_prf, PrfPublics};
+    use super::{PrfPublics, open_prf, seal_prf};
 
     fn floor_header() -> StaticHeader {
         StaticHeader {
@@ -177,7 +177,7 @@ mod tests {
         };
         let prf_out = [0x44u8; 32];
         let (record, grant) = seal_prf(&header, &prf, &prf_out, &vk).unwrap();
-        assert!(!grant.as_bytes().is_empty());
+        assert_ne!(grant.as_bytes(), []);
         let WrapEntry::Prf(wrap) = WrapEntry::try_from(record.as_slice()).unwrap() else {
             panic!("expected a prf entry");
         };

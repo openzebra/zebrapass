@@ -6,7 +6,7 @@
 
 use subtle::ConstantTimeEq;
 
-use crate::secure::strength::{estimate, WEAK_BITS};
+use crate::secure::strength::{WEAK_BITS, estimate};
 
 /// A password is "old" after a year without a new revision.
 pub const OLD_AFTER_MS: u64 = 365 * 24 * 3600 * 1000;
@@ -138,7 +138,7 @@ fn score(report: &HealthReport) -> u8 {
 mod tests {
     #![allow(clippy::indexing_slicing, reason = "tests may index")]
 
-    use super::{analyze, Candidate, OLD_AFTER_MS};
+    use super::{Candidate, OLD_AFTER_MS, analyze};
 
     #[test]
     fn finds_weak_reused_and_old() {

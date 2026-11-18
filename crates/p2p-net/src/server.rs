@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use p2p_core::suite::MAX_HANDSHAKE_MSG;
 use p2p_core::{Accept, CookieSecret, Inbound, Load, Message, Outcome, Responder};
 use session::DeviceCert;

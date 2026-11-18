@@ -3,7 +3,7 @@
 //! slots it can be reached through. Nothing else; the announcement is sealed
 //! by its sender under an account key and grants nothing to its readers.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use session::MAX_HINT_LEN;
 
 use crate::reader::Reader;

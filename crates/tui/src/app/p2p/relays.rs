@@ -10,30 +10,30 @@ use crate::app::node::P2p;
 use crate::vault::shared::SharedItem;
 
 /// Candidate hints for reaching members of `item`: the invitation's addresses,
-/// peers discovered via LAN beacons, saved relay hints, deterministic
-/// shared-vault slots on saved relays, and fallback WebSocket/catalog relays.
+/// peers discovered via LAN beacons, saved relay hints, and deterministic
+/// shared-vault slots on saved `ZPRY` relays.
 #[must_use]
 pub fn hints_for(p2p: &P2p, item: &SharedItem) -> Vec<String> {
-    let loopback = matches!(p2p.listen, local::Listen::Local | local::Listen::Fetch);
-    let catalog_count = if !loopback && p2p.relays.is_empty() {
-        2
-    } else {
-        0
-    };
-    let mut hints = item.reference.hints.clone();
+    let mut hints: Vec<String> = item
+        .reference
+        .hints
+        .iter()
+        .filter(|hint| !hint.contains("://"))
+        .cloned()
+        .collect();
     for found in &p2p.discovered {
         if !hints.contains(found) {
             hints.push(found.clone());
         }
     }
+    let explicit: Vec<String> = hints.clone();
     for seed in item.reference.seeds() {
         let expanded = p2p_net::expand_chain_hints(
-            &item.reference.hints,
+            &explicit,
             &p2p.discovered,
             &p2p.relays,
             seed.expose(),
             &item.reference.vault_id,
-            catalog_count,
         );
         for candidate in expanded {
             if !hints.contains(&candidate) {
@@ -45,20 +45,19 @@ pub fn hints_for(p2p: &P2p, item: &SharedItem) -> Vec<String> {
 }
 
 /// Candidate hints for reaching another device of this account across the
-/// 4-stage transport fallback chain.
+/// 3-stage local/direct/`ZPRY` transport chain.
 #[must_use]
-pub fn personal_candidates(p2p: &P2p, explicit: &[String], catalog_count: usize) -> Vec<String> {
-    if let Some(gate) = p2p.identity.account_gate() {
-        if let Ok(route) = kdf::account_route_id(gate) {
-            return p2p_net::expand_chain_hints(
-                explicit,
-                &p2p.discovered,
-                &p2p.relays,
-                gate.expose(),
-                &route,
-                catalog_count,
-            );
-        }
+pub fn personal_candidates(p2p: &P2p, explicit: &[String]) -> Vec<String> {
+    if let Some(gate) = p2p.identity.account_gate()
+        && let Ok(route) = kdf::account_route_id(gate)
+    {
+        return p2p_net::expand_chain_hints(
+            explicit,
+            &p2p.discovered,
+            &p2p.relays,
+            gate.expose(),
+            &route,
+        );
     }
     let mut out = Vec::new();
     for addr in p2p.discovered.iter().chain(explicit).chain(&p2p.relays) {

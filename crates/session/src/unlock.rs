@@ -1,14 +1,14 @@
 //! Open a vault file into a [`Session`](crate::Session).
 
 use aead::BodyAlg;
-use container::{ChipWrap, VaultFile, WrapEntry, COMMIT_LEN};
+use container::{COMMIT_LEN, ChipWrap, VaultFile, WrapEntry};
 use frame::decode_frames;
 use kdf::derive_vault_keys;
 use secret::Secret;
-use wraps::{open_chip, open_human_password, open_password, open_prf, ChipKeys, PrfPublics};
+use wraps::{ChipKeys, PrfPublics, open_chip, open_human_password, open_password, open_prf};
 
 use crate::create::{
-    body_ad, body_digest, commit_mode, mac_commit, verify_commit, CommitMode, Session,
+    CommitMode, Session, body_ad, body_digest, commit_mode, mac_commit, verify_commit,
 };
 use crate::error::{Seen, SessionError};
 
@@ -222,10 +222,10 @@ fn unwrap_vk(
 
 fn find_chip<'a>(entries: &'a [WrapEntry<'a>], id: &[u8; 16]) -> anyhow::Result<&'a ChipWrap<'a>> {
     for entry in entries {
-        if let WrapEntry::Chip(wrap) = entry {
-            if wrap.id == *id {
-                return Ok(wrap);
-            }
+        if let WrapEntry::Chip(wrap) = entry
+            && wrap.id == *id
+        {
+            return Ok(wrap);
         }
     }
     Err(anyhow::anyhow!("no chip wrap for this device"))

@@ -1,6 +1,6 @@
 //! Public facts about the open vault.
 
-use local::{device_key_info, DeviceKeyInfo, Prefs};
+use local::{DeviceKeyInfo, Prefs, device_key_info};
 use session::WrapDirectory;
 
 use crate::vault::Vault;

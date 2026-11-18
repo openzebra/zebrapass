@@ -7,8 +7,8 @@ use pq::PQ_PK_LEN;
 use std::marker::PhantomData;
 
 use crate::limits::{
-    read_u16, read_u32, shift, ENTRY_HEADER_LEN, KIND_CHIP, KIND_PASSWORD, KIND_PASSWORD_HUMAN,
-    KIND_PRF,
+    ENTRY_HEADER_LEN, KIND_CHIP, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF, read_u16, read_u32,
+    shift,
 };
 
 mod chip;

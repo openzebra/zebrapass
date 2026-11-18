@@ -13,7 +13,7 @@ mod common;
 
 use crossterm::event::KeyCode;
 use tui::app::action::{Action, PALETTE};
-use tui::app::keymap::{in_scope, label, KEYMAP, SCOPES};
+use tui::app::keymap::{KEYMAP, SCOPES, in_scope, label};
 
 use common::{app, press, render, temp_dir};
 

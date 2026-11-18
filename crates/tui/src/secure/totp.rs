@@ -115,7 +115,7 @@ fn from_uri(rest: &str) -> Result<Totp, TotpError> {
         match name.to_ascii_lowercase().as_str() {
             "secret" => key = Some(base32(value)?),
             "algorithm" if !value.eq_ignore_ascii_case("SHA1") => {
-                return Err(TotpError::Unsupported)
+                return Err(TotpError::Unsupported);
             }
             "digits" => {
                 digits = value.parse().map_err(|_| TotpError::Invalid)?;

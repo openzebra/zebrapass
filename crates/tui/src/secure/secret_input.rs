@@ -244,7 +244,7 @@ impl SecretInput {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use super::{SecretInput, PHASES};
+    use super::{PHASES, SecretInput};
 
     #[test]
     fn edits_at_the_cursor_on_char_boundaries() {

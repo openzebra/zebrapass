@@ -3,7 +3,7 @@
 use ratatui::text::{Line, Span};
 
 use crate::ui::input::TextInput;
-use crate::ui::screens::sync::{blank, heading, say, INDENT};
+use crate::ui::screens::sync::{INDENT, blank, heading, say};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::field::text_line;
 

@@ -19,14 +19,14 @@ use std::sync::Arc;
 use local::SyncIdentity;
 use p2p_net::{Announce, PersonalFetch};
 use record::{Document, TAG_TITLE};
-use session::{list_records, write_record, VaultFile};
-use tui::vault::adopt::{adopt_fetched, AdoptRequest};
+use session::{VaultFile, list_records, write_record};
+use tui::vault::adopt::{AdoptRequest, Held, adopt_fetched};
 use tui::vault::discover::discover;
 use tui::vault::error::UnlockError;
-use tui::vault::open::{unlock_vault, Credential, Vault};
+use tui::vault::open::{Credential, Vault, unlock_vault};
 use zeroize::Zeroizing;
 
-use common::{make_vault, phrase, temp_dir, PASSWORD};
+use common::{PASSWORD, make_vault, phrase, temp_dir};
 
 /// A password the first device's file does not open with.
 const OTHER_PASSWORD: &str = "the-second-devices-own-password-9";
@@ -85,9 +85,12 @@ fn request(words: &str, base: &Path, password: &str) -> AdoptRequest {
         identity: Arc::new(identity(words)),
         client_id: kdf::client_id(phrase.seed()).unwrap(),
         name: String::from("Personal"),
-        password: Zeroizing::new(password.as_bytes().to_vec()),
+        held: Held::password_only(password.as_bytes()),
         addresses: Vec::new(),
         loopback: true,
+        sync_servers: Vec::new(),
+        sync_proxy: None,
+        extra_ca_pem: None,
     }
 }
 
@@ -123,7 +126,7 @@ fn adopt_with(
 }
 
 fn nothing_on_disk(base: &Path) {
-    assert!(discover(base).is_empty());
+    assert_eq!(discover(base), [] as [tui::vault::discover::VaultRef; 0]);
     assert!(
         !base.join("vaults").exists()
             || std::fs::read_dir(base.join("vaults"))

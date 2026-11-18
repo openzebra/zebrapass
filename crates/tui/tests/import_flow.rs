@@ -14,12 +14,12 @@ mod common;
 
 use crossterm::event::KeyCode;
 use keepass::{Database, DatabaseKey};
+use tui::App;
 use tui::app::flows::create::Step;
 use tui::app::flows::import::ImportStep;
 use tui::app::screen::Screen;
-use tui::App;
 
-use common::{app, pass_verify, press, render, temp_dir, type_text, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, pass_verify, press, render, temp_dir, type_text, unlock, wait};
 
 fn fixture(name: &str) -> String {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -19,13 +19,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use local::{
-    adopt_shared_file, create_shared_vault, join_shared_vault, open_shared_vault, Edit, SharedRef,
-    SyncIdentity,
+    Edit, SharedRef, SyncIdentity, adopt_shared_file, create_shared_vault, join_shared_vault,
+    open_shared_vault,
 };
 use memberlog::{Action, Role};
 use p2p_net::{Conn, Event, PeerBook, Provider, Push, Service, SharedProvider, SnapshotSource};
 use record::{Document, TAG_TITLE};
-use session::{attest_latest, list_records, open_record, write_record, KdfProfile, VaultFile};
+use session::{KdfProfile, VaultFile, attest_latest, list_records, open_record, write_record};
 
 const WAIT: Duration = Duration::from_secs(60);
 
@@ -184,7 +184,7 @@ fn edits_and_deletions_flow_the_other_way_too() {
     assert_eq!(alice.titles(), ["two"]);
     alice.edit(Edit::Delete(id)).unwrap();
     assert_eq!(bob.check_in(&[&alice]), (1, 0, 0));
-    assert!(bob.titles().is_empty());
+    assert_eq!(bob.titles(), [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn a_readers_forged_record_is_refused_over_the_wire() {
     let (pulled, pushed, refused) = carol.check_in(&[&alice]);
     assert_eq!((pulled, pushed), (0, 0));
     assert_eq!(refused, 1);
-    assert!(alice.titles().is_empty());
+    assert_eq!(alice.titles(), [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -255,7 +255,7 @@ fn addresses_signed_by_an_outsider_are_not_kept() {
     let log = local::read_member_log(&alice.base, &alice.reference).unwrap();
     let book = PeerBook::default();
     assert_eq!(book.accept(&log, &[0; 16], &[], &list), 0);
-    assert!(book.hints(&log).is_empty());
+    assert_eq!(book.hints(&log), [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -376,13 +376,22 @@ fn a_damaged_or_foreign_peer_file_is_ignored_and_the_search_starts_over() {
     let middle = flipped.len() / 2;
     flipped[middle] ^= 1;
     fs::write(&file, &flipped).unwrap();
-    assert!(restarted(&alice).peer_hints(&vault).is_empty());
+    assert_eq!(
+        restarted(&alice).peer_hints(&vault),
+        [] as [std::string::String; 0]
+    );
 
     fs::write(&file, &good[..good.len() / 2]).unwrap();
-    assert!(restarted(&alice).peer_hints(&vault).is_empty());
+    assert_eq!(
+        restarted(&alice).peer_hints(&vault),
+        [] as [std::string::String; 0]
+    );
 
     fs::remove_file(&file).unwrap();
-    assert!(restarted(&alice).peer_hints(&vault).is_empty());
+    assert_eq!(
+        restarted(&alice).peer_hints(&vault),
+        [] as [std::string::String; 0]
+    );
 
     fs::write(&file, &good).unwrap();
     assert_eq!(
@@ -404,7 +413,7 @@ fn stored_addresses_are_checked_again_when_they_come_back() {
         Arc::clone(&alice.id),
     ));
     strict.serve(Arc::new(alice.reference.duplicate()));
-    assert!(strict.peer_hints(&vault).is_empty());
+    assert_eq!(strict.peer_hints(&vault), [] as [std::string::String; 0]);
 }
 
 #[test]

@@ -9,7 +9,7 @@
 use p2p_core::{Accept, Account, CookieSecret, Established, Initiator, Load, Local, Responder};
 use secret::Secret;
 use session::{
-    issue_device_cert, sync_verifying_key, DeviceCert, DeviceSignKey, Revocation, SYNC_VK_LEN,
+    DeviceCert, DeviceSignKey, Revocation, SYNC_VK_LEN, issue_device_cert, sync_verifying_key,
 };
 
 pub const NOW: u64 = 1_700_000_000_000;

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use local::SyncIdentity;
 use session::DeviceCert;
-use syncwire::{decode_announce, decode_snapshot, Announce};
+use syncwire::{Announce, decode_announce, decode_snapshot};
 use tokio::runtime::Builder;
 use tokio::time::timeout;
 

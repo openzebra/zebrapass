@@ -19,22 +19,22 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use local::{
-    create_shared_vault, join_shared_vault, open_shared_vault, Introduction, SharedRef,
-    SyncIdentity,
+    Introduction, SharedRef, SyncIdentity, create_shared_vault, join_shared_vault,
+    open_shared_vault,
 };
 use memberlog::{Action, Role};
 use p2p_net::{Service, SharedProvider};
-use session::{list_records, open_record, KdfProfile};
+use session::{KdfProfile, list_records, open_record};
 use sharing::{ContactCard, Invitation, Inviter, Offer};
+use tui::App;
 use tui::app::flows::home::Filter;
 use tui::app::screen::Screen;
-use tui::vault::open::{unlock_vault, Credential};
-use tui::App;
+use tui::vault::open::{Credential, unlock_vault};
 use zeroize::Zeroizing;
 
 use common::{
-    app, ctrl, keep_to_this_device, make_vault, press, render, settle, tick, type_text, unlock,
-    PASSWORD,
+    PASSWORD, app, ctrl, keep_to_this_device, make_vault, press, render, settle, tick, type_text,
+    unlock,
 };
 
 fn unlocked(app: &App) -> &tui::app::flows::unlocked::Unlocked {
@@ -233,5 +233,5 @@ fn a_reader_is_told_it_cannot_change_the_vault() {
     let screen = render(&w.bob, 120, 40);
     assert!(screen.contains("read this vault"), "{screen}");
     settle(&mut w.bob);
-    assert!(titles_on_alice(&w).is_empty());
+    assert_eq!(titles_on_alice(&w), [] as [std::string::String; 0]);
 }

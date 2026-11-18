@@ -6,9 +6,9 @@
     reason = "tests may unwrap and index"
 )]
 
-use memberlog::{rotation_commit, Action, Entry, MemberLog, Role, ENTRY_WIRE_LEN, MAX_ENTRIES};
+use memberlog::{Action, ENTRY_WIRE_LEN, Entry, MAX_ENTRIES, MemberLog, Role, rotation_commit};
 use pq::SYNC_VK_LEN;
-use session::{issue_device_cert, sync_verifying_key, DeviceCert, DeviceSignKey};
+use session::{DeviceCert, DeviceSignKey, issue_device_cert, sync_verifying_key};
 
 const VAULT: [u8; 16] = [0x55; 16];
 const T0: u64 = 1_700_000_000_000;
@@ -89,15 +89,17 @@ fn only_owners_change_the_member_list() {
     step(&mut log, &alice, add(&carol, Role::Reader)).unwrap();
     for by in [&bob, &carol] {
         assert!(step(&mut log, by, add(&dave, Role::Reader)).is_err());
-        assert!(step(
-            &mut log,
-            by,
-            Action::Remove {
-                client_id: alice.client_id,
-                commit: [7; 32]
-            }
-        )
-        .is_err());
+        assert!(
+            step(
+                &mut log,
+                by,
+                Action::Remove {
+                    client_id: alice.client_id,
+                    commit: [7; 32]
+                }
+            )
+            .is_err()
+        );
         let promote = Action::SetRole {
             client_id: by.client_id,
             role: Role::Owner,
@@ -183,15 +185,17 @@ fn a_member_can_leave_but_the_last_owner_cannot() {
     step(&mut log, &bob, leave).unwrap();
     assert!(log.role_of(&bob.client_id).is_none());
     assert_eq!(log.epoch(), 0, "a leave replaces no seed by itself");
-    assert!(step(
-        &mut log,
-        &alice,
-        Action::Remove {
-            client_id: alice.client_id,
-            commit: [7; 32]
-        }
-    )
-    .is_err());
+    assert!(
+        step(
+            &mut log,
+            &alice,
+            Action::Remove {
+                client_id: alice.client_id,
+                commit: [7; 32]
+            }
+        )
+        .is_err()
+    );
     let demote = Action::SetRole {
         client_id: alice.client_id,
         role: Role::Reader,
@@ -215,15 +219,17 @@ fn duplicates_and_unknown_targets_are_refused() {
     let (alice, bob) = (user(1), user(2));
     let mut log = created_by(&alice);
     assert!(step(&mut log, &alice, add(&alice, Role::Writer)).is_err());
-    assert!(step(
-        &mut log,
-        &alice,
-        Action::Remove {
-            client_id: bob.client_id,
-            commit: [7; 32]
-        }
-    )
-    .is_err());
+    assert!(
+        step(
+            &mut log,
+            &alice,
+            Action::Remove {
+                client_id: bob.client_id,
+                commit: [7; 32]
+            }
+        )
+        .is_err()
+    );
     let promote = Action::SetRole {
         client_id: bob.client_id,
         role: Role::Owner,
@@ -326,12 +332,14 @@ fn the_genesis_must_be_self_certified_and_make_its_signer_the_owner() {
         action: add(&bob, Role::Owner),
         ..genuine.clone()
     };
-    assert!(MemberLog::from_entries(
-        VAULT,
-        std::slice::from_ref(&other_owner),
-        &anchor(&other_owner)
-    )
-    .is_err());
+    assert!(
+        MemberLog::from_entries(
+            VAULT,
+            std::slice::from_ref(&other_owner),
+            &anchor(&other_owner)
+        )
+        .is_err()
+    );
     let as_writer = Entry {
         action: add(&alice, Role::Writer),
         ..genuine.clone()
@@ -395,7 +403,7 @@ fn the_wire_form_is_canonical_strict_and_chains_by_hash() {
         for len in (0..bytes.len()).step_by(997) {
             assert!(Entry::decode(&bytes[..len]).is_err());
         }
-        let mut trailing = bytes.clone();
+        let mut trailing = bytes;
         trailing.push(0);
         assert!(Entry::decode(&trailing).is_err());
     }
@@ -534,9 +542,11 @@ fn everyone_who_ever_wrote_stays_a_past_writer() {
     let writers = log.past_writers();
     assert_eq!(writers.len(), 4, "owner, removed, promoted and demoted");
     for who in [&alice, &bob, &carol, &dave] {
-        assert!(writers
-            .iter()
-            .any(|(id, vk)| **id == who.client_id && **vk == who.root_vk));
+        assert!(
+            writers
+                .iter()
+                .any(|(id, vk)| **id == who.client_id && **vk == who.root_vk)
+        );
     }
 
     let (mallory, eve) = (user(5), user(6));

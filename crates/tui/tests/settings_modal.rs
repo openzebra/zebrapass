@@ -14,12 +14,12 @@ mod common;
 use std::time::Duration;
 
 use crossterm::event::KeyCode;
+use tui::App;
 use tui::app::screen::Screen;
 use tui::ui::theme::ThemeName;
-use tui::App;
 
 use common::{
-    app, ctrl, make_vault, press, render, render_all, temp_dir, type_text, unlock, wait, PASSWORD,
+    PASSWORD, app, ctrl, make_vault, press, render, render_all, temp_dir, type_text, unlock, wait,
 };
 
 fn open_settings(tag: &str) -> (App, std::path::PathBuf) {

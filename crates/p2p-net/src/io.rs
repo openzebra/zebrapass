@@ -9,12 +9,12 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
-use p2p_core::{Channel, Message, Reassembler, RecvHalf, SendHalf, MAX_PLAINTEXT, OVERHEAD};
+use anyhow::{Result, anyhow};
+use p2p_core::{Channel, MAX_PLAINTEXT, Message, OVERHEAD, Reassembler, RecvHalf, SendHalf};
 use syncwire::{Direction, Header};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 

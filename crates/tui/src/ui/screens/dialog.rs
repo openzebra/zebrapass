@@ -1,9 +1,9 @@
 //! Dialog rendering.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::dialog::{ConfirmKind, Dialog};
@@ -231,10 +231,13 @@ fn draw_form(frame: &mut Frame<'_>, area: Rect, form: &Form, ctx: &Ctx) {
         lines.push(secret_row("repeat", input, FormFocus::Repeat, form, ctx));
     }
     if let Some(input) = form.text.as_ref() {
-        let label = if form.kind == FormKind::DropRecovery {
-            "type DROP"
-        } else {
-            "name"
+        let label = match form.kind {
+            FormKind::DropRecovery => "type DROP",
+            FormKind::SyncServers => "servers",
+            FormKind::SyncProxy => "proxy",
+            FormKind::BackupDir => "folder",
+            FormKind::BackupExport => "output path",
+            _ => "name",
         };
         {
             let focused = form.focus == FormFocus::Text;
@@ -281,7 +284,11 @@ fn confirm_line(form: &Form, ctx: &Ctx) -> Line<'static> {
                 | FormKind::AddPassword
                 | FormKind::AddDevice
                 | FormKind::ChangePin
-                | FormKind::Rename => "rotate",
+                | FormKind::Rename
+                | FormKind::SyncServers
+                | FormKind::SyncProxy
+                | FormKind::BackupDir
+                | FormKind::BackupExport => "rotate",
             };
             let how = if ctx.caps.key_release {
                 format!(" Hold ENTER to {verb}  ")

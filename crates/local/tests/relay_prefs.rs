@@ -21,11 +21,13 @@ fn relay_slots_survive_a_round_trip_in_order() {
     };
     let read = Prefs::read(&saved(&prefs)).unwrap().unwrap();
     assert_eq!(read.p2p_relays, prefs.p2p_relays);
-    assert!(Prefs::read(&saved(&Prefs::default()))
-        .unwrap()
-        .unwrap()
-        .p2p_relays
-        .is_empty());
+    assert_eq!(
+        Prefs::read(&saved(&Prefs::default()))
+            .unwrap()
+            .unwrap()
+            .p2p_relays,
+        [] as [Box<str>; 0]
+    );
 }
 
 #[test]

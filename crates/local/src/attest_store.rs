@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use frame::{
-    decode_frames, encode_frames, open, parse, seal, spans, FrameMeta, ALG_CASCADE, KIND_REVISION,
+    ALG_CASCADE, FrameMeta, KIND_REVISION, decode_frames, encode_frames, open, parse, seal, spans,
 };
 use secret::Secret;
 use session::Attestation;
@@ -44,6 +44,11 @@ impl AttestStore {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.by_record.is_empty()
+    }
+
+    /// Iterate over all stored attestations in ascending record-id order.
+    pub fn iter(&self) -> impl Iterator<Item = &Attestation> {
+        self.by_record.values()
     }
 
     /// Keep `attestation` unless the store already holds one for a revision

@@ -9,7 +9,7 @@
 use sha2::{Digest, Sha256};
 
 use container::VaultFile;
-use frame::{parse, Header, ALG_AEGIS256, ALG_CASCADE, KIND_REVISION, KIND_TOMBSTONE};
+use frame::{ALG_AEGIS256, ALG_CASCADE, Header, KIND_REVISION, KIND_TOMBSTONE, parse};
 use kdf::frame_key;
 use pq::SYNC_VK_LEN;
 

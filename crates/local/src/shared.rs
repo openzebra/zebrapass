@@ -12,16 +12,16 @@ use aead::BodyAlg;
 use kdf::KdfProfile;
 use memberlog::MemberLog;
 use secret::Secret;
-use session::{unlock, Attestation, Session, UnlockCreds, VaultFile};
+use session::{Attestation, Session, UnlockCreds, VaultFile, unlock};
 
 use crate::attest_store::AttestStore;
-use crate::meta::{load_local_meta, LocalMeta};
-use crate::shared_files::{load_member_log, save_member_log, SharedState};
+use crate::meta::{LocalMeta, load_local_meta};
+use crate::shared_files::{SharedState, load_member_log, save_member_log};
 use crate::shared_ref::SharedRef;
 use crate::shared_sync::attested_store;
 use crate::sync_identity::SyncIdentity;
 use crate::usage::Usage;
-use crate::{create_vault, mark_seen, now_ms, shared_paths_for, shared_root, write_atomic, Paths};
+use crate::{Paths, create_vault, mark_seen, now_ms, shared_paths_for, shared_root, write_atomic};
 
 fn failed() -> anyhow::Error {
     anyhow::anyhow!("shared vault unavailable")
@@ -284,7 +284,11 @@ pub fn adopt_shared_file(
     session.set_origin_device(own.device_id)?;
     let paths = shared_paths_for(base, &reference.vault_id);
     let log = load_log_any(&paths, reference)?;
-    let state = load_state_any(&paths, reference)?;
+    let state = if paths.shared_state().is_file() {
+        load_state_any(&paths, reference)?
+    } else {
+        SharedState::default()
+    };
     let attest = attested_store(
         &session,
         &log,
@@ -305,6 +309,7 @@ pub fn adopt_shared_file(
     mark_seen(&paths, &mut meta, &session)?;
     let keys = file_keys(&reference.seed, &reference.vault_id)?;
     attest.save(&paths.attest_store(), &keys.attest)?;
+    state.save(&paths.shared_state(), &keys.state)?;
     Ok(SharedVault {
         paths,
         session,

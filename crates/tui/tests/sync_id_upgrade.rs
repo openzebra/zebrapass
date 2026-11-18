@@ -21,18 +21,18 @@ use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
 use seed::SeedPhrase;
 use session::write_record;
+use tui::App;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
 use tui::vault::discover::discover;
-use tui::vault::open::{unlock_vault, Credential};
-use tui::App;
+use tui::vault::open::{Credential, unlock_vault};
 use zeroize::Zeroizing;
 
 use common::{
-    announce_on_the_network, app, app_with, beacon, config, free_udp_port, keep_to_this_device,
-    make_vault, press, render, restore_empty, temp_dir, type_text, unlock, wait_adopted, CAPS,
-    PASSWORD,
+    CAPS, PASSWORD, announce_on_the_network, app, app_with, beacon, config, free_udp_port,
+    keep_to_this_device, make_vault, press, render, restore_empty, temp_dir, type_text, unlock,
+    wait_adopted,
 };
 
 fn credential() -> Credential {

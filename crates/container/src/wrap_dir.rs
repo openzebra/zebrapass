@@ -3,8 +3,8 @@
 //! `wrap_count` and `generation` are outside the static header, so editing the
 //! directory does not change wrap or body associated data.
 
-use crate::limits::{read_u16, read_u64, WRAP_DIR_HEADER_LEN};
-use crate::wrap_entry::{parse_entry, WrapEntry};
+use crate::limits::{WRAP_DIR_HEADER_LEN, read_u16, read_u64};
+use crate::wrap_entry::{WrapEntry, parse_entry};
 
 /// Parsed wrap directory. Entry payloads borrow the file.
 #[derive(Clone, Debug, Eq, PartialEq)]

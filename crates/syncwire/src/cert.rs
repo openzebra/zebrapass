@@ -1,7 +1,7 @@
 //! Wire form of [`DeviceCert`]. Version 2 adds the signed device id; the
 //! version-1 layout was never issued or stored and has no parser.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use session::{DeviceCert, SYNC_SIG_LEN, SYNC_VK_LEN};
 
 use crate::reader::Reader;

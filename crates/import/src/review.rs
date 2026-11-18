@@ -1,7 +1,7 @@
 //! What the user reviews before anything is written: text-only rows, the
 //! report, and which items are included.
 
-use record::{Document, CUSTOM_TAGS, TAG_EMAIL, TAG_TITLE, TAG_USERNAME};
+use record::{CUSTOM_TAGS, Document, TAG_EMAIL, TAG_TITLE, TAG_USERNAME};
 use zeroize::Zeroize;
 
 use crate::item::{Item, ItemKind};

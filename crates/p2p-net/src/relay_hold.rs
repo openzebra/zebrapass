@@ -2,20 +2,20 @@
 //! it, and serve what arrives like any direct connection.
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 use std::time::Duration;
 
 use p2p_core::CookieSecret;
-use syncwire::{decode_incoming, RelayHint, RelaySide, RelayType};
+use syncwire::{RelayHint, RelaySide, RelayType, decode_incoming};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout};
 
 use crate::relay_client::{accept, reserve};
 use crate::relay_wire::{receive, send};
-use crate::service::{connection, Event, Service, Shared, MAX_HANDSHAKES, MAX_RELAYED};
+use crate::service::{Event, MAX_HANDSHAKES, MAX_RELAYED, Service, Shared, connection};
 use crate::view::Provider;
 
 /// Longest wait between attempts to hold a slot again.

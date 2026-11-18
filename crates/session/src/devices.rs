@@ -1,12 +1,12 @@
 //! Add and remove chip (device) and PRF wraps. The body bytes stay as they are.
 
-use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF};
+use container::{KIND_CHIP, KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF, VaultFile, WrapEntry};
 use wraps::{
-    seal_chip, seal_human_password, seal_prf, ChipGrant, ChipPublics, HumanPasswordPublics,
-    PrfGrant, PrfPublics,
+    ChipGrant, ChipPublics, HumanPasswordPublics, PrfGrant, PrfPublics, seal_chip,
+    seal_human_password, seal_prf,
 };
 
-use crate::create::{encode_entry, owned_entries, Session};
+use crate::create::{Session, encode_entry, owned_entries};
 use crate::rewrap::{id_in_use, rewrap};
 
 /// Append a chip wrap of the session vault key.

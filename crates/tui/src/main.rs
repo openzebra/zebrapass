@@ -23,6 +23,13 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Ok(Command::Server(args)) => match tui::run_server(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("zebrapass: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Ok(Command::Help) => {
             print!("{}", cli::USAGE);
             ExitCode::SUCCESS

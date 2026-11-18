@@ -5,7 +5,7 @@
 //! added to the addresses a check-in dials after the direct ones.
 
 use crossterm::event::KeyEvent;
-use local::{parse_relay_hint, Listen, RELAYS_MAX};
+use local::{Listen, RELAYS_MAX, parse_relay_hint};
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};

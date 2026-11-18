@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use p2p_core::suite::{KIND_CHALLENGE, MAX_HANDSHAKE_MSG};
-use p2p_core::{Dispatcher, Initiator, Reply, KIND_OFFSET};
+use p2p_core::{Dispatcher, Initiator, KIND_OFFSET, Reply};
 use session::DeviceCert;
 use syncwire::limits::PIPELINE_DEPTH;
 use syncwire::{Direction, MsgType};
@@ -15,7 +15,7 @@ use tokio::time::timeout;
 use zeroize::Zeroizing;
 
 use crate::dialable::Target;
-use crate::io::{mux, now_ms, read_msg, write_msg, MuxReader, MuxWriter, HANDSHAKE_TIMEOUT};
+use crate::io::{HANDSHAKE_TIMEOUT, MuxReader, MuxWriter, mux, now_ms, read_msg, write_msg};
 use crate::view::VaultView;
 
 /// How long a peer may take to answer one request.
@@ -108,9 +108,6 @@ impl Conn {
                 .map_err(|_| FetchError::Unreachable)?
                 .map_err(|_| FetchError::Unreachable)?,
             Target::Relayed(hint) => crate::relay_client::connect(&hint).await?,
-            Target::Catalog(cat) => {
-                crate::relay_client::connect_catalog(&cat, &view.dialing).await?
-            }
         };
         let (finish, established) = handshake(view, &mut tcp).await?;
         write_msg(&mut tcp, &finish)

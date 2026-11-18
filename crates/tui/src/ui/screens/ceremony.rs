@@ -2,14 +2,14 @@
 //! picks to prove it was written down. The phrase can be copied once, and the
 //! clipboard clears itself after 25 s.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::ceremony::{
-    words, CeremonyFocus, Verify, CARDS, PER_ROW, PHRASE_CLEAR, ROWS,
+    CARDS, CeremonyFocus, PER_ROW, PHRASE_CLEAR, ROWS, Verify, words,
 };
 use crate::app::flows::create::{CreateState, Step};
 use crate::app::keymap::Scope;
@@ -83,8 +83,7 @@ fn draw_phrase(frame: &mut Frame<'_>, area: Rect, state: &CreateState, ctx: &Ctx
     let phrase_words: Vec<&str> = state
         .phrase
         .as_deref()
-        .map(|phrase| words(phrase).collect())
-        .unwrap_or_default();
+        .map_or_default(|phrase| words(phrase).collect());
     let mut lines: Vec<Line<'_>> = Vec::with_capacity(ROWS * lines_per_row);
     for row in 0..ROWS {
         let shown = state.ceremony.row_shown(row);

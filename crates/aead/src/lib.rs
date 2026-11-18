@@ -4,4 +4,4 @@ mod aegis;
 mod error;
 mod kuz_ctr;
 
-pub use error::{decrypt_body, encrypt_body, BodyAlg};
+pub use error::{BodyAlg, decrypt_body, encrypt_body};

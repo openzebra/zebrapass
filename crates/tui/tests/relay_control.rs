@@ -14,14 +14,14 @@
 mod common;
 
 use crossterm::event::KeyCode;
+use tui::App;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
-use tui::App;
 
 use common::{
-    app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
-    PASSWORD,
+    PASSWORD, app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock,
+    wait,
 };
 
 fn state(app: &App) -> &Unlocked {
@@ -43,8 +43,7 @@ fn saved(app: &App) -> Vec<String> {
         .info
         .prefs
         .as_ref()
-        .map(|prefs| prefs.p2p_relays.iter().map(ToString::to_string).collect())
-        .unwrap_or_default()
+        .map_or_default(|prefs| prefs.p2p_relays.iter().map(ToString::to_string).collect())
 }
 
 fn hint(n: u8) -> String {
@@ -72,7 +71,10 @@ fn a_pasted_relay_is_checked_saved_and_kept_across_a_restart() {
     make_vault(&base);
     keep_to_this_device(&base);
     let mut app = on_share(&base);
-    assert!(state(&app).p2p.as_ref().unwrap().relays.is_empty());
+    assert_eq!(
+        state(&app).p2p.as_ref().unwrap().relays,
+        [] as [std::string::String; 0]
+    );
     assert!(!render(&app, 110, 30).contains("saved"));
 
     // Wrong input: a toast says why, and nothing is saved.
@@ -103,7 +105,7 @@ fn a_pasted_relay_is_checked_saved_and_kept_across_a_restart() {
     type_text(&mut app, &hint(9));
     press(&mut app, KeyCode::Esc);
     assert!(matches!(share(&app).step, Step::Overview));
-    assert!(saved(&app).is_empty());
+    assert_eq!(saved(&app), [] as [std::string::String; 0]);
 
     // Enter applies.
     paste_relay(&mut app, &hint(9));
@@ -182,7 +184,7 @@ fn a_relay_slot_from_a_beacon_enters_the_pull_list_only_if_it_could_ever_be_dial
     ] {
         p2p.discover_relay(&forbidden.parse().unwrap());
     }
-    assert!(p2p.discovered.is_empty());
+    assert_eq!(p2p.discovered, [] as [std::string::String; 0]);
     p2p.discover_relay(&hint_value(5));
     assert_eq!(p2p.discovered, [hint(5)]);
 }

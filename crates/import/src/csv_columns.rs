@@ -171,8 +171,7 @@ pub fn csv_columns(path: &Path) -> anyhow::Result<(Box<[Column]>, Mapping)> {
             sample: Zeroizing::new(
                 first
                     .get(index)
-                    .map(|cell| String::from_utf8_lossy(cell).into_owned())
-                    .unwrap_or_default(),
+                    .map_or_default(|cell| String::from_utf8_lossy(cell).into_owned()),
             ),
         })
         .collect();

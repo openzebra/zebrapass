@@ -9,7 +9,7 @@
 //! a locally created wrap always clears it.
 
 use container::{
-    encode_human_password_entry, HumanKdf, HumanPasswordWrap, StaticHeader, DOMAIN_WRAP_PASSWORD,
+    DOMAIN_WRAP_PASSWORD, HumanKdf, HumanPasswordWrap, StaticHeader, encode_human_password_entry,
 };
 use kdf::{argon2id, hkdf_sha512};
 use secret::Secret;

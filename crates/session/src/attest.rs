@@ -9,7 +9,7 @@
 //! signature and role before it keeps the frame.
 
 use kdf::frame_key;
-use pq::{sync_sign, sync_verify, REVISION_CTX, SYNC_VK_LEN};
+use pq::{REVISION_CTX, SYNC_VK_LEN, sync_sign, sync_verify};
 use sha2::{Digest, Sha256};
 
 use crate::create::Session;

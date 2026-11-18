@@ -1,9 +1,9 @@
 //! "How will you unlock on this device?" — factor cards and the password.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::enroll::{

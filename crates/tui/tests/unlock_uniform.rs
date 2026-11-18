@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::KeyCode;
 use tui::vault::discover::discover;
 
-use common::{app, make_vault, press, render, temp_dir, type_text, wait, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, render, temp_dir, type_text, wait};
 
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();

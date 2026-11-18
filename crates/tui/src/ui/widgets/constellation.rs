@@ -3,14 +3,14 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::factors::{factor_label, Anim};
+use crate::app::flows::factors::{Anim, factor_label};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::meter::filled;
 use crate::vault::factors::{FactorKind, FactorView};
@@ -52,7 +52,7 @@ fn edge_style(
         Some((Anim::Revoke, progress)) if progress < 0.35 => {
             (theme.danger(), if ascii { "x" } else { "╳" })
         }
-        Some((Anim::Revoke | Anim::Rotate, _)) if tick % 2 == 0 => {
+        Some((Anim::Revoke | Anim::Rotate, _)) if tick.is_multiple_of(2) => {
             (theme.warn(), if ascii { "=" } else { "━" })
         }
         Some((Anim::Add, _)) if newest => (theme.accent(), if ascii { "=" } else { "━" }),

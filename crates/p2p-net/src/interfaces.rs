@@ -36,10 +36,10 @@ pub fn local_ips() -> Vec<IpAddr> {
             .ok()
             .map(|local| local.ip().to_canonical())
             .filter(|ip| !ip.is_unspecified() && !ip.is_loopback() && !never_dialable(*ip));
-        if let Some(ip) = found {
-            if !ips.contains(&ip) {
-                ips.push(ip);
-            }
+        if let Some(ip) = found
+            && !ips.contains(&ip)
+        {
+            ips.push(ip);
         }
     }
     ips

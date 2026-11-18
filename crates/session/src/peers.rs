@@ -6,7 +6,7 @@
 //! carries the device certificate, so it only counts for an account the member
 //! log lists.
 
-use pq::{sync_sign, sync_verify, PEER_CTX, SYNC_VK_LEN};
+use pq::{PEER_CTX, SYNC_VK_LEN, sync_sign, sync_verify};
 
 use crate::error::SessionError;
 use crate::sync_msg::frame_parts;

@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use frame::FrameRef;
 
 use super::index;

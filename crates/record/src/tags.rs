@@ -85,6 +85,18 @@ pub const TAG_PREF_P2P_RELAYS: u16 = 0x021A;
 /// 1 byte, 0 or 1 (`Bytes`).
 pub const TAG_PREF_P2P_HOLD: u16 = 0x021B;
 
+/// Configured sync server URLs (`https://host[:port]/slug`), one per line (`Text`).
+pub const TAG_PREF_SYNC_SERVERS: u16 = 0x021C;
+
+/// Optional sync proxy URL (`socks5h://host:port` or `http://host:port`) (`Text`).
+pub const TAG_PREF_SYNC_PROXY: u16 = 0x021D;
+
+/// Optional directory path for automatic rolling backups (`Text`).
+pub const TAG_PREF_BACKUP_DIR: u16 = 0x021E;
+
+/// Rolling backup retention count (`0..=30`, `0` disables), 1 byte (`Bytes`).
+pub const TAG_PREF_BACKUP_KEEP: u16 = 0x021F;
+
 /// Record copy usage on this device: packed 16-byte entries
 /// `id u32 LE ‖ count u32 LE ‖ last_ms u64 LE`, sorted by id (`Bytes`).
 pub const TAG_USAGE: u16 = 0x0220;

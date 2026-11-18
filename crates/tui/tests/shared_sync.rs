@@ -19,22 +19,22 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use local::{
-    create_shared_vault, join_shared_vault, open_shared_vault, Introduction, SharedRef,
-    SyncIdentity,
+    Introduction, SharedRef, SyncIdentity, create_shared_vault, join_shared_vault,
+    open_shared_vault,
 };
 use memberlog::{Action, Role};
 use p2p_net::{Service, SharedProvider};
 use record::{Document, TAG_TITLE};
 use secret::Secret;
-use session::{write_record, KdfProfile};
+use session::{KdfProfile, write_record};
 use sharing::{ContactCard, Invitation, Inviter, Offer};
+use tui::App;
 use tui::app::flows::home::Filter;
 use tui::app::screen::Screen;
-use tui::vault::open::{unlock_vault, Credential};
-use tui::App;
+use tui::vault::open::{Credential, unlock_vault};
 use zeroize::Zeroizing;
 
-use common::{app, keep_to_this_device, make_vault, render, tick, unlock, PASSWORD};
+use common::{PASSWORD, app, keep_to_this_device, make_vault, render, tick, unlock};
 
 fn titled(text: &str) -> Document {
     let mut doc = Document::new();

@@ -308,11 +308,7 @@ impl SnapHead {
             && cut != 0
             && cut <= u64::try_from(CHUNK_LEN)?
             && u64::from(self.chunk_count) == self.size.div_ceil(cut);
-        if sound {
-            Ok(self)
-        } else {
-            Err(invalid())
-        }
+        if sound { Ok(self) } else { Err(invalid()) }
     }
 
     /// The wire form.

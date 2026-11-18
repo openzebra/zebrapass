@@ -5,8 +5,8 @@
 //! The cache is wiped on drop, which happens on lock.
 
 use record::{
-    Document, ValueType, TAG_CUSTOM_MIN, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP,
-    TAG_URL, TAG_USERNAME,
+    Document, TAG_CUSTOM_MIN, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL,
+    TAG_USERNAME, ValueType,
 };
 use session::Session;
 use zeroize::Zeroize;
@@ -269,9 +269,9 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
-    use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE, TAG_USERNAME};
+    use record::{Document, TAG_PASSWORD, TAG_TITLE, TAG_USERNAME, ValueType};
 
-    use super::{custom_text, fuzzy_score, set_custom_text, RecordKind, Summary, CUSTOM_TAGS};
+    use super::{CUSTOM_TAGS, RecordKind, Summary, custom_text, fuzzy_score, set_custom_text};
 
     #[test]
     fn fuzzy_prefers_prefix_and_word_starts() {

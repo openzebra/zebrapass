@@ -1,285 +1,126 @@
-//! Multi-stage transport fallback chain builder and WebSocket relay holding.
+//! Three-stage fallback chain candidate ordering:
 //!
-//! Expands peer candidates across four ordered transport stages:
 //! 1. [`Stage::Lan`](crate::Stage::Lan): direct LAN peers discovered via
-//!    multicast, broadcast, or `/24` unicast sweep.
-//! 2. [`Stage::WanDirect`](crate::Stage::WanDirect): direct public WAN, NAT-PMP
-//!    / `UPnP` / STUN, or VPN/CGNAT (`100.64/10`) endpoints.
-//! 3. [`Stage::ZpryRelay`](crate::Stage::ZpryRelay): user-saved or
-//!    peer-advertised `ZPRY` TCP relay slots and deterministic slots derived
-//!    from the vault secret.
-//! 4. [`Stage::CatalogRelay`](crate::Stage::CatalogRelay): WebSocket (`ws://`)
-//!    relay tunnels on saved relays and deterministic slots across the embedded
-//!    `nostr_relays.toml` catalog.
+//!    authenticated beacons.
+//! 2. [`Stage::WanDirect`](crate::Stage::WanDirect): direct public WAN or NAT-mapped
+//!    socket addresses.
+//! 3. [`Stage::ZpryRelay`](crate::Stage::ZpryRelay): user-configured private or
+//!    self-hosted `ZPRY` TCP relays.
 
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::time::Duration;
+use std::net::SocketAddr;
 
-use p2p_core::CookieSecret;
-use syncwire::{decode_incoming, RelayHint, RelaySide, RelayType};
-use tokio::net::TcpStream;
-use tokio::sync::mpsc;
-use tokio::time::{sleep, timeout};
+use sha2::{Digest, Sha256};
 
-use crate::relay_client::{accept_ws, reserve, reserve_ws};
-use crate::relay_dir::{default_relays, deterministic_relay_hint, embedded_relays};
-use crate::relay_hold::spawn_relayed;
-use crate::relay_wire::{receive, send};
-use crate::service::{Event, Service, Shared};
-use crate::view::Provider;
+use crate::RelayHint;
 
-/// Longest wait between attempts to re-hold a WebSocket relay slot.
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const DOMAIN_RELAY_SLOT: &[u8] = b"brby/v2/zpry-relay-slot";
 
-fn slot_to_hex(slot: &[u8; 16]) -> String {
-    const HEX: [u8; 16] = *b"0123456789abcdef";
-    let mut out = String::with_capacity(32);
-    for &b in slot {
-        let hi = HEX.get(usize::from(b >> 4)).copied().unwrap_or(b'0');
-        let lo = HEX.get(usize::from(b & 0x0F)).copied().unwrap_or(b'0');
-        out.push(char::from(hi));
-        out.push(char::from(lo));
-    }
-    out
-}
-
-/// Derive a deterministic `ws://endpoint/slot` hint from a 32-byte key or gate
-/// secret and a 16-byte vault/route identifier.
+/// Derive a deterministic 16-byte relay slot identifier on `relay`.
+///
+/// Uses `secret` (`account_gate` or `shared_seed`) and `context_id` (`route_id`
+/// or `vault_id`), so peers find each other on a configured `ZPRY` relay
+/// without prior rendezvous hints.
 #[must_use]
-pub fn deterministic_ws_relay_hint(
+pub fn deterministic_relay_hint(
     secret: &[u8],
-    context_id: &[u8; 16],
-    endpoint: &str,
-) -> Option<String> {
-    let clean = endpoint.strip_prefix("ws://").unwrap_or(endpoint);
-    let host_port = clean.split('/').next().unwrap_or(clean);
-    if host_port.is_empty() {
+    context_id: &[u8],
+    relay: SocketAddr,
+) -> Option<RelayHint> {
+    if secret.is_empty() || context_id.is_empty() {
         return None;
     }
-    let slot = kdf::p2p_relay_slot(secret, context_id, host_port).ok()?;
-    Some(format!("ws://{host_port}/{}", slot_to_hex(&slot)))
+    let mut hasher = Sha256::new();
+    hasher.update(DOMAIN_RELAY_SLOT);
+    hasher.update(
+        u16::try_from(secret.len())
+            .unwrap_or(u16::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(secret);
+    hasher.update(
+        u16::try_from(context_id.len())
+            .unwrap_or(u16::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(context_id);
+    let addr_text = relay.to_string();
+    hasher.update(
+        u16::try_from(addr_text.len())
+            .unwrap_or(u16::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(addr_text.as_bytes());
+    let digest: [u8; 32] = hasher.finalize().into();
+    let mut slot = [0u8; 16];
+    if let Some((head, _)) = digest.split_at_checked(16) {
+        slot.copy_from_slice(head);
+    }
+    Some(RelayHint { relay, slot })
 }
 
-/// Derive up to `count` deterministic `ws://host:port/slot` hints from the
-/// embedded relay catalog starting at `offset`.
-#[must_use]
-pub fn catalog_relay_hints(
-    secret: &[u8],
-    context_id: &[u8; 16],
-    offset: usize,
-    count: usize,
-) -> Vec<String> {
-    if count == 0 {
-        return Vec::new();
-    }
-    let entries = if offset == 0 {
-        default_relays(count)
-    } else {
-        let all = embedded_relays();
-        if all.is_empty() {
-            return Vec::new();
-        }
-        (0..count.min(all.len()))
-            .filter_map(|i| all.get((offset + i) % all.len()))
-            .collect()
-    };
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if let Some(hint) = deterministic_ws_relay_hint(secret, context_id, &entry.url) {
-            if !out.contains(&hint) {
-                out.push(hint);
-            }
-        }
-    }
-    out
-}
-
-/// Expand explicit addresses, discovered LAN peers, and saved relays into a
-/// deduplicated candidate list covering all four fallback stages for a vault or
-/// account route.
+/// Collect ordered deduplicated connection candidates across discovered LAN
+/// addresses, explicit peer hints, and configured `ZPRY` relays.
 #[must_use]
 pub fn expand_chain_hints(
     explicit: &[String],
     discovered: &[String],
     relays: &[String],
     secret: &[u8],
-    context_id: &[u8; 16],
-    catalog_count: usize,
+    context_id: &[u8],
 ) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+    let mut out = Vec::new();
     let mut push_unique = |candidate: String| {
-        if !out.contains(&candidate) {
+        if !candidate.trim().is_empty() && !out.contains(&candidate) {
             out.push(candidate);
         }
     };
-
-    for addr in discovered.iter().chain(explicit.iter()) {
+    for addr in discovered {
         push_unique(addr.clone());
     }
-
+    for addr in explicit {
+        push_unique(addr.clone());
+    }
     for relay_text in relays {
         push_unique(relay_text.clone());
-        if let Ok(parsed) = relay_text.parse::<RelayHint>() {
-            if let Some(det) = deterministic_relay_hint(secret, context_id, parsed.relay) {
-                push_unique(det.to_string());
-            }
-            if let Some(ws_det) =
-                deterministic_ws_relay_hint(secret, context_id, &parsed.relay.to_string())
-            {
-                push_unique(ws_det);
-            }
-        } else if let Some(ws_det) = deterministic_ws_relay_hint(secret, context_id, relay_text) {
-            push_unique(ws_det);
+        if let Ok(parsed) = relay_text.parse::<RelayHint>()
+            && let Some(det) = deterministic_relay_hint(secret, context_id, parsed.relay)
+        {
+            push_unique(det.to_string());
+        } else if let Ok(addr) = relay_text.parse::<SocketAddr>()
+            && let Some(det) = deterministic_relay_hint(secret, context_id, addr)
+        {
+            push_unique(det.to_string());
         }
     }
-
-    for cat in catalog_relay_hints(secret, context_id, 0, catalog_count) {
-        push_unique(cat);
-    }
-
     out
 }
 
-impl Service {
-    /// Hold a deterministic or random slot on `relay` using WebSocket upgrade
-    /// framing (`ws://`), falling back to raw `ZPRY` TCP if needed.
-    pub fn hold_relay_ws<P: Provider>(
-        &self,
-        provider: Arc<P>,
-        relay: SocketAddr,
-        fixed_slot: Option<[u8; 16]>,
-    ) -> bool {
-        let (Some(runtime), Ok(cookies)) = (self.runtime.as_ref(), CookieSecret::generate()) else {
-            return false;
-        };
-        runtime.spawn(hold_ws_loop(
-            relay,
-            fixed_slot,
-            provider,
-            Arc::new(cookies),
-            Arc::clone(&self.shared),
-            self.sender.clone(),
-        ));
-        true
-    }
-}
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
+mod tests {
+    use super::{deterministic_relay_hint, expand_chain_hints};
 
-async fn hold_ws_loop<P: Provider>(
-    relay: SocketAddr,
-    fixed_slot: Option<[u8; 16]>,
-    provider: Arc<P>,
-    cookies: Arc<CookieSecret>,
-    shared: Arc<Shared>,
-    events: Sender<Event>,
-) {
-    let host = relay.ip().to_string();
-    let mut backoff = Duration::from_secs(1);
-    loop {
-        let slot = if let Some(chosen) = fixed_slot {
-            chosen
-        } else {
-            let Ok(random) = p2p_core::relay_random() else {
-                return;
-            };
-            random
-        };
-        let reserved = match reserve_ws(relay, &host, slot).await {
-            Ok(pair) => Ok(pair),
-            Err(_) => reserve(relay, slot).await,
-        };
-        if let Ok((stream, granted)) = reserved {
-            backoff = Duration::from_secs(1);
-            let hint = RelayHint { relay, slot };
-            if events.send(Event::Relayed(hint)).is_err() {
-                return;
-            }
-            let wait = Duration::from_secs(u64::from(granted.ttl_s / 3).max(1));
-            keep_ws(
-                relay,
-                stream,
-                wait,
-                IpAddr::V6(Ipv6Addr::from(slot)),
-                &provider,
-                &cookies,
-                &shared,
-                &events,
-            )
-            .await;
-        }
-        let jitter = p2p_core::relay_random().map_or(0, |bytes| {
-            let [first, ..] = bytes;
-            u64::from(first) * 4
-        });
-        sleep(backoff + Duration::from_millis(jitter)).await;
-        backoff = (backoff * 2).min(MAX_BACKOFF);
+    #[test]
+    fn deterministic_relay_hint_is_stable_for_both_peers() {
+        let relay = "198.51.100.10:7447".parse().unwrap();
+        let a = deterministic_relay_hint(&[0x11; 32], &[0x22; 16], relay).unwrap();
+        let b = deterministic_relay_hint(&[0x11; 32], &[0x22; 16], relay).unwrap();
+        let c = deterministic_relay_hint(&[0x11; 32], &[0x33; 16], relay).unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a.slot, c.slot);
     }
-}
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "internal relay control loop passes shared service handles"
-)]
-async fn keep_ws<P: Provider>(
-    relay: SocketAddr,
-    stream: TcpStream,
-    every: Duration,
-    key: IpAddr,
-    provider: &Arc<P>,
-    cookies: &Arc<CookieSecret>,
-    shared: &Arc<Shared>,
-    events: &Sender<Event>,
-) {
-    let (mut read, mut write) = tokio::io::split(stream);
-    let (offers, mut inbox) = mpsc::channel::<Option<[u8; 16]>>(8);
-    let reader = tokio::spawn(async move {
-        while let Ok((ty, payload)) = receive(&mut read, RelaySide::Relay, every * 4).await {
-            match ty {
-                RelayType::Incoming => {
-                    let Ok(conn_id) = decode_incoming(&payload) else {
-                        break;
-                    };
-                    if offers.send(Some(conn_id)).await.is_err() {
-                        return;
-                    }
-                }
-                RelayType::Pong => {}
-                _ => break,
-            }
-        }
-        let _ = offers.send(None).await;
-    });
-    let mut token = 0u64;
-    let host = relay.ip().to_string();
-    loop {
-        match timeout(every, inbox.recv()).await {
-            Ok(Some(Some(conn_id))) => {
-                let (provider, cookies, shared, events, host) = (
-                    Arc::clone(provider),
-                    Arc::clone(cookies),
-                    Arc::clone(shared),
-                    events.clone(),
-                    host.clone(),
-                );
-                tokio::spawn(async move {
-                    if let Ok(tcp) = accept_ws(relay, &host, conn_id).await {
-                        spawn_relayed(tcp, key, provider, cookies, shared, events);
-                    }
-                });
-            }
-            Ok(Some(None) | None) => break,
-            Err(_) => {
-                token = token.wrapping_add(1);
-                let ping = token.to_be_bytes();
-                if send(&mut write, RelaySide::Client, RelayType::Ping, &ping)
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }
+    #[test]
+    fn expand_chain_hints_preserves_three_stages() {
+        let out = expand_chain_hints(
+            &["93.184.216.34:7447".to_owned()],
+            &["192.168.1.10:7447".to_owned()],
+            &["198.51.100.10:7447".to_owned()],
+            &[0x55; 32],
+            &[0x66; 16],
+        );
+        assert_eq!(out.first().map(String::as_str), Some("192.168.1.10:7447"));
+        assert_eq!(out.get(1).map(String::as_str), Some("93.184.216.34:7447"));
+        assert!(out.len() >= 3);
     }
-    reader.abort();
 }

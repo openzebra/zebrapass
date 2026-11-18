@@ -2,8 +2,8 @@
 //! it, serving it to the account's other devices, pulling what this device
 //! lacks from them, and applying what they send.
 
-use local::{load_personal_peers, Listen};
-use p2p_net::{personal_view, Dialing, Policy};
+use local::{Listen, load_personal_peers};
+use p2p_net::{Dialing, Policy, personal_view};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::unlocked::Unlocked;
@@ -57,31 +57,20 @@ pub fn pull_personal(p2p: &P2p, vault: &Vault) {
     if explicit.is_empty() && p2p.discovered.is_empty() && p2p.relays.is_empty() {
         return;
     }
-    let addresses = crate::app::p2p::personal_candidates(p2p, &explicit, 0);
+    let addresses = crate::app::p2p::personal_candidates(p2p, &explicit);
     if addresses.is_empty() {
         return;
     }
-    let parser = Dialing::default();
     let dialing = Dialing {
         policy: Policy { loopback },
         trusted: addresses
             .iter()
             .filter_map(|text| {
-                text.parse()
-                    .ok()
-                    .or_else(|| {
-                        text.parse::<p2p_net::RelayHint>()
-                            .ok()
-                            .map(|hint| hint.relay)
-                    })
-                    .or_else(|| match parser.target(text) {
-                        Some(p2p_net::Target::Catalog(cat)) => cat
-                            .host
-                            .parse::<std::net::IpAddr>()
-                            .ok()
-                            .map(|ip| std::net::SocketAddr::new(ip, cat.port)),
-                        _ => None,
-                    })
+                text.parse().ok().or_else(|| {
+                    text.parse::<p2p_net::RelayHint>()
+                        .ok()
+                        .map(|hint| hint.relay)
+                })
             })
             .collect(),
     };
@@ -125,6 +114,7 @@ impl Unlocked {
             return;
         }
         self.refresh();
+        self.discover_new_shared_refs(ctx);
         ctx.toast(
             Tone::Info,
             format!("{applied} updated from your other device."),

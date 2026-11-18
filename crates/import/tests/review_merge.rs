@@ -11,9 +11,9 @@
 
 use std::path::PathBuf;
 
-use import::{expand_home, inspect, into_session, load, Credentials, FileHint, Review, Source};
+use import::{Credentials, FileHint, Review, Source, expand_home, inspect, into_session, load};
 use record::{Document, TAG_TITLE};
-use session::{create, list_records, open_record, BodyAlg, KdfProfile};
+use session::{BodyAlg, KdfProfile, create, list_records, open_record};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

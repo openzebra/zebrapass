@@ -3,15 +3,15 @@
 //! limits are enforced while typing, before any buffer grows.
 
 use record::{
-    Document, ValueType, MAX_CUSTOM_NAME, MAX_DOC_LEN, MAX_FIELDS, TAG_EMAIL, TAG_NOTES,
-    TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL, TAG_USERNAME,
+    Document, MAX_CUSTOM_NAME, MAX_DOC_LEN, MAX_FIELDS, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD,
+    TAG_TITLE, TAG_TOTP, TAG_URL, TAG_USERNAME, ValueType,
 };
 
 use crate::secure::reveal::RevealGuard;
 use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
 use crate::vault::records::{
-    custom_text, next_custom_tag, standard_label, CUSTOM_FAVORITE, CUSTOM_TAGS,
+    CUSTOM_FAVORITE, CUSTOM_TAGS, custom_text, next_custom_tag, standard_label,
 };
 
 /// Largest value of one field (the wire length prefix is a `u16`).
@@ -455,14 +455,12 @@ impl EditorState {
 
     /// Put a generated value into the focused secret field.
     pub fn fill_generated(&mut self, value: &[u8]) {
-        if let Some((index, Part::Value)) = self.focused() {
-            if let Some(Value::Secret(input)) =
+        if let Some((index, Part::Value)) = self.focused()
+            && let Some(Value::Secret(input)) =
                 self.fields.get_mut(index).map(|field| &mut field.value)
-            {
-                if input.set(value) {
-                    self.dirty = true;
-                }
-            }
+            && input.set(value)
+        {
+            self.dirty = true;
         }
     }
 

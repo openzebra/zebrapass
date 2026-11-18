@@ -86,12 +86,11 @@ async fn pump(
         if !budget.take(read) {
             return Ended::Cut;
         }
-        if let Some(tap) = state.tap.as_ref() {
-            if let Ok(mut seen) = tap.lock() {
-                if seen.len() < (64 << 20) {
-                    seen.extend_from_slice(chunk);
-                }
-            }
+        if let Some(tap) = state.tap.as_ref()
+            && let Ok(mut seen) = tap.lock()
+            && seen.len() < (64 << 20)
+        {
+            seen.extend_from_slice(chunk);
         }
         sleep(budget.pace(read).max(state.pace(read))).await;
         if timeout(idle, to.write_all(chunk))

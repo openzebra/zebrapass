@@ -5,25 +5,27 @@
 //! Then this device's own factor is enrolled.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use seed::SeedPhrase;
 use session::KdfProfile;
+use zeroize::Zeroizing;
 
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
-use crate::app::flows::editing::{edit_secret, edit_text, printable, Edit};
+use crate::app::flows::editing::{Edit, edit_secret, edit_text, printable};
 use crate::app::flows::enroll::{EnrollEvent, EnrollState};
 pub use crate::app::flows::restore_field::RestoreField;
 use crate::app::flows::unlock::MAX_PASSPHRASE;
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::app::worker::Job;
-use crate::secure::phrase_input::{secret_string, PhraseInput, Typed};
+use crate::secure::phrase_input::{PhraseInput, Typed, secret_string};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::input::TextInput;
-use crate::vault::adopt::Held;
+use crate::vault::adopt::{Held, HeldFactor};
 use crate::vault::create::{Enrollment, RestoreSource, RestoreVault};
 use crate::vault::factors::presence;
 use crate::vault::limits::{MAX_PATH_INPUT, MAX_VAULT_NAME};
@@ -70,9 +72,9 @@ pub struct RestoreState {
     pub source_factors: Option<usize>,
     /// Last problem.
     pub error: Option<&'static str>,
-    /// The password enrolled for an empty restore, kept so the account's
-    /// vault can be opened with it once another device is found.
-    pub held: Option<Held>,
+    /// Credentials kept in memory for an empty restore until the account's
+    /// vault arrives and enrolls this device's own factor.
+    pub held: Option<Arc<Held>>,
 }
 
 impl RestoreState {
@@ -116,13 +118,21 @@ impl RestoreState {
         !self.source.value().trim().is_empty() && self.source_factors.is_none()
     }
 
-    /// Re-read the wrap directory at `source`. Unauthenticated: this only
-    /// tells the user whether the path points at a vault.
+    /// Re-read the wrap directory (or backup header) at `source`. Unauthenticated:
+    /// this only tells the user whether the path points at a vault or backup.
     fn check_source(&mut self) {
         let path = self.source.value().trim();
-        self.source_factors = (!path.is_empty())
-            .then(|| read_directory(Path::new(path)).ok())
-            .flatten()
+        if path.is_empty() {
+            self.source_factors = None;
+            return;
+        }
+        let target = Path::new(path);
+        if is_zpbk_file(target) {
+            self.source_factors = Some(1);
+            return;
+        }
+        self.source_factors = read_directory(target)
+            .ok()
             .map(|directory| directory.factors.len());
     }
 
@@ -291,14 +301,18 @@ impl RestoreState {
     }
 
     /// Where the vault comes from, and whether its file already has a
-    /// password factor. A typed file must be a vault; without one this
-    /// device starts empty and the network brings the vault in.
+    /// password factor. A typed file must be a vault or `.zpbackup` bundle;
+    /// without one this device starts empty and sync brings the vault in.
     fn resolve_source(&mut self) -> Option<(RestoreSource, bool)> {
         let path = self.source.value().trim();
         if path.is_empty() {
             return Some((RestoreSource::Empty, false));
         }
-        let Ok(directory) = read_directory(Path::new(path)) else {
+        let target = Path::new(path);
+        if is_zpbk_file(target) {
+            return Some((RestoreSource::File(PathBuf::from(path)), false));
+        }
+        let Ok(directory) = read_directory(target) else {
             self.error = Some("No ZebraPass vault file at that path.");
             return None;
         };
@@ -311,7 +325,16 @@ impl RestoreState {
             return;
         };
         self.held = match (&source, &factor) {
-            (RestoreSource::Empty, Enrollment::Password(password)) => Some(Held::new(password)),
+            (RestoreSource::Empty, Enrollment::Password(password)) => Some(Held::from_phrase(
+                phrase.seed(),
+                KdfProfile::Balanced,
+                HeldFactor::Password(Zeroizing::new(password.to_vec())),
+            )),
+            (RestoreSource::Empty, Enrollment::Device(pin, profile)) => Some(Held::from_phrase(
+                phrase.seed(),
+                KdfProfile::Balanced,
+                HeldFactor::DevicePin(Zeroizing::new(pin.to_vec()), *profile),
+            )),
             _ => None,
         };
         let request = RestoreVault {
@@ -333,4 +356,13 @@ impl RestoreState {
         self.error = Some(message);
         self.enroll = EnrollState::new(false);
     }
+}
+
+fn is_zpbk_file(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).is_ok() && magic == local::BACKUP_MAGIC
 }

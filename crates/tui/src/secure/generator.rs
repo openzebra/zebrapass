@@ -92,11 +92,7 @@ impl CharSets {
     pub const fn toggle(self, bit: u8) -> Self {
         let next = Self(self.0 ^ bit);
         let classes = Self::LOWER | Self::UPPER | Self::DIGITS | Self::SYMBOLS;
-        if next.0 & classes == 0 {
-            self
-        } else {
-            next
-        }
+        if next.0 & classes == 0 { self } else { next }
     }
 }
 
@@ -330,7 +326,7 @@ mod tests {
         reason = "tests may unwrap and index"
     )]
 
-    use super::{alphabet, generate, random_below, CharSets, GenMode, GenSpec};
+    use super::{CharSets, GenMode, GenSpec, alphabet, generate, random_below};
 
     #[test]
     fn chars_respect_length_and_alphabet() {

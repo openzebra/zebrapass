@@ -7,14 +7,14 @@
 //! guard against damage. What authenticates it is the account fingerprint,
 //! which the receiver compares with the owner out loud.
 
-use anyhow::{anyhow, Result};
-use pq::{sync_sign, sync_verify, CONTACT_CTX, SYNC_SIG_LEN, SYNC_VK_LEN};
-use session::{frame_parts, DeviceCert, DeviceSignKey};
+use anyhow::{Result, anyhow};
+use pq::{CONTACT_CTX, SYNC_SIG_LEN, SYNC_VK_LEN, sync_sign, sync_verify};
+use session::{DeviceCert, DeviceSignKey, frame_parts};
 use sha2::{Digest, Sha256};
 use syncwire::reader::Reader;
-use syncwire::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use syncwire::{CERT_WIRE_LEN, decode_cert, encode_cert};
 
-use crate::fingerprint::{account_fingerprint, Fingerprint};
+use crate::fingerprint::{Fingerprint, account_fingerprint};
 use crate::text;
 
 const DOMAIN_CARD: &[u8] = b"brby/v2/contact-card";

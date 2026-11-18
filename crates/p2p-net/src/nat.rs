@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use local::never_dialable;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{lookup_host, TcpStream, UdpSocket};
+use tokio::net::{TcpStream, UdpSocket, lookup_host};
 use tokio::time::{sleep, timeout};
 
 use crate::interfaces::{default_gateways, local_ips};
@@ -31,7 +31,7 @@ const MAX_STUN_PACKET: usize = 548;
 const MAX_UPNP_RESPONSE: usize = 8192;
 const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 const LEASE_SECONDS: u32 = 3600;
-const REFRESH_INTERVAL: Duration = Duration::from_secs(1800);
+const REFRESH_INTERVAL: Duration = Duration::from_mins(30);
 const STUN_SERVERS: [&str; 3] = [
     "stun.cloudflare.com:3478",
     "stun.l.google.com:19302",
@@ -406,10 +406,10 @@ async fn http_request(
 async fn discover_wan_endpoint(internal_port: u16) -> Option<SocketAddr> {
     for gw in default_gateways() {
         let gw_addr = SocketAddr::new(IpAddr::V4(gw), NAT_PMP_PORT);
-        if let Some(mapped) = probe_nat_pmp_gateway(gw_addr, internal_port).await {
-            if !ExtFilter::rejects(mapped.ip()) {
-                return Some(mapped);
-            }
+        if let Some(mapped) = probe_nat_pmp_gateway(gw_addr, internal_port).await
+            && !ExtFilter::rejects(mapped.ip())
+        {
+            return Some(mapped);
         }
     }
     if let Some(mapped) = try_upnp_igd(internal_port).await {
@@ -433,10 +433,10 @@ async fn discover_wan_endpoint(internal_port: u16) -> Option<SocketAddr> {
 
 async fn nat_loop(port: u16, events: Sender<Event>) {
     loop {
-        if let Some(wan) = discover_wan_endpoint(port).await {
-            if events.send(Event::Observed(wan)).is_err() {
-                return;
-            }
+        if let Some(wan) = discover_wan_endpoint(port).await
+            && events.send(Event::Observed(wan)).is_err()
+        {
+            return;
         }
         sleep(REFRESH_INTERVAL).await;
     }

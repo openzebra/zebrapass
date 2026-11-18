@@ -3,11 +3,11 @@
 
 use std::time::Duration;
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::home::{Filter, Pane};
@@ -15,7 +15,7 @@ use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
 use crate::ui::layout::Breakpoint;
 use crate::ui::screens::detail;
-use crate::ui::screens::p2p_status::{summary, Light};
+use crate::ui::screens::p2p_status::{Light, summary};
 use crate::ui::widgets::chrome::row_style;
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::list;
@@ -168,13 +168,23 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
             detail::draw_pane(frame, detail_area, state, ctx);
         }
         Breakpoint::Medium => {
-            let [records, detail_area] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Min(30)]).areas(body);
-            draw_list(frame, records, state, ctx);
-            detail::draw_pane(frame, detail_area, state, ctx);
+            if state.home.pane == Pane::Filters {
+                let [filters, records] =
+                    Layout::horizontal([Constraint::Length(22), Constraint::Min(30)]).areas(body);
+                draw_filters(frame, filters, state, ctx);
+                draw_list(frame, records, state, ctx);
+            } else {
+                let [records, detail_area] =
+                    Layout::horizontal([Constraint::Percentage(50), Constraint::Min(30)])
+                        .areas(body);
+                draw_list(frame, records, state, ctx);
+                detail::draw_pane(frame, detail_area, state, ctx);
+            }
         }
         Breakpoint::Narrow => {
-            if state.home.stacked || state.home.pane == Pane::Detail {
+            if state.home.pane == Pane::Filters {
+                draw_filters(frame, body, state, ctx);
+            } else if state.home.stacked || state.home.pane == Pane::Detail {
                 detail::draw_pane(frame, body, state, ctx);
             } else {
                 draw_list(frame, body, state, ctx);

@@ -8,13 +8,13 @@
     reason = "tests may unwrap and index"
 )]
 
-use frame::{seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
+use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION, seal};
 use kdf::frame_key;
 use record::{Document, TAG_TITLE};
 use session::{
-    accept_peer_frame, create, frontier, latest_frame, list_records, open_record, unlock,
-    unlock_with_key, write_record, write_vault_meta, BodyAlg, KdfProfile, SessionError,
-    UnlockCreds, VaultFile,
+    BodyAlg, KdfProfile, SessionError, UnlockCreds, VaultFile, accept_peer_frame, create, frontier,
+    latest_frame, list_records, open_record, unlock, unlock_with_key, write_record,
+    write_vault_meta,
 };
 
 const SEED: [u8; 64] = [5; 64];
@@ -123,10 +123,12 @@ fn the_vaults_own_record_zero_is_never_taken_from_a_peer() {
         refused.downcast_ref::<SessionError>(),
         Some(&SessionError::HeaderMismatch)
     );
-    assert!(frontier(&first)
-        .unwrap()
-        .iter()
-        .all(|row| row.record_id != 0));
+    assert!(
+        frontier(&first)
+            .unwrap()
+            .iter()
+            .all(|row| row.record_id != 0)
+    );
     assert_eq!(list_records(&second).unwrap().len(), 1);
 }
 

@@ -6,8 +6,8 @@ use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::editing::edit_secret;
 use crate::app::flows::gate::WelcomeState;
-use crate::app::flows::unlock::{Mode, UnlockFocus, UnlockState, REVEAL_PASSWORD};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::flows::unlock::{Mode, REVEAL_PASSWORD, UnlockFocus, UnlockState};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::{Nav, Screen};
 use crate::ui::widgets::toast::Tone;
 

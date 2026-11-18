@@ -150,7 +150,7 @@ impl Hold {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Hold, HOLD_TIME};
+    use super::{HOLD_TIME, Hold};
 
     #[test]
     fn true_hold_fires_after_the_hold_time_and_release_cancels() {

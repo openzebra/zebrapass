@@ -19,15 +19,15 @@ use crossterm::event::KeyCode;
 use memberlog::Role;
 use record::{Document, TAG_TITLE};
 use session::write_record;
+use tui::App;
 use tui::app::flows::home::Filter;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
-use tui::App;
 
 use common::{
-    app, keep_to_this_device, make_vault, press, render, temp_dir, tick, type_text, unlock, wait,
-    PASSWORD,
+    PASSWORD, app, keep_to_this_device, make_vault, press, render, temp_dir, tick, type_text,
+    unlock, wait,
 };
 
 fn state(app: &App) -> &Unlocked {

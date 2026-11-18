@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use kdf::KdfProfile;
 use local::{
-    device_key_info, open_device_key, seal_device_key, DeviceKey, DeviceKeyInfo,
-    DEVICE_KEY_FILE_LEN,
+    DEVICE_KEY_FILE_LEN, DeviceKey, DeviceKeyInfo, device_key_info, open_device_key,
+    seal_device_key,
 };
 
 const VAULT: [u8; 16] = [7; 16];

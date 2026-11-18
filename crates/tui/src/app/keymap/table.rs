@@ -2,7 +2,7 @@
 
 use crossterm::event::KeyCode;
 
-use super::{ch, ctrl, key, Binding, Scope};
+use super::{Binding, Scope, ch, ctrl, key};
 use crate::app::action::Action;
 
 /// Every binding. The first match in a scope wins; `Global` is searched

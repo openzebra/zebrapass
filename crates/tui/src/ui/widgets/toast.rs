@@ -4,10 +4,10 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::ui::widgets::meter::bar;
@@ -81,7 +81,6 @@ impl Toasts {
     }
 
     /// Notices, oldest first.
-    #[must_use]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Toast> {
         self.items.iter()
     }

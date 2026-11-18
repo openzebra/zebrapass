@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use local::{Listen, Offer, SyncIdentity};
 use p2p_net::{
-    reachable_hints, BeaconConfig, BeaconIdentity, Event, FetchError, Service, SharedProvider,
+    BeaconConfig, BeaconIdentity, Event, FetchError, Service, SharedProvider, reachable_hints,
 };
 use session::MAX_HINTS;
 
@@ -190,21 +190,6 @@ impl P2p {
             });
             self.service
                 .hold_relay_slot(Arc::clone(&self.provider), hint.relay, fixed);
-        } else if let Some(p2p_net::Target::Catalog(cat)) =
-            p2p_net::Dialing::default().target(first)
-        {
-            let Ok(ip) = cat.host.parse::<std::net::IpAddr>() else {
-                return;
-            };
-            let relay_addr = std::net::SocketAddr::new(ip, cat.port);
-            let fixed = (cat.slot != [0u8; 16]).then_some(cat.slot).or_else(|| {
-                let gate = self.identity.account_gate()?;
-                let route = kdf::account_route_id(gate).ok()?;
-                p2p_net::deterministic_relay_hint(gate.expose(), &route, relay_addr)
-                    .map(|det| det.slot)
-            });
-            self.service
-                .hold_relay_ws(Arc::clone(&self.provider), relay_addr, fixed);
         }
     }
 

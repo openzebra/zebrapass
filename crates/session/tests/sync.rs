@@ -15,11 +15,11 @@
 mod common;
 
 use aead::BodyAlg;
-use kdf::{client_id, KdfProfile};
+use kdf::{KdfProfile, client_id};
 use session::{
+    DEVICE_CERT_CTX, DeviceCert, DeviceSignKey, SYNC_VK_LEN, SyncRecord, UnlockCreds, VaultFile,
     check_fresh, create, export_record, issue_device_cert, newer, sign_record, unlock,
-    verify_sync_record, write_record, DeviceCert, DeviceSignKey, SyncRecord, UnlockCreds,
-    VaultFile, DEVICE_CERT_CTX, SYNC_VK_LEN,
+    verify_sync_record, write_record,
 };
 
 const SEED: [u8; 64] = [0x42; 64];
@@ -241,7 +241,7 @@ fn demo_doc() -> record::Document {
 
 // ---- Phase 5: the receive/apply side -------------------------------------
 
-use session::{accept_record, open_record, Accepted, TrustedKeys};
+use session::{Accepted, TrustedKeys, accept_record, open_record};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now_ms() -> u64 {
@@ -437,14 +437,16 @@ fn revoked_and_foreign_devices_are_rejected() {
         origin_of(&sync_rec),
         1,
     )];
-    assert!(accept_record(
-        &mut receiver,
-        &mut rfile,
-        &sync_rec,
-        &trust(&client, &root_vk, &good),
-        |_| None
-    )
-    .is_ok());
+    assert!(
+        accept_record(
+            &mut receiver,
+            &mut rfile,
+            &sync_rec,
+            &trust(&client, &root_vk, &good),
+            |_| None
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -628,15 +630,17 @@ fn certificate_binds_the_device_id() {
 #[test]
 fn zero_device_id_is_never_certified() {
     let (_, device_vk) = certified_device(0x41);
-    assert!(issue_device_cert(
-        &ROOT_SEED,
-        &client_id(&SEED).unwrap(),
-        &[0u8; 16],
-        &device_vk,
-        NOT_AFTER_MS,
-        3,
-    )
-    .is_err());
+    assert!(
+        issue_device_cert(
+            &ROOT_SEED,
+            &client_id(&SEED).unwrap(),
+            &[0u8; 16],
+            &device_vk,
+            NOT_AFTER_MS,
+            3,
+        )
+        .is_err()
+    );
 }
 
 /// A certified device cannot speak for another device's origin: the frame

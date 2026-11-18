@@ -1,7 +1,7 @@
 //! Static header. Magic and version are checked, not stored: a parsed header is version 2.
 
 use crate::limits::{
-    self, read_array, read_u16, read_u32, HEADER_LEN, KDF_ARGON2ID, MAGIC, VERSION, WRAP_AEGIS256,
+    self, HEADER_LEN, KDF_ARGON2ID, MAGIC, VERSION, WRAP_AEGIS256, read_array, read_u16, read_u32,
 };
 
 const OFF_VERSION: usize = 4;

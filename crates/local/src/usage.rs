@@ -2,7 +2,7 @@
 //! ordering the record list. Kept in the encrypted `local.meta`; never
 //! synced.
 
-use record::{Document, ValueType, TAG_USAGE};
+use record::{Document, TAG_USAGE, ValueType};
 
 use crate::limits::USAGE_MAX;
 
@@ -111,13 +111,13 @@ impl Usage {
 
     /// Number of records with usage.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// No record has usage.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -147,8 +147,10 @@ impl Usage {
             return Err(corrupted_length());
         }
         let entries = bytes
-            .chunks_exact(ENTRY_LEN)
-            .map(UsageEntry::try_from)
+            .as_chunks::<ENTRY_LEN>()
+            .0
+            .iter()
+            .map(|chunk| UsageEntry::try_from(chunk.as_slice()))
             .collect::<anyhow::Result<Vec<_>>>()?;
         if !entries.windows(2).all(|pair| match pair {
             [left, right] => left.id < right.id,
@@ -184,9 +186,9 @@ mod tests {
         reason = "tests may unwrap and index"
     )]
 
-    use record::{Document, ValueType, TAG_USAGE};
+    use record::{Document, TAG_USAGE, ValueType};
 
-    use super::{Usage, UsageEntry, DAY_MS, ENTRY_LEN};
+    use super::{DAY_MS, ENTRY_LEN, Usage, UsageEntry};
     use crate::limits::USAGE_MAX;
 
     const NOW: u64 = 1_800_000_000_000;

@@ -18,11 +18,11 @@ use std::time::{Duration, Instant};
 use local::SyncIdentity;
 use p2p_core::seal_beacon;
 use p2p_net::{
-    now_ms, personal_view, BeaconConfig, BeaconIdentity, Conn, Dialing, Event, FetchError, Policy,
-    Provider, Relay, RelayLimits, Service, SnapshotSource, VaultView,
+    BeaconConfig, BeaconIdentity, Conn, Dialing, Event, FetchError, Policy, Provider, Relay,
+    RelayLimits, Service, SnapshotSource, VaultView, now_ms, personal_view,
 };
 use secret::Secret;
-use syncwire::{encode_beacon, Beacon, RelayHint};
+use syncwire::{Beacon, RelayHint, encode_beacon};
 
 const SEED: [u8; 64] = [3; 64];
 
@@ -115,10 +115,9 @@ fn discovered_with_relays(
             vaults,
             relays,
         }) = service.events().recv_timeout(Duration::from_millis(100))
+            && wanted(&relays)
         {
-            if wanted(&relays) {
-                return Some((address, vaults, relays));
-            }
+            return Some((address, vaults, relays));
         }
     }
     None
@@ -246,9 +245,11 @@ fn a_node_that_is_not_listening_cannot_announce() {
     let provider = Arc::new(Node(device(&SEED, 1)));
     let service = Service::start(None, Arc::clone(&provider)).unwrap();
     let beacon = BeaconIdentity::new(&gate(&SEED), [1; 16]).unwrap();
-    assert!(service
-        .start_beacon(provider, beacon, config(free_udp_port(), 1, true))
-        .is_err());
+    assert!(
+        service
+            .start_beacon(provider, beacon, config(free_udp_port(), 1, true))
+            .is_err()
+    );
 }
 
 #[test]
@@ -264,11 +265,20 @@ fn a_node_that_holds_a_relay_slot_announces_it_to_the_account() {
         },
     )
     .unwrap();
-    assert!(a
-        .service
-        .hold_relay(Arc::clone(&a.provider), relay.local_addr()));
+    assert!(
+        a.service
+            .hold_relay(Arc::clone(&a.provider), relay.local_addr())
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
     let hint = loop {
-        if let Ok(Event::Relayed(hint)) = a.service.events().recv_timeout(Duration::from_secs(30)) {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            panic!("timed out waiting for Event::Relayed");
+        };
+        if let Ok(Event::Relayed(hint)) = a
+            .service
+            .events()
+            .recv_timeout(remaining.min(Duration::from_secs(2)))
+        {
             break hint;
         }
     };

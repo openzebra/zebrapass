@@ -50,7 +50,7 @@ impl Default for Limits {
             per_address_peers: 8,
             idle: Duration::from_secs(120),
             request: Duration::from_secs(60),
-            transfer: Duration::from_secs(15 * 60),
+            transfer: Duration::from_mins(15),
             max_snapshots: 2,
             max_failed: 32,
             max_requests: 16_384,
@@ -248,10 +248,12 @@ mod tests {
         });
         let held = tickets.begin(ip(1)).and_then(super::HandshakeSlot::promote);
         assert!(held.is_some());
-        assert!(tickets
-            .begin(ip(1))
-            .and_then(super::HandshakeSlot::promote)
-            .is_none());
+        assert!(
+            tickets
+                .begin(ip(1))
+                .and_then(super::HandshakeSlot::promote)
+                .is_none()
+        );
         assert!(
             tickets.begin(ip(1)).is_some(),
             "the handshake slot came back"

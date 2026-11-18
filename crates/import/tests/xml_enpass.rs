@@ -11,10 +11,10 @@
 
 use std::path::PathBuf;
 
-use import::{parse, read_file, Item, ItemKind, Parsed, Request, SkipReason, Source};
+use import::{Item, ItemKind, Parsed, Request, SkipReason, Source, parse, read_file};
 use record::{
-    ValueType, CUSTOM_FAVORITE, CUSTOM_TAGS, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TITLE,
-    TAG_TOTP, TAG_URL, TAG_USERNAME,
+    CUSTOM_FAVORITE, CUSTOM_TAGS, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL,
+    TAG_USERNAME, ValueType,
 };
 use zeroize::Zeroizing;
 
@@ -122,10 +122,12 @@ fn hostile_xml_is_refused() {
     let custom_ref = b"<KeePassFile><Root>&boom;</Root></KeePassFile>";
     assert!(run_bytes(custom_ref, Source::KeepassXml).is_err());
     let raw_dump = br#"<KeePassFile><Root><Group><Entry><String><Key>Password</Key><Value Protected="True">AAAA</Value></String></Entry></Group></Root></KeePassFile>"#;
-    assert!(run_bytes(raw_dump, Source::KeepassXml)
-        .unwrap_err()
-        .to_string()
-        .contains("encrypted values"));
+    assert!(
+        run_bytes(raw_dump, Source::KeepassXml)
+            .unwrap_err()
+            .to_string()
+            .contains("encrypted values")
+    );
     assert!(run_bytes(b"<html></html>", Source::KeepassXml).is_err());
     assert!(run_bytes(b"<KeePassFile><Root>", Source::KeepassXml).is_err());
 }

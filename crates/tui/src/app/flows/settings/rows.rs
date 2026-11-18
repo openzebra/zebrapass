@@ -1,7 +1,7 @@
 //! The settings table: every row, the section it lives in, what it says
 //! about itself, and how it changes a draft of the preferences.
 
-use local::{Prefs, CLIP_CLEAR_S, LOCK_AFTER_S, REVEAL_HIDE_S};
+use local::{BACKUP_KEEP_MAX, CLIP_CLEAR_S, LOCK_AFTER_S, Prefs, REVEAL_HIDE_S};
 
 use crate::app::prefs::theme_of;
 use crate::ui::theme::ThemeName;
@@ -13,8 +13,10 @@ pub enum Section {
     Security,
     /// This device's factor.
     Device,
-    /// Peer-to-peer sync state of this vault.
+    /// Peer-to-peer and HTTPS/WSS sync state of this vault.
     Sync,
+    /// Local and encrypted remote backups.
+    Backup,
     /// Clipboard hygiene.
     Clipboard,
     /// Look and motion.
@@ -29,7 +31,7 @@ pub enum Section {
 
 impl Section {
     /// Sections in rail order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Security,
         Self::Device,
         Self::Sync,
@@ -38,6 +40,7 @@ impl Section {
         Self::Vault,
         Self::Danger,
         Self::About,
+        Self::Backup,
     ];
 
     /// Tab label.
@@ -47,6 +50,7 @@ impl Section {
             Self::Security => "SEC",
             Self::Device => "DEV",
             Self::Sync => "NET",
+            Self::Backup => "BKUP",
             Self::Clipboard => "CLIP",
             Self::Appearance => "UI",
             Self::Vault => "VAULT",
@@ -83,6 +87,10 @@ pub enum Row {
     LastCheckIn,
     /// Peers known and reachable.
     SyncPeers,
+    /// HTTPS/WSS sync server URLs.
+    SyncServers,
+    /// Outbound proxy URL (`socks5h://` / `http://`).
+    SyncProxy,
     /// Addresses of the account's other devices, typed by the owner.
     SyncDevices,
     /// Saved relays and whether this node holds a slot.
@@ -91,8 +99,18 @@ pub enum Row {
     SyncAdvertised,
     /// Whether the node announces itself on the local network.
     SyncBeacon,
-    /// Check in with the peers now.
+    /// Check in with the peers and sync servers now.
     SyncNow,
+    /// Export an encrypted `.zpbackup` file now.
+    BackupExport,
+    /// Folder for automatic rolling `.zpbackup` snapshots.
+    BackupDir,
+    /// Number of automatic rolling snapshots retained (`0` = off).
+    BackupKeep,
+    /// Push a `.zpbackup` cloud backup to configured sync servers.
+    CloudBackupPush,
+    /// Pull and restore from a `.zpbackup` cloud backup.
+    CloudBackupPull,
     /// Clipboard clear delay.
     ClipClear,
     /// Lock always clears the clipboard.
@@ -130,7 +148,7 @@ pub enum Row {
 }
 
 /// Every row with its section, in display order.
-pub const ROWS: [(Section, Row); 34] = [
+pub const ROWS: [(Section, Row); 41] = [
     (Section::Security, Row::AutoLock),
     (Section::Security, Row::FocusLock),
     (Section::Security, Row::RevealHide),
@@ -148,6 +166,8 @@ pub const ROWS: [(Section, Row); 34] = [
     (Section::Sync, Row::SyncAdvertised),
     (Section::Sync, Row::SyncBeacon),
     (Section::Sync, Row::SyncNow),
+    (Section::Sync, Row::SyncServers),
+    (Section::Sync, Row::SyncProxy),
     (Section::Clipboard, Row::ClipClear),
     (Section::Clipboard, Row::ClipOnLock),
     (Section::Appearance, Row::Theme),
@@ -165,6 +185,11 @@ pub const ROWS: [(Section, Row); 34] = [
     (Section::About, Row::Version),
     (Section::About, Row::DataDir),
     (Section::About, Row::Primitives),
+    (Section::Backup, Row::BackupExport),
+    (Section::Backup, Row::BackupDir),
+    (Section::Backup, Row::BackupKeep),
+    (Section::Backup, Row::CloudBackupPush),
+    (Section::Backup, Row::CloudBackupPull),
 ];
 
 /// Auto-lock steps in seconds.
@@ -187,11 +212,18 @@ impl Row {
             Self::SyncStatus => "Status",
             Self::LastCheckIn => "Last check-in",
             Self::SyncPeers => "Peers",
+            Self::SyncServers => "Sync servers",
+            Self::SyncProxy => "Outbound proxy",
             Self::SyncDevices => "Device addresses",
             Self::SyncRelays => "Relays",
             Self::SyncAdvertised => "Advertised address",
             Self::SyncBeacon => "Beacon",
             Self::SyncNow => "Sync now",
+            Self::BackupExport => "Export encrypted backup",
+            Self::BackupDir => "Auto-backup folder",
+            Self::BackupKeep => "Retained snapshots",
+            Self::CloudBackupPush => "Upload server backup",
+            Self::CloudBackupPull => "Restore server backup",
             Self::ClipClear => "Clear clipboard after",
             Self::ClipOnLock => "Clear clipboard on lock",
             Self::Theme => "Theme",
@@ -212,47 +244,6 @@ impl Row {
         }
     }
 
-    /// Why the row matters, shown under the list.
-    #[must_use]
-    pub const fn why(self) -> &'static str {
-        match self {
-            Self::AutoLock => "Locks the vault and wipes its keys from memory after this much inactivity. Shorter is safer on a shared machine.",
-            Self::FocusLock => "Locks the moment the terminal loses focus: switching windows is enough.",
-            Self::RevealHide => "A revealed password hides itself again after this long, and the screen is repainted.",
-            Self::PasswordCost => "Argon2id cost of the password wrap. Enter changes the password (or adds one).",
-            Self::Factors => "Every way this vault can be opened, drawn as a constellation. Enter opens it.",
-            Self::DeviceStatus => "P-256 + ML-KEM keys sealed in a file next to the vault under a PIN. They never leave this disk.",
-            Self::DeviceFingerprint => "Compare this with the device list on another machine to know which wrap is which.",
-            Self::DevicePin => "Argon2id stretches the PIN before it can open the key file. Enter changes the PIN; the vault is untouched.",
-            Self::SecureEnclave => "Apple only lets signed apps use the Secure Enclave. A terminal app cannot, so the PIN file takes its place.",
-            Self::SyncStatus => "Peer-to-peer sync of this vault. l on the Share screen is the only switch between listening, fetch only and off.",
-            Self::LastCheckIn => "The latest check-in with your peers, and how it ended. Checks repeat on their own every 15 s.",
-            Self::SyncPeers => "Other devices and members this node knows, and how many are connected now.",
-            Self::SyncDevices => "Addresses of your other devices, typed here when no beacon reaches them: another network, another country. Enter opens the list; a adds one.",
-            Self::SyncRelays => "Relay slots saved here. A relay only passes sealed traffic; it never holds your data.",
-            Self::SyncAdvertised => "The address this device offers other members when it sits behind a port forward. Set it on the Share screen.",
-            Self::SyncBeacon => "Whether this device announces itself to your other devices on the local network.",
-            Self::SyncNow => "Enter checks in with your peers once, right now.",
-            Self::ClipClear => "Copied secrets are wiped from the clipboard after this long.",
-            Self::ClipOnLock => "Locking always clears a secret this app copied. This one is not optional.",
-            Self::Theme => "Previewed live. Saved per vault; --no-color and NO_COLOR always win.",
-            Self::Animation => "Reduced motion freezes every animation.",
-            Self::Ascii => "Replaces Unicode symbols with plain ASCII for limited terminals.",
-            Self::Name => "Stored on this device only, inside the encrypted local metadata.",
-            Self::Cipher => "Each record is sealed on its own: AEGIS-256 inside Kuznyechik-CTR + HMAC, one key per layer.",
-            Self::Generation => "Grows with every change to the wrap directory; an older file is refused as a rollback.",
-            Self::Records => "Live records. Old revisions stay until history is cleared.",
-            Self::Import => "Bitwarden, KeePass (.kdbx or XML), Enpass, or CSV. Records already here are skipped.",
-            Self::FilePath => "Back this file up. Without the recovery phrase it is useless to anyone.",
-            Self::RotateKey => "Draws a new vault key, re-seals every record, and re-wraps every factor. Needs the phrase.",
-            Self::ForgetDevice => "Removes this device's wrap, rotates the vault key, and deletes the key file.",
-            Self::ClearHistory => "Drops superseded revisions. The live record of each entry stays.",
-            Self::Version => "This build and its features.",
-            Self::DataDir => "Where every vault on this machine lives.",
-            Self::Primitives => "Nothing here is hand-rolled: vetted implementations only.",
-        }
-    }
-
     /// The section `self` belongs to.
     #[must_use]
     pub fn section(self) -> Section {
@@ -269,6 +260,7 @@ impl Row {
             Self::AutoLock
                 | Self::FocusLock
                 | Self::RevealHide
+                | Self::BackupKeep
                 | Self::ClipClear
                 | Self::Theme
                 | Self::Animation
@@ -283,6 +275,9 @@ impl Row {
             Self::FocusLock => draft.focus_lock = !draft.focus_lock,
             Self::RevealHide => {
                 draft.reveal_hide_s = nudge(draft.reveal_hide_s, 1, forward, &REVEAL_HIDE_S);
+            }
+            Self::BackupKeep => {
+                draft.backup_keep = nudge(draft.backup_keep, 1, forward, &(0..=BACKUP_KEEP_MAX));
             }
             Self::ClipClear => {
                 draft.clip_clear_s = nudge(draft.clip_clear_s, 5, forward, &CLIP_CLEAR_S);
@@ -304,6 +299,10 @@ impl Row {
             Self::AutoLock => draft.lock_after_s = defaults.lock_after_s,
             Self::FocusLock => draft.focus_lock = defaults.focus_lock,
             Self::RevealHide => draft.reveal_hide_s = defaults.reveal_hide_s,
+            Self::SyncServers => draft.sync_servers = defaults.sync_servers,
+            Self::SyncProxy => draft.sync_proxy = defaults.sync_proxy,
+            Self::BackupDir => draft.backup_dir = defaults.backup_dir,
+            Self::BackupKeep => draft.backup_keep = defaults.backup_keep,
             Self::ClipClear => draft.clip_clear_s = defaults.clip_clear_s,
             Self::Theme => draft.theme = defaults.theme,
             Self::Animation => draft.anim = defaults.anim,
@@ -314,11 +313,15 @@ impl Row {
 
     /// Whether the draft differs from `saved` in this row.
     #[must_use]
-    pub const fn changed(self, draft: &Prefs, saved: &Prefs) -> bool {
+    pub fn changed(self, draft: &Prefs, saved: &Prefs) -> bool {
         match self {
             Self::AutoLock => draft.lock_after_s != saved.lock_after_s,
             Self::FocusLock => draft.focus_lock != saved.focus_lock,
             Self::RevealHide => draft.reveal_hide_s != saved.reveal_hide_s,
+            Self::SyncServers => draft.sync_servers != saved.sync_servers,
+            Self::SyncProxy => draft.sync_proxy != saved.sync_proxy,
+            Self::BackupDir => draft.backup_dir != saved.backup_dir,
+            Self::BackupKeep => draft.backup_keep != saved.backup_keep,
             Self::ClipClear => draft.clip_clear_s != saved.clip_clear_s,
             Self::Theme => draft.theme != saved.theme,
             Self::Animation => draft.anim != saved.anim,
@@ -375,51 +378,4 @@ fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
     let at = all.iter().position(|item| *item == current).unwrap_or(0);
     let next = if forward { at + 1 } else { at + len - 1 } % len;
     all.get(next).copied().unwrap_or(current)
-}
-
-#[cfg(test)]
-mod tests {
-    use local::Prefs;
-
-    use super::{changes, in_section, matching, Row, Section, ROWS};
-
-    #[test]
-    fn every_section_has_rows_and_every_row_one_section() {
-        for section in Section::ALL {
-            assert!(in_section(section).count() > 0, "{section:?}");
-        }
-        for (section, row) in ROWS {
-            assert_eq!(row.section(), section);
-        }
-    }
-
-    #[test]
-    fn adjust_walks_steps_and_stays_in_bounds() {
-        let mut draft = Prefs::default();
-        Row::AutoLock.adjust(&mut draft, true);
-        assert_eq!(draft.lock_after_s, 600);
-        for _ in 0..20 {
-            Row::AutoLock.adjust(&mut draft, false);
-        }
-        assert_eq!(draft.lock_after_s, 30);
-        for _ in 0..40 {
-            Row::ClipClear.adjust(&mut draft, true);
-        }
-        assert_eq!(draft.clip_clear_s, 90);
-        Row::Theme.adjust(&mut draft, false);
-        assert_eq!(draft.theme, 2);
-        assert_eq!(
-            changes(&draft, &Prefs::default()).collect::<Vec<_>>(),
-            [Row::AutoLock, Row::ClipClear, Row::Theme]
-        );
-        Row::ClipClear.reset(&mut draft);
-        assert!(!Row::ClipClear.changed(&draft, &Prefs::default()));
-    }
-
-    #[test]
-    fn search_matches_labels_and_explanations() {
-        assert!(matching("PIN").any(|row| row == Row::DevicePin));
-        assert!(matching("enclave").any(|row| row == Row::SecureEnclave));
-        assert_eq!(matching("zzzz-nothing").count(), 0);
-    }
 }

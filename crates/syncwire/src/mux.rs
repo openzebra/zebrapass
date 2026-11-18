@@ -5,13 +5,13 @@
 //! type and direction before anything is allocated, and a type that is not
 //! allowed in a direction is an error, so the caller closes the connection.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
+use crate::ANNOUNCE_WIRE_LEN;
 use crate::limits::{
     CHUNK_LEN, MAX_BUNDLE, MAX_FRONTIER_PAYLOAD, MAX_PEERS_PAYLOAD, MUX_HEADER_LEN, REKEY_LEN,
 };
 use crate::mux_body::{Chunk, ChunkRequest, Extent, Ping, SnapHead, Want, WhoAmI};
-use crate::ANNOUNCE_WIRE_LEN;
 
 /// Every message type. There is no negotiation: the table is fixed.
 ///

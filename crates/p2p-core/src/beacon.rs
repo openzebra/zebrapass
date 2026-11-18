@@ -5,9 +5,9 @@
 //! authenticated data, so a beacon cannot be re-attributed, and one that is
 //! too old or too far ahead is not opened.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use frame::{
-    open, parse, seal, FrameMeta, ALG_CASCADE, CASCADE_OVERHEAD, HEADER_LEN, KIND_REVISION, TAG_LEN,
+    ALG_CASCADE, CASCADE_OVERHEAD, FrameMeta, HEADER_LEN, KIND_REVISION, TAG_LEN, open, parse, seal,
 };
 use secret::Secret;
 use syncwire::BEACON_WIRE_MAX;

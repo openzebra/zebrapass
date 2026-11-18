@@ -93,8 +93,8 @@ fn a_dialed_address_follows_the_advertise_rules_except_for_loopback_on_request()
 
 mod personal_peers {
     use local::{
-        add_manual_peer, load_personal_entries, load_personal_peers, remember_personal_peer,
-        remove_personal_peer, save_personal_peers, PERSONAL_PEERS_MAX,
+        PERSONAL_PEERS_MAX, add_manual_peer, load_personal_entries, load_personal_peers,
+        remember_personal_peer, remove_personal_peer, save_personal_peers,
     };
     use secret::Secret;
 
@@ -234,9 +234,11 @@ mod personal_peers {
         assert!(entries.iter().any(|entry| entry.manual));
         remember_personal_peer(&path, &k, "93.184.216.1:7447").unwrap();
         let entries = load_personal_entries(&path, &k, false).unwrap();
-        assert!(entries
-            .iter()
-            .any(|e| e.manual && &*e.address == "93.184.216.1:7447"));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.manual && &*e.address == "93.184.216.1:7447")
+        );
         remove_personal_peer(&path, &k, "93.184.216.1:7447").unwrap();
         let entries = load_personal_entries(&path, &k, false).unwrap();
         assert!(entries.iter().all(|entry| !entry.manual));
@@ -265,7 +267,7 @@ mod personal_peers {
 
 #[test]
 fn an_observed_address_is_offered_only_when_it_could_be_advertised() {
-    use local::{offer_observed, Offer};
+    use local::{Offer, offer_observed};
     let seen = |text: &str| text.parse().unwrap();
     let public = |text: &str| Offer::Public(text.into());
     assert_eq!(

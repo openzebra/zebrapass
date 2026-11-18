@@ -1,14 +1,14 @@
 //! Command palette and help overlays.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::palette::PaletteState;
-use crate::app::keymap::{in_scope, label, Scope, KEYMAP, SCOPES};
+use crate::app::keymap::{KEYMAP, SCOPES, Scope, in_scope, label};
 use crate::ui::layout::centered;
 use crate::ui::widgets::chrome::{modal, row_style};
 use crate::ui::widgets::field::text_line;
@@ -33,8 +33,7 @@ fn shortcut(action: Action, ctx: &Ctx) -> String {
         .iter()
         .find(|binding| binding.action == action && binding.scope == Scope::Home)
         .or_else(|| KEYMAP.iter().find(|binding| binding.action == action))
-        .map(|binding| label(binding.key, ctx.theme.ascii).into_owned())
-        .unwrap_or_default()
+        .map_or_default(|binding| label(binding.key, ctx.theme.ascii).into_owned())
 }
 
 /// Draw the palette.

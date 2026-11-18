@@ -13,7 +13,7 @@ mod common;
 use local::SyncIdentity;
 use seed::SeedPhrase;
 use session::KdfProfile;
-use tui::vault::create::{create, Enrollment, NewVault};
+use tui::vault::create::{Enrollment, NewVault, create};
 use zeroize::Zeroizing;
 
 #[test]
@@ -39,8 +39,10 @@ fn create_enrolls_a_device_identity_under_the_phrase_root() {
     identity.devices()[0].verify(identity.root_vk(), 0).unwrap();
 
     let bytes = std::fs::read(&path).unwrap();
-    assert!(!bytes
-        .windows(32)
-        .any(|window| window == root_seed.expose().as_slice()));
+    assert!(
+        !bytes
+            .windows(32)
+            .any(|window| window == root_seed.expose().as_slice())
+    );
     std::fs::remove_dir_all(&base).unwrap();
 }

@@ -1,10 +1,10 @@
 //! Wire forms of what two devices exchange to keep a shared vault in step:
 //! an attestation, an attestation with its frame (a bundle), and a frontier.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use session::{Attestation, FrontierEntry, SYNC_SIG_LEN};
 
-use crate::cert::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use crate::cert::{CERT_WIRE_LEN, decode_cert, encode_cert};
 use crate::limits::MAX_FRAME;
 use crate::reader::Reader;
 
@@ -161,9 +161,5 @@ pub fn decode_frontier(bytes: &[u8]) -> Result<Vec<FrontierEntry>> {
             .zip(pair.get(1))
             .is_some_and(|(a, b)| a.record_id < b.record_id)
     });
-    if ordered {
-        Ok(entries)
-    } else {
-        Err(invalid())
-    }
+    if ordered { Ok(entries) } else { Err(invalid()) }
 }

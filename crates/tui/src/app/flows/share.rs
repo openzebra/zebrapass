@@ -13,7 +13,7 @@ use crate::app::flows::editing::edit_text;
 use crate::app::flows::factors::palette_action;
 pub use crate::app::flows::share_leave::LeaveMode;
 use crate::app::flows::unlocked::{Unlocked, View};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::ui::input::TextInput;
 

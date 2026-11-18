@@ -12,7 +12,7 @@ use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::ceremony::{Ceremony, Verify, VerifyEvent};
 use crate::app::flows::editing::edit_text;
 use crate::app::flows::enroll::{EnrollEvent, EnrollState};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::app::worker::Job;
 use crate::cli::Flags;

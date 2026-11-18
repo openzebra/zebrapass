@@ -32,11 +32,13 @@ fn an_introduction_survives_the_record() {
     let doc = reference(Some(intro.clone())).to_document();
     let read = SharedRef::from_document(&doc).unwrap().unwrap();
     assert_eq!(read.introduction, Some(intro));
-    assert!(SharedRef::from_document(&reference(None).to_document())
-        .unwrap()
-        .unwrap()
-        .introduction
-        .is_none());
+    assert!(
+        SharedRef::from_document(&reference(None).to_document())
+            .unwrap()
+            .unwrap()
+            .introduction
+            .is_none()
+    );
 }
 
 #[test]

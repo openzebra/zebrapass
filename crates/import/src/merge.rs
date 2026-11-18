@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use record::{Document, TAG_TITLE};
-use session::{list_records, open_record, write_records_batch, Session, VaultFile};
+use session::{Session, VaultFile, list_records, open_record, write_records_batch};
 use zeroize::{Zeroize, Zeroizing};
 
 /// What a merge did.

@@ -9,9 +9,9 @@
 
 mod common;
 
-use common::{account, device, gate_key, node, run, Node, NOW, ROOT, VAULT};
+use common::{NOW, Node, ROOT, VAULT, account, device, gate_key, node, run};
 use p2p_core::suite::{FINISH_LEN, HELLO_LEN, MAX_HANDSHAKE_MSG, REPLY_FIXED_LEN, REPLY_LEN};
-use p2p_core::{Accept, CookieSecret, Initiator, Load, Responder, MAX_PLAINTEXT, OVERHEAD};
+use p2p_core::{Accept, CookieSecret, Initiator, Load, MAX_PLAINTEXT, OVERHEAD, Responder};
 
 fn start(dialer: &Node) -> (Initiator, Vec<u8>) {
     Initiator::start(&dialer.gate[0], NOW).unwrap()
@@ -212,9 +212,11 @@ fn a_reply_cannot_be_replayed_into_another_handshake() {
     let (_, hello_one) = start(&alice);
     let (_, reply_one) = reply_for(&bob, &hello_one);
     let (initiator_two, _) = start(&alice);
-    assert!(initiator_two
-        .finish(&alice.local(), &reply_one, NOW)
-        .is_err());
+    assert!(
+        initiator_two
+            .finish(&alice.local(), &reply_one, NOW)
+            .is_err()
+    );
 }
 
 #[test]

@@ -11,14 +11,14 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use local::parse_peer_address;
-use p2p_core::{open_beacon, seal_beacon, MAX_BEACON};
+use p2p_core::{MAX_BEACON, open_beacon, seal_beacon};
 use secret::Secret;
-use syncwire::{decode_beacon, encode_beacon, Beacon, MAX_BEACON_RELAYS, MAX_BEACON_VAULTS};
+use syncwire::{Beacon, MAX_BEACON_RELAYS, MAX_BEACON_VAULTS, decode_beacon, encode_beacon};
 use tokio::net::UdpSocket;
 use tokio::runtime::Runtime;
 use tokio::time::timeout;
@@ -132,8 +132,7 @@ async fn sealed_beacons<P: Provider>(
     let relays: Vec<syncwire::RelayHint> = shared
         .relay_hints
         .lock()
-        .map(|held| held.iter().take(MAX_BEACON_RELAYS).copied().collect())
-        .unwrap_or_default();
+        .map_or_default(|held| held.iter().take(MAX_BEACON_RELAYS).copied().collect());
 
     let mut primary_vaults = view_ids;
     let mut keys = vec![Secret::new(*identity.key.expose())];

@@ -13,12 +13,12 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use zeroize::Zeroize;
 
-use crate::app::ctx::Caps;
 use crate::app::App;
+use crate::app::ctx::Caps;
 use crate::cli::Config;
 use crate::secure::clipboard::osc52_likely;
 use crate::vault::discover::data_dir;

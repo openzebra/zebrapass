@@ -1,10 +1,10 @@
 //! Record detail: text fields in clear, secrets as fixed-width stripes until
 //! revealed. Also used, read-only, for historical revisions.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::home::{Detail, Pane, RowKind};
@@ -16,7 +16,7 @@ use crate::ui::screens::p2p_status::strip as strip_text;
 use crate::ui::widgets::chrome::ago;
 use crate::ui::widgets::list::fit;
 use crate::ui::widgets::meter::strength_spans;
-use crate::ui::widgets::stripes::{mask, MASK_CELLS};
+use crate::ui::widgets::stripes::{MASK_CELLS, mask};
 use crate::vault::create::unix_ms;
 
 /// Draw the detail pane of the home view.

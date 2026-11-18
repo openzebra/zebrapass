@@ -1,9 +1,9 @@
 //! Chip wrap: secure enclave P-256 hybrid with a software PQ half.
 
-use container::{encode_chip_entry, ChipWrap, StaticHeader};
+use container::{ChipWrap, StaticHeader, encode_chip_entry};
 use ec::{decode_pub, encode_pub, fresh_pair, shared};
-use kdf::{hkdf_sha512, INFO_CHIP_WRAP};
-use pq::{decrypt_shared, encrypt_shared, PQ_PK_LEN, PQ_SK_LEN};
+use kdf::{INFO_CHIP_WRAP, hkdf_sha512};
+use pq::{PQ_PK_LEN, PQ_SK_LEN, decrypt_shared, encrypt_shared};
 use secret::Secret;
 use zeroize::Zeroize;
 
@@ -41,7 +41,7 @@ pub struct ChipGrant {
 impl ChipGrant {
     /// Borrow the grant encoding.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 }
@@ -245,14 +245,14 @@ fn assemble_chip(
 )]
 mod tests {
     use container::{
-        StaticHeader, WrapEntry, BODY_AEGIS256, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN, KDF_T_MIN,
-        WRAP_AEGIS256,
+        BODY_AEGIS256, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN, KDF_T_MIN, StaticHeader,
+        WRAP_AEGIS256, WrapEntry,
     };
-    use pq::{keypair, PQ_PK_LEN};
+    use pq::{PQ_PK_LEN, keypair};
 
     use ec::{decode_pub, encode_pub, fresh_pair, shared};
 
-    use super::{open_chip, seal_chip, ChipKeys, ChipPublics};
+    use super::{ChipKeys, ChipPublics, open_chip, seal_chip};
 
     fn floor_header() -> StaticHeader {
         StaticHeader {
@@ -284,7 +284,7 @@ mod tests {
             pq_sk: kem_secret,
         };
         let (record, grant) = seal_chip(&header, &chip, &vk).unwrap();
-        assert!(!grant.as_bytes().is_empty());
+        assert_ne!(grant.as_bytes(), []);
         let WrapEntry::Chip(wrap) = WrapEntry::try_from(record.as_slice()).unwrap() else {
             panic!("expected a chip entry");
         };

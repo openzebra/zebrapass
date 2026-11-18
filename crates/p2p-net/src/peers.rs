@@ -8,12 +8,12 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use memberlog::MemberLog;
-use session::{DeviceCert, DeviceSignKey, PeerRecord, PEER_MAX_AGE_MS};
-use syncwire::{decode_peers, encode_peers, RelayHint, MAX_PEERS};
+use session::{DeviceCert, DeviceSignKey, PEER_MAX_AGE_MS, PeerRecord};
+use syncwire::{MAX_PEERS, RelayHint, decode_peers, encode_peers};
 
 use crate::dialable::{Dialing, Policy};
 use crate::io::now_ms;
@@ -65,8 +65,7 @@ impl PeerBook {
         let mut trusted: Vec<SocketAddr> = self
             .own
             .lock()
-            .map(|own| own.iter().filter_map(|hint| hint_addr(hint)).collect())
-            .unwrap_or_default();
+            .map_or_default(|own| own.iter().filter_map(|hint| hint_addr(hint)).collect());
         if let Ok(nets) = self.local_nets.lock() {
             for addr in nets.iter().copied() {
                 if !trusted.contains(&addr) {
@@ -75,10 +74,10 @@ impl PeerBook {
             }
         }
         for anchor in anchors {
-            if let Some(addr) = hint_addr(anchor) {
-                if !trusted.contains(&addr) {
-                    trusted.push(addr);
-                }
+            if let Some(addr) = hint_addr(anchor)
+                && !trusted.contains(&addr)
+            {
+                trusted.push(addr);
             }
         }
         trusted
@@ -128,7 +127,7 @@ impl PeerBook {
         sign: &DeviceSignKey,
     ) -> anyhow::Result<Vec<u8>> {
         let vault_id = *log.vault_id();
-        let own = self.own.lock().map(|own| own.clone()).unwrap_or_default();
+        let own = self.own.lock().map_or_default(|own| own.clone());
         let mut records = Vec::new();
         if !own.is_empty() {
             records.push(PeerRecord::sign(sign, cert, vault_id, own, now_ms())?);

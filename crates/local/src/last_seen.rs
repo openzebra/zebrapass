@@ -2,7 +2,7 @@
 //! rolled-back record from a peer is refused. Kept in the sealed sync
 //! identity file; never synced.
 
-use record::{Document, ValueType, SYNC_LAST_SEEN_PER_TAG, TAG_SYNC_LAST_SEEN_MIN};
+use record::{Document, SYNC_LAST_SEEN_PER_TAG, TAG_SYNC_LAST_SEEN_MIN, ValueType};
 
 use crate::limits::LAST_SEEN_MAX;
 
@@ -54,13 +54,13 @@ impl LastSeen {
 
     /// Number of records tracked.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// No record is tracked.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -89,7 +89,8 @@ impl LastSeen {
                 anyhow::bail!("corrupted length");
             }
             shards += 1;
-            for chunk in bytes.chunks_exact(ENTRY_LEN) {
+            let (chunks, _) = bytes.as_chunks::<ENTRY_LEN>();
+            for chunk in chunks {
                 let (id, revision) = chunk
                     .split_first_chunk::<4>()
                     .ok_or_else(|| anyhow::anyhow!("corrupted length"))?;

@@ -6,8 +6,8 @@
 )]
 
 use session::{
-    issue_device_cert, sync_verifying_key, DeviceCert, DeviceSignKey, PeerRecord, MAX_HINTS,
-    SYNC_VK_LEN,
+    DeviceCert, DeviceSignKey, MAX_HINTS, PeerRecord, SYNC_VK_LEN, issue_device_cert,
+    sync_verifying_key,
 };
 
 const NOW: u64 = 1_700_000_000_000;
@@ -60,9 +60,11 @@ fn a_fresh_record_from_its_account_verifies() {
 #[test]
 fn another_accounts_root_does_not_vouch_for_it() {
     let (bob, carol) = (person(2), person(3));
-    assert!(record(&bob, &["10.0.0.2:7447"], NOW)
-        .verify(&carol.root_vk, NOW)
-        .is_err());
+    assert!(
+        record(&bob, &["10.0.0.2:7447"], NOW)
+            .verify(&carol.root_vk, NOW)
+            .is_err()
+    );
 }
 
 #[test]
@@ -97,13 +99,15 @@ fn old_and_future_records_are_not_believed() {
 fn too_many_or_empty_addresses_are_not_signed() {
     let bob = person(2);
     let many = vec!["10.0.0.2:1"; MAX_HINTS + 1];
-    assert!(PeerRecord::sign(
-        &bob.key,
-        &bob.cert,
-        [9; 16],
-        many.into_iter().map(str::to_owned).collect(),
-        NOW
-    )
-    .is_err());
+    assert!(
+        PeerRecord::sign(
+            &bob.key,
+            &bob.cert,
+            [9; 16],
+            many.into_iter().map(str::to_owned).collect(),
+            NOW
+        )
+        .is_err()
+    );
     assert!(PeerRecord::sign(&bob.key, &bob.cert, [9; 16], vec![String::new()], NOW).is_err());
 }

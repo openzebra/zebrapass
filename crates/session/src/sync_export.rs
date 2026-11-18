@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::create::Session;
 use crate::error::SessionError;
 use crate::sync_msg::MSG_VERSION;
-use crate::sync_sig::{sign_record, verify_record, DeviceSignKey, SyncRecord, SYNC_VK_LEN};
+use crate::sync_sig::{DeviceSignKey, SYNC_VK_LEN, SyncRecord, sign_record, verify_record};
 
 /// True when a remote frame should replace the local one. Equal revisions
 /// tie-break on `(revision, origin_device)` at frame level; same revision

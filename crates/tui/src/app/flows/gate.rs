@@ -11,7 +11,7 @@ use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlock::UnlockState;
 use crate::app::screen::{Nav, Screen};
 use crate::ui::widgets::toast::Tone;
-use crate::vault::discover::{discover, from_file, VaultRef};
+use crate::vault::discover::{VaultRef, discover, from_file};
 use crate::vault::error::UnlockError;
 
 /// The first screen: the explicit vault, the first known vault, or welcome.
@@ -92,7 +92,7 @@ impl AlertState {
                     }
                     1 => self.restore(ctx),
                     _ => Nav::Quit,
-                }
+                };
             }
             _ => {}
         }

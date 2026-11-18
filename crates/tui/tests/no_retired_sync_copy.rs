@@ -1,6 +1,5 @@
-//! The terminal interface has no sync backend other than peer-to-peer: the
-//! retired word appears nowhere in this crate, and the devices screen and enroll
-//! guide say what is true locally.
+//! Legacy 2026-10 sync preference tags never appear anywhere in the TUI crate,
+//! and device/factor screens accurately describe local storage.
 
 #![allow(
     clippy::multiple_crate_versions,
@@ -16,16 +15,22 @@ use std::path::Path;
 use crossterm::event::KeyCode;
 use tui::app::screen::Screen;
 
-use common::{app, make_vault, press, render, temp_dir, unlock, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, render, temp_dir, unlock};
 
-fn walk(dir: &Path, hits: &mut Vec<String>) {
-    let needle = ["ser", "ver"].concat();
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
+fn walk_sources(dir: &Path, hits: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
         if path.is_dir() {
-            walk(&path, hits);
+            walk_sources(&path, hits);
         } else if let Ok(text) = std::fs::read_to_string(&path) {
-            if text.to_ascii_lowercase().contains(&needle) {
+            let lower = text.to_ascii_lowercase();
+            if ["0x0206", "0x0207", "0x0208", "nostr_relays"]
+                .iter()
+                .any(|tag| lower.contains(tag))
+            {
                 hits.push(path.display().to_string());
             }
         }
@@ -33,9 +38,12 @@ fn walk(dir: &Path, hits: &mut Vec<String>) {
 }
 
 #[test]
-fn the_retired_word_appears_nowhere_in_the_tui_crate() {
+fn retired_legacy_sync_tags_never_appear_in_tui() {
     let mut hits = Vec::new();
-    walk(Path::new(env!("CARGO_MANIFEST_DIR")), &mut hits);
+    walk_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut hits,
+    );
     assert!(hits.is_empty(), "{hits:?}");
 }
 

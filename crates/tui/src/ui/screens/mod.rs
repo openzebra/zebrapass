@@ -31,14 +31,14 @@ mod sync_upgrade;
 pub mod unlock;
 pub mod welcome;
 
-use ratatui::widgets::Block;
 use ratatui::Frame;
+use ratatui::widgets::Block;
 
+use crate::app::App;
 use crate::app::flows::dialog::Dialog;
 use crate::app::flows::palette::Overlay;
 use crate::app::flows::unlocked::View;
 use crate::app::screen::Screen;
-use crate::app::App;
 use crate::ui::layout::too_small;
 use crate::ui::widgets::{chrome, palette, toast};
 

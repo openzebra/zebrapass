@@ -1,12 +1,12 @@
 //! Master change, record rewrite, and vault-key rotation.
 
 use aead::BodyAlg;
-use container::{VaultFile, WrapEntry, KIND_CHIP, KIND_PRF};
+use container::{KIND_CHIP, KIND_PRF, VaultFile, WrapEntry};
 use frame::encode_frames;
 use secret::Secret;
-use wraps::{seal_prf, PrfPublics};
+use wraps::{PrfPublics, seal_prf};
 
-use crate::create::{encrypt_records, fold_log, fold_new_spans, next_generation, publish, Session};
+use crate::create::{Session, encrypt_records, fold_log, fold_new_spans, next_generation, publish};
 use crate::error::SessionError;
 use crate::rewrap::rewrap;
 use crate::wraps_rot::{replace_password, rotate_all};
@@ -29,10 +29,10 @@ pub fn change_master(
 ) -> anyhow::Result<()> {
     rewrap(session, file, |parsed, vk| {
         for entry in &parsed.entries {
-            if let WrapEntry::Prf(wrap) = entry {
-                if !prfs.iter().any(|(item, _)| item.id == wrap.id) {
-                    return Err(SessionError::PrfFactorRequired.into());
-                }
+            if let WrapEntry::Prf(wrap) = entry
+                && !prfs.iter().any(|(item, _)| item.id == wrap.id)
+            {
+                return Err(SessionError::PrfFactorRequired.into());
             }
         }
         let kept: Vec<WrapEntry<'_>> = parsed
@@ -43,11 +43,11 @@ pub fn change_master(
             .collect();
         let mut records = replace_password(&kept, &parsed.header, new_master, vk)?;
         for entry in &parsed.entries {
-            if let WrapEntry::Prf(wrap) = entry {
-                if let Some((publics, prf_out)) = prfs.iter().find(|(item, _)| item.id == wrap.id) {
-                    let (record, _grant) = seal_prf(&parsed.header, publics, prf_out, vk)?;
-                    records.push(record);
-                }
+            if let WrapEntry::Prf(wrap) = entry
+                && let Some((publics, prf_out)) = prfs.iter().find(|(item, _)| item.id == wrap.id)
+            {
+                let (record, _grant) = seal_prf(&parsed.header, publics, prf_out, vk)?;
+                records.push(record);
             }
         }
         Ok((records, ()))

@@ -4,7 +4,7 @@
     reason = "tests may unwrap and index"
 )]
 
-use p2p_core::{open_beacon, seal_beacon, BEACON_WINDOW_MS, MAX_BEACON};
+use p2p_core::{BEACON_WINDOW_MS, MAX_BEACON, open_beacon, seal_beacon};
 use secret::Secret;
 use syncwire::BEACON_WIRE_MAX;
 

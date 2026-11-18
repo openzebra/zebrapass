@@ -193,8 +193,8 @@ mod tests {
     use secret::Secret;
 
     use super::{
-        p2p_gate_key, p2p_key, p2p_relay_slot, shared_beacon_key, INFO_P2P_APP_I2R,
-        INFO_P2P_APP_R2I, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I,
+        INFO_P2P_APP_I2R, INFO_P2P_APP_R2I, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I, p2p_gate_key,
+        p2p_key, p2p_relay_slot, shared_beacon_key,
     };
 
     #[test]

@@ -5,7 +5,7 @@
 //! manual. They are hints: the handshake still decides who answers.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use local::{add_manual_peer, load_personal_entries, remove_personal_peer, Listen, PersonalPeer};
+use local::{Listen, PersonalPeer, add_manual_peer, load_personal_entries, remove_personal_peer};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog};

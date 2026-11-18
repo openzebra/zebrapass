@@ -2,9 +2,9 @@
 
 use crossterm::event::KeyEvent;
 
-use crate::app::action::{Action, Section, PALETTE};
+use crate::app::action::{Action, PALETTE, Section};
 use crate::app::flows::editing::edit_text;
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::ui::input::TextInput;
 use crate::vault::records::fuzzy_score;
 

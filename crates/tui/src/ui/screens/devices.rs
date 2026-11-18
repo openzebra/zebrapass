@@ -1,9 +1,9 @@
 //! Devices and trust.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::unlocked::Unlocked;
@@ -13,7 +13,7 @@ use crate::ui::screens::home::header;
 use crate::ui::widgets::chrome::{hint_bar, panel, pq_badge, row_style};
 use crate::ui::widgets::constellation::glyph;
 use crate::ui::widgets::fingerprint::{grouped_hex, stripe_print};
-use crate::vault::factors::{views, FactorKind};
+use crate::vault::factors::{FactorKind, views};
 
 /// Draw the device list.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, cursor: usize, ctx: &Ctx) {

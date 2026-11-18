@@ -8,8 +8,8 @@
     reason = "tests may unwrap, index, and panic"
 )]
 
-use import::{Draft, Item, ItemKind, Report, SkipReason, Slot, MAX_CUSTOM, MAX_FIELD, MAX_ITEMS};
-use record::{ValueType, CUSTOM_FAVORITE, CUSTOM_TAGS, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL};
+use import::{Draft, Item, ItemKind, MAX_CUSTOM, MAX_FIELD, MAX_ITEMS, Report, SkipReason, Slot};
+use record::{CUSTOM_FAVORITE, CUSTOM_TAGS, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL, ValueType};
 
 fn custom<'a>(item: &'a Item, name: &str) -> Option<&'a [u8]> {
     item.doc

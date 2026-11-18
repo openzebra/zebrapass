@@ -12,14 +12,14 @@
 mod common;
 
 use crossterm::event::KeyCode;
+use tui::App;
 use tui::app::flows::editor::{EditorState, Part, Value};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
-use tui::App;
 
 use common::{
-    add_records, app, make_vault, press, render, temp_dir, titles_of, type_text, unlock, wait,
-    PASSWORD,
+    PASSWORD, add_records, app, make_vault, press, render, temp_dir, titles_of, type_text, unlock,
+    wait,
 };
 
 fn unlocked(app: &App) -> &Unlocked {
@@ -101,10 +101,11 @@ fn enter_on_a_toggle_toggles_instead_of_saving() {
     press(&mut app, KeyCode::Enter);
     let e = editor(&app);
     assert!(e.dirty, "the toggle flipped");
-    assert!(e
-        .fields
-        .iter()
-        .any(|f| matches!(f.value, Value::Toggle(true))));
+    assert!(
+        e.fields
+            .iter()
+            .any(|f| matches!(f.value, Value::Toggle(true)))
+    );
 }
 
 #[test]

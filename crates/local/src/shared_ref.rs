@@ -6,13 +6,13 @@
 use memberlog::MemberLog;
 use pq::SYNC_VK_LEN;
 use record::{
-    Document, ValueType, SHARED_RETIRED_TAGS, TAG_SHARED_ANCHOR, TAG_SHARED_EPOCH, TAG_SHARED_HEAD,
+    Document, SHARED_RETIRED_TAGS, TAG_SHARED_ANCHOR, TAG_SHARED_EPOCH, TAG_SHARED_HEAD,
     TAG_SHARED_HINTS, TAG_SHARED_INTRODUCER, TAG_SHARED_MARK, TAG_SHARED_RETIRED_MIN,
-    TAG_SHARED_SEED, TAG_SHARED_VAULT_ID, TAG_TITLE,
+    TAG_SHARED_SEED, TAG_SHARED_VAULT_ID, TAG_TITLE, ValueType,
 };
-use secret::{ct_eq_32, Secret};
+use secret::{Secret, ct_eq_32};
 
-use crate::limits::{SHARED_HINTS_MAX, SHARED_HINT_MAX, SHARED_NAME_MAX};
+use crate::limits::{SHARED_HINT_MAX, SHARED_HINTS_MAX, SHARED_NAME_MAX};
 
 fn corrupted() -> anyhow::Error {
     anyhow::anyhow!("corrupted length")
@@ -192,8 +192,7 @@ impl SharedRef {
         }
         let hints: Vec<String> = doc
             .text(TAG_SHARED_HINTS)?
-            .map(|joined| joined.lines().map(str::to_owned).collect())
-            .unwrap_or_default();
+            .map_or_default(|joined| joined.lines().map(str::to_owned).collect());
         if hints.len() > SHARED_HINTS_MAX
             || hints
                 .iter()
@@ -252,4 +251,15 @@ fn read_introduction(doc: &Document) -> anyhow::Result<Option<Introduction>> {
         }
         _ => Err(corrupted()),
     }
+}
+
+/// Extract every shared-vault reference stored in `session`.
+#[must_use]
+pub fn list_shared_refs(session: &session::Session) -> Vec<SharedRef> {
+    session::list_records(session)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| session::open_record(session, row.id).ok())
+        .filter_map(|doc| SharedRef::from_document(&doc).ok().flatten())
+        .collect()
 }

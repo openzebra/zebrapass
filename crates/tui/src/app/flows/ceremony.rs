@@ -8,7 +8,7 @@ use zeroize::Zeroize;
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
-use crate::secure::generator::{random_below, EntropyError};
+use crate::secure::generator::{EntropyError, random_below};
 use crate::secure::phrase_input::word_index;
 use crate::secure::reveal::{RevealGuard, RevealKey};
 
@@ -329,11 +329,7 @@ impl Verify {
             .filter(|until| *until > now)
             .map_or(0, |until| {
                 let phase = until.saturating_duration_since(now).as_millis() / 120;
-                if phase % 2 == 0 {
-                    2
-                } else {
-                    -2
-                }
+                if phase % 2 == 0 { 2 } else { -2 }
             })
     }
 }

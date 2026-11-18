@@ -122,7 +122,7 @@ fn kdbx3(bytes: &[u8]) -> anyhow::Result<KdfCost> {
             KDBX3_TRANSFORM_ROUNDS => {
                 return Ok(KdfCost::Aes {
                     rounds: u64_at(data, 0)?,
-                })
+                });
             }
             _ => pos = pos + 3 + len,
         }

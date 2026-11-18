@@ -73,7 +73,7 @@ impl PhraseInput {
     pub fn plausible(&self) -> bool {
         self.current.is_empty()
             && (MIN_WORDS..=MAX_WORDS).contains(&self.words.len())
-            && self.words.len() % 3 == 0
+            && self.words.len().is_multiple_of(3)
     }
 
     /// Type one character.
@@ -223,10 +223,10 @@ impl PhraseInput {
     }
 
     fn commit(&mut self, index: usize) {
-        if let Ok(word) = u16::try_from(index) {
-            if self.words.len() < MAX_WORDS {
-                self.words.push(word);
-            }
+        if let Ok(word) = u16::try_from(index)
+            && self.words.len() < MAX_WORDS
+        {
+            self.words.push(word);
         }
         zeroize::Zeroize::zeroize(&mut *self.current);
     }
@@ -265,7 +265,7 @@ pub fn word_index(word: &[u8]) -> Option<usize> {
 mod tests {
     use secrecy::ExposeSecret;
 
-    use super::{prefix_range, PhraseInput, Typed};
+    use super::{PhraseInput, Typed, prefix_range};
 
     fn type_word(input: &mut PhraseInput, word: &str) {
         for ch in word.chars() {

@@ -1,19 +1,19 @@
 //! Constellation: how the vault is locked, and factor management.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::factors::{factor_label, FactorsState};
+use crate::app::flows::factors::{FactorsState, factor_label};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::Scope;
 use crate::ui::layout::body_and_hints;
 use crate::ui::screens::home::header;
 use crate::ui::widgets::chrome::{hint_bar, panel, row_style};
 use crate::ui::widgets::constellation::{self, glyph};
-use crate::vault::factors::{views, FactorKind};
+use crate::vault::factors::{FactorKind, views};
 
 /// Draw the constellation.
 pub fn draw(
@@ -60,8 +60,7 @@ pub fn draw(
             };
             let cost = view
                 .cost
-                .map(|(m_kib, t, p)| format!("  {} MiB t={t} p={p}", m_kib / 1024))
-                .unwrap_or_default();
+                .map_or_default(|(m_kib, t, p)| format!("  {} MiB t={t} p={p}", m_kib / 1024));
             Line::from(vec![
                 Span::styled(
                     format!("{pointer} {} ", glyph(view.kind, theme)),

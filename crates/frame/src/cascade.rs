@@ -6,7 +6,7 @@
 //! authentic while either cipher holds. The outer MAC is checked first.
 
 use ::aegis::aegis256::Aegis256;
-use aead::{decrypt_body, encrypt_body, BodyAlg};
+use aead::{BodyAlg, decrypt_body, encrypt_body};
 use kdf::cascade_keys;
 use secret::Secret;
 

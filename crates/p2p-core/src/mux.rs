@@ -3,7 +3,7 @@
 //! and bounding what the answering side accepts. A returned error means the
 //! peer broke the protocol and the connection must be closed.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use secret::Secret;
 use syncwire::limits::PIPELINE_DEPTH;
 use syncwire::{Direction, Header, MsgType};
@@ -189,7 +189,7 @@ impl Dispatcher {
 
     /// Requests still waiting for an answer.
     #[must_use]
-    pub fn in_flight(&self) -> usize {
+    pub const fn in_flight(&self) -> usize {
         self.pending.len()
     }
 
@@ -314,7 +314,7 @@ impl Inbound {
 
     /// Requests being served.
     #[must_use]
-    pub fn in_flight(&self) -> usize {
+    pub const fn in_flight(&self) -> usize {
         self.open.len()
     }
 

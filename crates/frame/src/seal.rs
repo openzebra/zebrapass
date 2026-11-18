@@ -5,7 +5,7 @@ use ::aegis::aegis256::Aegis256;
 use secret::Secret;
 
 use crate::cascade::{self, CASCADE_OVERHEAD};
-use crate::header::{aad, encode_header, parse, FrameMeta, HEADER_LEN};
+use crate::header::{FrameMeta, HEADER_LEN, aad, encode_header, parse};
 use crate::limits::MAX_FRAME_PLAINTEXT;
 use crate::{ALG_AEGIS256, ALG_CASCADE, TAG_LEN};
 
@@ -116,7 +116,7 @@ mod tests {
 
     use crate::header::FrameMeta;
     use crate::{
-        open, seal, ALG_AEGIS256, ALG_CASCADE, CASCADE_OVERHEAD, KIND_REVISION, KIND_TOMBSTONE,
+        ALG_AEGIS256, ALG_CASCADE, CASCADE_OVERHEAD, KIND_REVISION, KIND_TOMBSTONE, open, seal,
     };
 
     fn key() -> Secret<[u8; 32]> {
@@ -153,7 +153,7 @@ mod tests {
     fn tombstone_has_empty_plaintext() {
         let sealed = seal(&key(), &meta(KIND_TOMBSTONE), &[]).unwrap();
         let opened = open(&key(), &sealed).unwrap();
-        assert!(opened.expose().is_empty());
+        assert_eq!(opened.expose().as_slice(), []);
         assert_eq!(sealed.len(), crate::HEADER_LEN + crate::TAG_LEN);
     }
 
@@ -247,7 +247,7 @@ mod tests {
         );
         assert_eq!(open(&key(), &sealed).unwrap().expose().as_slice(), pt);
         let tomb = seal(&key(), &cascade(KIND_TOMBSTONE), &[]).unwrap();
-        assert!(open(&key(), &tomb).unwrap().expose().is_empty());
+        assert_eq!(open(&key(), &tomb).unwrap().expose().as_slice(), []);
         let index = crate::parse_index(&[sealed, tomb].concat()).unwrap();
         assert_eq!(index.len(), 2);
     }

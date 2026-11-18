@@ -22,14 +22,14 @@ use std::time::{Duration, Instant};
 use crossterm::event::KeyCode;
 use local::Listen;
 use p2p_net::{BeaconConfig, Relay, RelayLimits};
+use tui::App;
 use tui::app::personal::wants_node;
 use tui::app::screen::Screen;
-use tui::App;
 
 use common::{
-    add_records, announcing_device, app_with, beacon, config, free_udp_port, keep_to_this_device,
-    make_vault, press, render, restore_empty, temp_dir, titles_of, type_text, unlock, wait,
-    wait_adopted, CAPS, PASSWORD,
+    CAPS, PASSWORD, add_records, announcing_device, app_with, beacon, config, free_udp_port,
+    keep_to_this_device, make_vault, press, render, restore_empty, temp_dir, titles_of, type_text,
+    unlock, wait, wait_adopted,
 };
 
 /// Add `title` to the vault file under `base` while its app keeps running: the
@@ -142,13 +142,15 @@ fn a_restored_device_set_to_fetch_only_still_pulls_what_the_peer_wrote_after() {
         "the pull brought it"
     );
     assert_eq!(titles_of(&second), ["bank", "mail", "wifi"]);
-    assert!(state(&second)
-        .p2p
-        .as_ref()
-        .unwrap()
-        .service
-        .local_addr()
-        .is_none());
+    assert!(
+        state(&second)
+            .p2p
+            .as_ref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_none()
+    );
 }
 
 #[test]
@@ -206,13 +208,15 @@ fn fetch_only_binds_no_socket_beacons_nothing_and_holds_no_slot() {
     }
     assert_eq!(relay.stats().reservations, 0, "no slot");
     assert!(probe(beacon_port).is_ok(), "no beacon socket");
-    assert!(state(&app)
-        .p2p
-        .as_ref()
-        .unwrap()
-        .service
-        .local_addr()
-        .is_none());
+    assert!(
+        state(&app)
+            .p2p
+            .as_ref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_none()
+    );
     assert!(state(&app).p2p.as_ref().unwrap().relayed.is_none());
 
     // The announce key says why it does nothing.

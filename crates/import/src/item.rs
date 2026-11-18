@@ -1,8 +1,8 @@
 //! The one mapping path from a foreign item to a [`Document`].
 
 use record::{
-    Document, ValueType, CUSTOM_FAVORITE, CUSTOM_TAGS, MAX_CUSTOM_NAME, TAG_CUSTOM_MIN, TAG_EMAIL,
-    TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL, TAG_USERNAME,
+    CUSTOM_FAVORITE, CUSTOM_TAGS, Document, MAX_CUSTOM_NAME, TAG_CUSTOM_MIN, TAG_EMAIL, TAG_NOTES,
+    TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL, TAG_USERNAME, ValueType,
 };
 use zeroize::Zeroizing;
 

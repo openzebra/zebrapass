@@ -1,12 +1,12 @@
 //! Bitwarden `.json` export (the unencrypted kind).
 
-use serde::de::IgnoredAny;
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use crate::item::{Draft, Item, ItemKind, Slot};
 use crate::limits::MAX_ITEMS;
 use crate::report::{Report, SkipReason};
-use crate::text::{text, Text};
+use crate::text::{Text, text};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

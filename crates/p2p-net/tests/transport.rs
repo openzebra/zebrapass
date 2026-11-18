@@ -13,16 +13,16 @@ use std::sync::{Arc, Mutex};
 
 use p2p_core::{Account, Channel, CookieSecret, Initiator, Load, Message, Reassembler};
 use p2p_net::{
-    authenticate, fetch, first_message, now_ms, serve_requests_with, Conn, Dialing, Event,
-    FetchError, Limits, Policy, Provider, Relay, RelayLimits, Service, SnapshotSource, Tickets,
-    VaultView,
+    Conn, Dialing, Event, FetchError, Limits, Policy, Provider, Relay, RelayLimits, Service,
+    SnapshotSource, Tickets, VaultView, authenticate, fetch, first_message, now_ms,
+    serve_requests_with,
 };
-use session::{issue_device_cert, sync_verifying_key, DeviceSignKey, Revocation};
+use session::{DeviceSignKey, Revocation, issue_device_cert, sync_verifying_key};
 use syncwire::limits::CHUNK_LEN;
 use syncwire::limits::RELAY_HEADER_LEN;
 use syncwire::{
-    encode_open, Challenge, ChunkRequest, Claim, Direction, Header, MsgType, RelayHeader,
-    RelayHint, RelaySide, RelayType, SnapHead,
+    Challenge, ChunkRequest, Claim, Direction, Header, MsgType, RelayHeader, RelayHint, RelaySide,
+    RelayType, SnapHead, encode_open,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -1310,9 +1310,11 @@ fn a_splice_is_cut_at_its_byte_limit_and_only_so_many_run_at_once() {
             .await
             .unwrap();
         // While one splice runs, the relay has no room for another.
-        assert!(Conn::connect(&member_view(), &hint.to_string())
-            .await
-            .is_err());
+        assert!(
+            Conn::connect(&member_view(), &hint.to_string())
+                .await
+                .is_err()
+        );
         first.ping(1).await.unwrap();
         assert!(
             first.snapshot().await.is_err(),
@@ -1446,36 +1448,33 @@ fn quitting_releases_the_slot_and_the_freed_place_goes_to_the_next_node() {
 }
 
 #[test]
-fn four_stage_fallback_chain_reaches_member_over_websocket_relay() {
-    let ws_relay = Relay::start("127.0.0.1:0", quiet()).unwrap();
+fn three_stage_fallback_chain_reaches_member_over_zpry_relay() {
+    let relay = Relay::start("127.0.0.1:0", quiet()).unwrap();
     let provider = served(vec![0x5A; 64 * 1024]);
     let node = Service::start(None, Arc::clone(&provider)).unwrap();
     let secret = [0x42u8; 32];
-    let det_hint =
-        p2p_net::deterministic_relay_hint(&secret, &VAULT, ws_relay.local_addr()).unwrap();
-    assert!(node.hold_relay_ws(provider, ws_relay.local_addr(), Some(det_hint.slot)));
+    let det_hint = p2p_net::deterministic_relay_hint(&secret, &VAULT, relay.local_addr()).unwrap();
+    assert!(node.hold_relay_slot(provider, relay.local_addr(), Some(det_hint.slot)));
     let held = next_relayed(&node);
     assert_eq!(held.slot, det_hint.slot);
 
-    let ws_relay_hint = format!("ws://{}/{}", ws_relay.local_addr(), "00".repeat(16));
     let candidates = p2p_net::expand_chain_hints(
         &["127.0.0.1:9".to_owned()],
         &["127.0.0.1:8".to_owned()],
-        &[format!("127.0.0.1:7/{}", "aa".repeat(16)), ws_relay_hint],
+        &[relay.local_addr().to_string()],
         &secret,
         &VAULT,
-        0,
     );
 
     let client = Service::start(None, served(Vec::new())).unwrap();
     let mut view = member_view();
-    view.dialing.trusted.push(ws_relay.local_addr());
+    view.dialing.trusted.push(relay.local_addr());
     client.fetch(view, candidates);
 
     let event = client
         .events()
         .recv_timeout(std::time::Duration::from_secs(30))
-        .expect("4-stage fallback chain reached the WebSocket relay");
+        .expect("3-stage fallback chain reached the ZPRY relay");
     match event {
         Event::Fetched {
             vault_id, snapshot, ..

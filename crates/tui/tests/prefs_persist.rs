@@ -18,11 +18,11 @@ use tui::cli::Config;
 use tui::cli::Flags;
 use tui::ui::theme::ThemeName;
 use tui::vault::discover::discover;
-use tui::vault::open::{unlock_vault, Credential};
-use tui::vault::ops::{apply, Op, Outcome};
+use tui::vault::open::{Credential, unlock_vault};
+use tui::vault::ops::{Op, Outcome, apply};
 use zeroize::Zeroizing;
 
-use common::{app, app_with, make_vault, temp_dir, unlock, CAPS, PASSWORD};
+use common::{CAPS, PASSWORD, app, app_with, make_vault, temp_dir, unlock};
 
 fn saved() -> Prefs {
     Prefs {
@@ -38,6 +38,7 @@ fn saved() -> Prefs {
         p2p_advertise: Some("93.184.216.35:8000".into()),
         p2p_relays: vec![format!("93.184.216.36:7447/{}", "cd".repeat(16)).into()],
         p2p_hold: true,
+        ..Prefs::default()
     }
 }
 

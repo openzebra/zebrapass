@@ -4,11 +4,11 @@
 use aead::BodyAlg;
 use container::{VaultFile, WrapEntry};
 use secret::Secret;
-use wraps::{seal_chip, seal_human_password, seal_password, seal_prf, ChipPublics, PrfPublics};
+use wraps::{ChipPublics, PrfPublics, seal_chip, seal_human_password, seal_password, seal_prf};
 
 use crate::create::{
-    assemble_committed, commit_mode, dir_bytes, draw_secret, encode_entry, encrypt_records,
-    next_generation, Session,
+    Session, assemble_committed, commit_mode, dir_bytes, draw_secret, encode_entry,
+    encrypt_records, next_generation,
 };
 use kdf::derive_vault_keys;
 
@@ -201,10 +201,10 @@ fn require_prf_publics(
     prfs: &[(PrfPublics, [u8; 32])],
 ) -> anyhow::Result<()> {
     for entry in entries {
-        if let WrapEntry::Prf(wrap) = entry {
-            if !prfs.iter().any(|(publics, _)| publics.id == wrap.id) {
-                return Err(SessionError::PrfFactorRequired.into());
-            }
+        if let WrapEntry::Prf(wrap) = entry
+            && !prfs.iter().any(|(publics, _)| publics.id == wrap.id)
+        {
+            return Err(SessionError::PrfFactorRequired.into());
         }
     }
     Ok(())

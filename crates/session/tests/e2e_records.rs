@@ -17,11 +17,11 @@ mod common;
 
 use aead::BodyAlg;
 use kdf::KdfProfile;
-use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
+use record::{Document, TAG_PASSWORD, TAG_TITLE, ValueType};
 use seed::SeedPhrase;
 use session::{
-    change_master, clear_history, delete_record, history, list_records, open_record,
-    restore_revision, unlock, vault_meta, write_record, Seen, UnlockCreds, VaultFile,
+    Seen, UnlockCreds, VaultFile, change_master, clear_history, delete_record, history,
+    list_records, open_record, restore_revision, unlock, vault_meta, write_record,
 };
 
 /// A fresh directory under the system temp dir; caller removes it.
@@ -117,7 +117,10 @@ fn seed_vault_storage_and_records_end_to_end() {
     unlock(&file, &UnlockCreds::master(&seed), Some(seen_now)).unwrap();
 
     delete_record(&mut session, &mut file, id).unwrap();
-    assert!(list_records(&session).unwrap().is_empty());
+    assert_eq!(
+        list_records(&session).unwrap(),
+        [] as [session::RecordSummary; 0]
+    );
     assert_eq!(
         open_record(&session, id).unwrap_err().to_string(),
         "record deleted"
@@ -125,8 +128,14 @@ fn seed_vault_storage_and_records_end_to_end() {
 
     clear_history(&mut session, &mut file).unwrap();
     // No frames at all remain: no records, no history, no vault meta.
-    assert!(list_records(&session).unwrap().is_empty());
-    assert!(history(&session, id).unwrap().is_empty());
+    assert_eq!(
+        list_records(&session).unwrap(),
+        [] as [session::RecordSummary; 0]
+    );
+    assert_eq!(
+        history(&session, id).unwrap(),
+        [] as [session::RevisionInfo; 0]
+    );
     assert!(vault_meta(&session).unwrap().fields().is_empty());
     assert_eq!(
         open_record(&session, id).unwrap_err().to_string(),
@@ -151,7 +160,10 @@ fn seed_vault_storage_and_records_end_to_end() {
     unlock(&old, &UnlockCreds::master(&seed), None).unwrap();
     // Records survive the master change byte for byte.
     let reopened = unlock(&file, &UnlockCreds::master(&seed2), None).unwrap();
-    assert!(list_records(&reopened).unwrap().is_empty());
+    assert_eq!(
+        list_records(&reopened).unwrap(),
+        [] as [session::RecordSummary; 0]
+    );
 
     std::fs::remove_dir_all(&base).unwrap();
 }

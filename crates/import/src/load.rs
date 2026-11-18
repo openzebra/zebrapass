@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
 
-use crate::source::{read_file, read_head, sniff, Source};
-use crate::{parse, Mapping, Parsed, Request};
+use crate::source::{Source, read_file, read_head, sniff};
+use crate::{Mapping, Parsed, Request, parse};
 
 /// Bytes read for [`inspect`].
 const HEAD_BYTES: u64 = 4096;

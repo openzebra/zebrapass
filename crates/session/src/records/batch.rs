@@ -1,7 +1,7 @@
 //! Many new records in one body append.
 
 use container::VaultFile;
-use frame::{FrameMeta, ALG_CASCADE, KIND_REVISION};
+use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION};
 use record::Document;
 use zeroize::Zeroizing;
 

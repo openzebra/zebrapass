@@ -7,7 +7,7 @@ mod wrap_dir;
 mod wrap_entry;
 mod wrap_human;
 
-pub use commit::{assemble, Parsed, VaultFile};
+pub use commit::{Parsed, VaultFile, assemble};
 pub use header::StaticHeader;
 pub use limits::{
     BODY_AEGIS256, BODY_FRAMES, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY,
@@ -16,9 +16,9 @@ pub use limits::{
     KIND_PASSWORD, KIND_PASSWORD_HUMAN, KIND_PRF, MAGIC, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
     VERSION, WRAP_AEGIS256,
 };
-pub use wrap_dir::{encode_wrap_dir, WrapDir};
+pub use wrap_dir::{WrapDir, encode_wrap_dir};
 pub use wrap_entry::{
-    encode_chip_entry, encode_password_entry, encode_prf_entry, parse_entry, ChipWrap,
-    PasswordWrap, PrfWrap, WrapEntry,
+    ChipWrap, PasswordWrap, PrfWrap, WrapEntry, encode_chip_entry, encode_password_entry,
+    encode_prf_entry, parse_entry,
 };
-pub use wrap_human::{encode_human_password_entry, HumanKdf, HumanPasswordWrap};
+pub use wrap_human::{HumanKdf, HumanPasswordWrap, encode_human_password_entry};

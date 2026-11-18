@@ -5,18 +5,21 @@
 
 use std::path::{Path, PathBuf};
 
-use local::{paths_for, LocalMeta, Paths};
+use local::{
+    BACKUP_MAGIC, BackupContents, LocalMeta, MAX_BACKUP_FILE, Paths, open_backup_bundle, paths_for,
+    restore_shared_entries,
+};
 use record::Document;
 use seed::SeedPhrase;
 use session::{
-    add_human_password, replace_human_password, unlock, wrap_directory, write_records_batch,
-    BodyAlg, HumanPasswordPublics, KdfProfile, Session, UnlockCreds, VaultFile,
+    BodyAlg, HumanPasswordPublics, KdfProfile, Session, UnlockCreds, VaultFile, add_human_password,
+    replace_human_password, unlock, wrap_directory, write_records_batch,
 };
 use zeroize::Zeroizing;
 
 use crate::vault::device;
 use crate::vault::error::UnlockError;
-use crate::vault::open::{read_vault_file, Vault};
+use crate::vault::open::{Vault, read_vault_file};
 
 /// The factor this device enrolls.
 pub enum Enrollment {
@@ -167,16 +170,63 @@ fn restore_file(request: RestoreVault, source: &Path) -> Result<Box<Vault>, Unlo
         factor,
         ..
     } = request;
-    let file = read_vault_file(source)?;
-    let session = unlock(&file, &UnlockCreds::master(phrase.seed()), None)
-        .map_err(|error| UnlockError::from(&error))?;
+    let is_backup = is_zpbk_header(source);
+    let (file, session, shared) = if is_backup {
+        let len = std::fs::metadata(source)
+            .map_err(|_| UnlockError::Io)?
+            .len();
+        if len > MAX_BACKUP_FILE as u64 {
+            return Err(UnlockError::NotAVault);
+        }
+        let bytes = std::fs::read(source).map_err(|_| UnlockError::Io)?;
+        let contents = open_backup_bundle(&bytes, &UnlockCreds::master(phrase.seed()))
+            .map_err(|error| UnlockError::from(&error))?;
+        match contents {
+            BackupContents::Bundle(bundle) => (bundle.file, bundle.session, bundle.shared),
+            BackupContents::LegacyVault(legacy) => (legacy.file, legacy.session, Vec::new()),
+        }
+    } else {
+        let file = read_vault_file(source)?;
+        let session = unlock(&file, &UnlockCreds::master(phrase.seed()), None)
+            .map_err(|error| UnlockError::from(&error))?;
+        (file, session, Vec::new())
+    };
     let client_id = kdf::client_id(phrase.seed()).map_err(|_| UnlockError::Io)?;
     let paths = paths_for(&base, session.vault_id());
-    local::SyncIdentity::enroll(phrase.seed(), &client_id, session.origin_device(), u64::MAX)
-        .and_then(|identity| identity.save(&paths.sync_identity(), &session.sync_identity_key()?))
+    let identity =
+        local::SyncIdentity::enroll(phrase.seed(), &client_id, session.origin_device(), u64::MAX)
+            .map_err(|_| UnlockError::Io)?;
+    identity
+        .save(
+            &paths.sync_identity(),
+            &session.sync_identity_key().map_err(|_| UnlockError::Io)?,
+        )
         .map_err(|_| UnlockError::Io)?;
     drop(phrase);
-    land((session, file, paths), (client_id, name), profile, factor)
+    let factor = match factor {
+        Enrollment::Password(pw)
+            if wrap_directory(&file)
+                .is_ok_and(|dir| crate::vault::factors::presence(&dir, None).password) =>
+        {
+            Enrollment::ReplacePassword(pw)
+        }
+        other => other,
+    };
+    let vault = land((session, file, paths), (client_id, name), profile, factor)?;
+    if !shared.is_empty() {
+        restore_shared_entries(&base, &identity, &vault.session, &shared, true)
+            .map_err(|_| UnlockError::Io)?;
+    }
+    Ok(vault)
+}
+
+fn is_zpbk_header(source: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut f) = std::fs::File::open(source) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).is_ok() && magic == BACKUP_MAGIC
 }
 
 /// Make a restored vault this device's: its metadata with a fresh rollback

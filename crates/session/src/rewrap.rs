@@ -7,7 +7,7 @@
 
 use container::{Parsed, VaultFile, WrapEntry};
 
-use crate::create::{assemble_committed, commit_mode, dir_bytes, next_generation, Session};
+use crate::create::{Session, assemble_committed, commit_mode, dir_bytes, next_generation};
 
 /// Rebuild the wrap directory in one place.
 ///

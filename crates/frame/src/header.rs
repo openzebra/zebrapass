@@ -172,7 +172,7 @@ mod tests {
         reason = "tests may unwrap, index, and panic"
     )]
 
-    use super::{aad, encode_header, parse, FrameMeta, HEADER_LEN};
+    use super::{FrameMeta, HEADER_LEN, aad, encode_header, parse};
     use crate::{ALG_AEGIS256, KIND_REVISION};
 
     fn sample_meta() -> FrameMeta {

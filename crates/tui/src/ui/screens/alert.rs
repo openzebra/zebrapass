@@ -1,9 +1,9 @@
 //! Security alert. There is deliberately no "open anyway".
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::gate::AlertState;

@@ -128,7 +128,7 @@ fn pool_size(secret: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{estimate, StrengthLabel};
+    use super::{StrengthLabel, estimate};
 
     #[test]
     fn repeats_and_sequences_are_cheap() {

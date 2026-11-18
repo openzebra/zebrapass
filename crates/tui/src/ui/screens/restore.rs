@@ -1,15 +1,15 @@
 //! Restore from phrase: masked word grid with autocomplete, passphrase,
 //! optional vault file and device address, and name. Then the enroll step.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::restore::{RestoreField, RestoreState, RestoreStep, REVEAL_LAST};
+use crate::app::flows::restore::{REVEAL_LAST, RestoreField, RestoreState, RestoreStep};
 use crate::app::keymap::Scope;
-use crate::secure::phrase_input::{PhraseInput, MAX_WORDS};
+use crate::secure::phrase_input::{MAX_WORDS, PhraseInput};
 use crate::ui::layout::{body_and_hints, centered};
 use crate::ui::screens::create::titled;
 use crate::ui::theme::Theme;
@@ -145,19 +145,28 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &RestoreState, ctx: &Ctx) 
     frame.render_widget(block, card);
     let columns = slot_columns(inner.width.saturating_sub(6));
     let grid_rows = u16::try_from(MAX_WORDS.div_ceil(columns)).unwrap_or(24);
-    let [phrase_head, grid, suggest, _, source_head, sources, source_status_row, details, footer] =
-        Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(grid_rows + 2),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(4),
-            Constraint::Min(3),
-        ])
-        .areas(inner);
+    let [
+        phrase_head,
+        grid,
+        suggest,
+        _,
+        source_head,
+        sources,
+        source_status_row,
+        details,
+        footer,
+    ] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(grid_rows + 2),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(4),
+        Constraint::Min(3),
+    ])
+    .areas(inner);
     section(
         frame,
         phrase_head,

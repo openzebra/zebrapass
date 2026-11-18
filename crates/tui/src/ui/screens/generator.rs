@@ -1,13 +1,13 @@
 //! Password generator lab.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::generator::GeneratorState;
-use crate::secure::generator::{crack_time_label, CharSets, GenMode};
+use crate::secure::generator::{CharSets, GenMode, crack_time_label};
 use crate::ui::layout::centered;
 use crate::ui::theme::Theme;
 use crate::ui::widgets::chrome::{button, checkbox, modal, radio};

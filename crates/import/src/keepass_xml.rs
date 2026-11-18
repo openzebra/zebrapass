@@ -1,8 +1,8 @@
 //! `KeePass` 2 XML export, read as a stream: memory stays at one entry and
 //! nesting depth is bounded. No DTD or custom entity is ever expanded.
 
-use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::Reader;
+use quick_xml::events::{BytesRef, BytesStart, Event};
 use zeroize::Zeroizing;
 
 use crate::item::{Draft, Item, ItemKind, Slot};
@@ -119,10 +119,12 @@ impl Walker<'_> {
 
     /// A self-closing tag: only an attachment reference matters.
     fn empty(&mut self, start: &BytesStart<'_>) {
-        if start.local_name().as_ref() == b"Binary" && self.in_entry() && !self.in_history() {
-            if let Some(entry) = self.entry.as_mut() {
-                entry.attachments = entry.attachments.saturating_add(1);
-            }
+        if start.local_name().as_ref() == b"Binary"
+            && self.in_entry()
+            && !self.in_history()
+            && let Some(entry) = self.entry.as_mut()
+        {
+            entry.attachments = entry.attachments.saturating_add(1);
         }
     }
 

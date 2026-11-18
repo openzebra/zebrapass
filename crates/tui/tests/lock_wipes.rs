@@ -15,15 +15,15 @@ mod common;
 use std::time::Duration;
 
 use crossterm::event::KeyCode;
-use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
+use record::{Document, TAG_PASSWORD, TAG_TITLE, ValueType};
+use tui::App;
 use tui::app::ctx::Task;
 use tui::app::screen::Screen;
 use tui::cli::{Config, Flags};
 use tui::vault::ops::Op;
-use tui::App;
 
 use common::{
-    app_with, config, make_vault, press, render, temp_dir, tick, unlock, wait, CAPS, PASSWORD,
+    CAPS, PASSWORD, app_with, config, make_vault, press, render, temp_dir, tick, unlock, wait,
 };
 
 const CLEAR: &[u8] = b"\x1b]52;c;\x07";
@@ -105,10 +105,11 @@ fn manual_focus_and_quit_locks() {
     copy_password(&mut app);
     press(&mut app, KeyCode::Char('L'));
     assert!(matches!(app.screen, Screen::Locked(_)));
-    assert!(app
-        .take_outbox()
-        .iter()
-        .any(|sequence| sequence.as_slice() == CLEAR));
+    assert!(
+        app.take_outbox()
+            .iter()
+            .any(|sequence| sequence.as_slice() == CLEAR)
+    );
 
     press(&mut app, KeyCode::Enter);
     unlock(&mut app, PASSWORD);
@@ -140,8 +141,9 @@ fn clipboard_clears_on_its_own_timer() {
     copy_password(&mut app);
     tick(&mut app, Duration::from_secs(21));
     assert_eq!(app.screen.name(), "unlocked");
-    assert!(app
-        .take_outbox()
-        .iter()
-        .any(|sequence| sequence.as_slice() == CLEAR));
+    assert!(
+        app.take_outbox()
+            .iter()
+            .any(|sequence| sequence.as_slice() == CLEAR)
+    );
 }

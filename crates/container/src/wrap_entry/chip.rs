@@ -2,7 +2,7 @@
 
 use pq::{KEM_CT_LEN, PQ_PK_LEN};
 
-use crate::limits::{read_array, shift, ENTRY_HEADER_LEN, KIND_CHIP};
+use crate::limits::{ENTRY_HEADER_LEN, KIND_CHIP, read_array, shift};
 use crate::wrap_entry::{ChipWrap, WrapEntry};
 
 const CHIP_CHIP_PUB: usize = 16;

@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::KeyEvent;
-use import::{expand_home, inspect, Credentials, FileHint, Load, Parsed, Review, Source};
+use import::{Credentials, FileHint, Load, Parsed, Review, Source, expand_home, inspect};
 use record::{Document, TAG_TOTP};
 
 use crate::app::action::Action;
@@ -20,7 +20,7 @@ use crate::app::flows::gate::initial_screen;
 use crate::app::flows::import_mapping::Columns;
 use crate::app::flows::restore::RestoreState;
 use crate::app::flows::unlock::MAX_PASSWORD;
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::{Nav, Screen};
 use crate::app::worker::Job;
 use crate::secure::reveal::{RevealGuard, RevealKey};

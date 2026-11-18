@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::limits::{
-    self, read_array, shift, KIND_PASSWORD, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN,
+    self, KIND_PASSWORD, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, read_array, shift,
 };
 use crate::wrap_entry::{PasswordWrap, WrapEntry};
 

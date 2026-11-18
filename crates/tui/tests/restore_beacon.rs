@@ -21,8 +21,8 @@ use crossterm::event::KeyCode;
 use tui::vault::discover::discover;
 
 use common::{
-    announcing_device, beacon, ctrl, free_udp_port, is_placeholder, make_vault, press, render,
-    restore_empty, temp_dir, tick, titles_of, type_text, unlock, wait, wait_adopted, PASSWORD,
+    PASSWORD, announcing_device, beacon, ctrl, free_udp_port, is_placeholder, make_vault, press,
+    render, restore_empty, temp_dir, tick, titles_of, type_text, unlock, wait, wait_adopted,
 };
 
 const FOUND_WITHIN: Duration = Duration::from_secs(60);
@@ -39,7 +39,7 @@ fn an_empty_restore_finds_the_announcing_device_and_brings_the_vault_in() {
     let base = temp_dir("bc-second");
     let mut second = restore_empty(&base, &words, PASSWORD, beacon(second_bind, first_bind));
     assert!(is_placeholder(&second), "an empty vault of its own first");
-    assert!(titles_of(&second).is_empty());
+    assert_eq!(titles_of(&second), [] as [std::string::String; 0]);
     let before = discover(&base);
     assert_eq!(before.len(), 1);
 
@@ -80,7 +80,7 @@ fn a_device_of_another_account_brings_nothing() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(is_placeholder(&second));
-    assert!(titles_of(&second).is_empty());
+    assert_eq!(titles_of(&second), [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn another_password_on_the_other_device_says_so_and_stops() {
     }
     assert!(screen.contains("different password"), "{screen}");
     assert!(is_placeholder(&second), "nothing was replaced");
-    assert!(titles_of(&second).is_empty());
+    assert_eq!(titles_of(&second), [] as [std::string::String; 0]);
 }
 
 #[test]

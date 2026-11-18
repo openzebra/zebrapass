@@ -11,11 +11,11 @@
 mod common;
 
 use tui::vault::discover::discover;
-use tui::vault::open::{unlock_vault, Credential};
-use tui::vault::ops::{apply, Op, Outcome};
+use tui::vault::open::{Credential, unlock_vault};
+use tui::vault::ops::{Op, Outcome, apply};
 use zeroize::Zeroizing;
 
-use common::{make_vault, temp_dir, PASSWORD};
+use common::{PASSWORD, make_vault, temp_dir};
 
 const NEW: &str = "a-brand-new-passphrase-99";
 

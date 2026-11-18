@@ -13,7 +13,7 @@ use crossterm::event::KeyCode;
 use tui::app::flows::home::Pane;
 
 use common::{
-    add_records, app, make_vault, press, temp_dir, type_text, unlocked_state, wait, PASSWORD,
+    PASSWORD, add_records, app, make_vault, press, temp_dir, type_text, unlocked_state, wait,
 };
 
 #[test]

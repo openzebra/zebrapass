@@ -3,7 +3,7 @@
 //! frame. The vault file itself travels in a snapshot with no attestations,
 //! and the frontier is the one the shared vaults use.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::limits::MAX_FRAME;
 use crate::reader::Reader;

@@ -15,8 +15,8 @@ use container::WrapEntry;
 use platform::{ChipBackend, SoftwareChip};
 use pq::keypair;
 use session::{
-    add_chip_unlock, create, remove_chip_unlock, unlock, BodyAlg, ChipKeys, ChipPublics,
-    KdfProfile, UnlockCreds,
+    BodyAlg, ChipKeys, ChipPublics, KdfProfile, UnlockCreds, add_chip_unlock, create,
+    remove_chip_unlock, unlock,
 };
 
 const SEED: [u8; 64] = [0x7F; 64];

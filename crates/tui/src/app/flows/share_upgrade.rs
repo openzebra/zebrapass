@@ -18,7 +18,7 @@ use crate::app::flows::restore::REVEAL_LAST;
 use crate::app::flows::share::Step;
 use crate::app::flows::unlock::MAX_PASSPHRASE;
 use crate::app::flows::unlocked::Unlocked;
-use crate::secure::phrase_input::{secret_string, PhraseInput, Typed};
+use crate::secure::phrase_input::{PhraseInput, Typed, secret_string};
 use crate::secure::reveal::RevealGuard;
 use crate::secure::secret_input::SecretInput;
 use crate::ui::widgets::toast::Tone;

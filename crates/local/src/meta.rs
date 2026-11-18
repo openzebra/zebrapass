@@ -8,10 +8,10 @@
 
 use std::path::Path;
 
-use frame::{seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
+use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION, seal};
 use record::{
-    Document, ValueType, TAG_CLIENT_ID, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME,
-    TAG_SEEN_COMMIT, TAG_SEEN_GENERATION,
+    Document, TAG_CLIENT_ID, TAG_CREATED_AT_MS, TAG_DEVICE_ID, TAG_NAME, TAG_SEEN_COMMIT,
+    TAG_SEEN_GENERATION, ValueType,
 };
 use secret::Secret;
 
@@ -98,9 +98,9 @@ pub fn meta_from_document(doc: &Document) -> anyhow::Result<LocalMeta> {
     let name = doc.text(TAG_NAME)?.unwrap_or_default().to_owned();
     let seen = match (doc.data(TAG_SEEN_GENERATION)?, doc.data(TAG_SEEN_COMMIT)?) {
         (None, None) => None,
-        (Some(gen), Some(tag)) => {
+        (Some(raw_gen), Some(tag)) => {
             let generation =
-                <[u8; 8]>::try_from(gen).map_err(|_| anyhow::anyhow!("corrupted length"))?;
+                <[u8; 8]>::try_from(raw_gen).map_err(|_| anyhow::anyhow!("corrupted length"))?;
             let commit_tag =
                 <[u8; 32]>::try_from(tag).map_err(|_| anyhow::anyhow!("corrupted length"))?;
             Some(SeenCursor {
@@ -173,11 +173,11 @@ mod tests {
 
     use std::fmt::Write as _;
 
-    use frame::{seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
+    use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION, seal};
     use kdf::{frame_key, local_meta_key};
-    use record::{ValueType, TAG_DEVICE_ID};
+    use record::{TAG_DEVICE_ID, ValueType};
 
-    use super::{load_local_meta, meta_document, meta_from_document, save_local_meta, LocalMeta};
+    use super::{LocalMeta, load_local_meta, meta_document, meta_from_document, save_local_meta};
 
     fn temp_dir(tag: &str) -> PathBuf {
         let mut suffix = [0u8; 8];

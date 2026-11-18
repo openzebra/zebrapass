@@ -12,14 +12,14 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use local::{SyncIdentity, Verdict};
 use p2p_core::Account;
 use secret::Secret;
-use session::{frontier, latest_frame, unlock_with_key, VaultFile};
+use session::{VaultFile, frontier, latest_frame, unlock_with_key};
 use syncwire::{
-    decode_personal_frame, encode_announce, encode_frontier, encode_personal_frame,
-    encode_snapshot_prefix, Announce,
+    Announce, decode_personal_frame, encode_announce, encode_frontier, encode_personal_frame,
+    encode_snapshot_prefix,
 };
 
 use crate::dialable::Dialing;
@@ -105,8 +105,7 @@ impl PersonalServe {
     pub fn take_inbox(&self) -> Vec<Vec<u8>> {
         self.inbox
             .lock()
-            .map(|mut inbox| std::mem::take(&mut *inbox))
-            .unwrap_or_default()
+            .map_or_default(|mut inbox| std::mem::take(&mut *inbox))
     }
 
     /// The id the handshake addresses this vault by.

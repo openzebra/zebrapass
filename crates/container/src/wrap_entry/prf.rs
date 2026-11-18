@@ -1,6 +1,6 @@
 //! PRF wrap records: encode + parse.
 
-use crate::limits::{read_array, shift, ENTRY_HEADER_LEN, KIND_PRF};
+use crate::limits::{ENTRY_HEADER_LEN, KIND_PRF, read_array, shift};
 use crate::wrap_entry::{PrfWrap, WrapEntry};
 
 const PRF_CRED_ID_MIN: usize = 16;

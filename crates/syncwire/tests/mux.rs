@@ -9,8 +9,8 @@ use std::net::SocketAddr;
 
 use syncwire::limits::{CHUNK_LEN, MAX_BUNDLE, MAX_LOG_LEN, MUX_HEADER_LEN};
 use syncwire::{
-    Chunk, ChunkRequest, Direction, Extent, Header, MsgType, Ping, SnapHead, Want, WhoAmI,
-    ANNOUNCE_WIRE_LEN,
+    ANNOUNCE_WIRE_LEN, Chunk, ChunkRequest, Direction, Extent, Header, MsgType, Ping, SnapHead,
+    Want, WhoAmI,
 };
 
 const ALL: [MsgType; 17] = [

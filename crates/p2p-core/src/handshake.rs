@@ -17,16 +17,16 @@
 
 use anyhow::Result;
 use frame::{
-    open, parse, seal, FrameMeta, ALG_CASCADE, HEADER_LEN as FRAME_HEADER_LEN, KIND_REVISION,
+    ALG_CASCADE, FrameMeta, HEADER_LEN as FRAME_HEADER_LEN, KIND_REVISION, open, parse, seal,
 };
-use kdf::{p2p_key, INFO_P2P_APP_I2R, INFO_P2P_APP_R2I, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I};
+use kdf::{INFO_P2P_APP_I2R, INFO_P2P_APP_R2I, INFO_P2P_HS_I2R, INFO_P2P_HS_R2I, p2p_key};
 use secret::Secret;
 use sha2::{Digest, Sha256};
 
 use crate::admission::{
-    check_cookie, check_gate, hello_hash, issue_cookie, solve, CookieSecret, Load,
+    CookieSecret, Load, check_cookie, check_gate, hello_hash, issue_cookie, solve,
 };
-use crate::auth::{failed, prove, verify_proof, Local, Role};
+use crate::auth::{Local, Role, failed, prove, verify_proof};
 use crate::channel::{Channel, Side, TrafficKeys};
 use crate::suite::{KIND_HELLO, KIND_OFFSET, KIND_SOLVED, NONCE_LEN, SEALED_PROOF_LEN};
 use crate::wire::{

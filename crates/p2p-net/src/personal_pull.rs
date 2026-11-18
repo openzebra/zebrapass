@@ -4,10 +4,10 @@
 //! The frames are not applied here. The device that owns the open vault
 //! applies them itself, so the vault is only ever written by one party.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use session::{reconcile, FrontierEntry};
+use session::{FrontierEntry, reconcile};
 use syncwire::limits::PIPELINE_DEPTH;
 use syncwire::{decode_frontier, decode_personal_frame};
 

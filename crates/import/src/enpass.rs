@@ -1,12 +1,12 @@
 //! Enpass `.json` export.
 
-use serde::de::IgnoredAny;
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use crate::item::{Draft, Item, ItemKind, Slot};
 use crate::limits::MAX_ITEMS;
 use crate::report::{Report, SkipReason};
-use crate::text::{text, Text};
+use crate::text::{Text, text};
 
 /// Most folder levels followed up the parent chain.
 const MAX_FOLDER_DEPTH: usize = 16;

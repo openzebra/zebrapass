@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use container::VaultFile;
 use frame::{
-    frame_at, latest, parse_index, FrameMeta, FrameRef, ALG_CASCADE, KIND_REVISION, KIND_TOMBSTONE,
+    ALG_CASCADE, FrameMeta, FrameRef, KIND_REVISION, KIND_TOMBSTONE, frame_at, latest, parse_index,
 };
 use kdf::frame_key;
 use record::Document;
@@ -25,7 +25,7 @@ use crate::rotate::write_records;
 mod batch;
 mod ids;
 
-pub use batch::{write_records_batch, MAX_BATCH};
+pub use batch::{MAX_BATCH, write_records_batch};
 pub use ids::fresh_record_id;
 
 /// One live record: its winning revision frame.
@@ -68,14 +68,14 @@ pub fn list_records(session: &Session) -> anyhow::Result<Vec<RecordSummary>> {
     ids.dedup();
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
-        if let Some(winner) = latest(&refs, id) {
-            if winner.is_revision() {
-                out.push(RecordSummary {
-                    id,
-                    revision: winner.revision,
-                    timestamp_ms: winner.timestamp_ms,
-                });
-            }
+        if let Some(winner) = latest(&refs, id)
+            && winner.is_revision()
+        {
+            out.push(RecordSummary {
+                id,
+                revision: winner.revision,
+                timestamp_ms: winner.timestamp_ms,
+            });
         }
     }
     Ok(out)

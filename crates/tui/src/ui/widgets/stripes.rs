@@ -47,7 +47,7 @@ pub fn scrolling_rule(glyphs: &Glyphs, width: u16, tick: u64) -> String {
 pub fn herd_row(glyphs: &Glyphs, width: u16, row: u16, tick: u64) -> String {
     let width = usize::from(width);
     let drift = usize::try_from(tick / 2).unwrap_or(0);
-    let shift = if row % 2 == 0 {
+    let shift = if row.is_multiple_of(2) {
         drift
     } else {
         width.saturating_sub(drift % width.max(1))
@@ -77,7 +77,7 @@ pub fn herd_row(glyphs: &Glyphs, width: u16, row: u16, tick: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{herd_row, mask, MASK_CELLS};
+    use super::{MASK_CELLS, herd_row, mask};
     use crate::ui::theme::{Theme, ThemeName};
 
     #[test]

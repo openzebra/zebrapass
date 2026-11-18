@@ -8,11 +8,11 @@
 
 mod common;
 
-use common::{accept, gate_key, node, run_under, NOW};
+use common::{NOW, accept, gate_key, node, run_under};
 use p2p_core::suite::{CHALLENGE_LEN, HELLO_LEN, KIND_OFFSET, SOLVED_LEN};
 use p2p_core::{
-    Accept, CookieSecret, Initiator, Load, Responder, COOKIE_WINDOW_MS, GATE_WINDOW_MS,
-    MAX_DIFFICULTY,
+    Accept, COOKIE_WINDOW_MS, CookieSecret, GATE_WINDOW_MS, Initiator, Load, MAX_DIFFICULTY,
+    Responder,
 };
 
 const BUSY: Load = Load { difficulty: 8 };
@@ -309,16 +309,18 @@ fn a_harder_puzzle_takes_more_work_to_solve() {
     let easy: u64 = (0..5).map(|_| count(2)).sum();
     let hard = count(14);
     assert!(hard > 0 || easy == 0);
-    assert!(Responder::accept(
-        &node(0xB2).local(),
-        &cookies,
-        Load { difficulty: 14 },
-        &initiator
-            .solve(&issue(&cookies, Load { difficulty: 14 }, &hello, NOW))
-            .unwrap(),
-        NOW
-    )
-    .is_ok());
+    assert!(
+        Responder::accept(
+            &node(0xB2).local(),
+            &cookies,
+            Load { difficulty: 14 },
+            &initiator
+                .solve(&issue(&cookies, Load { difficulty: 14 }, &hello, NOW))
+                .unwrap(),
+            NOW
+        )
+        .is_ok()
+    );
 }
 
 #[test]

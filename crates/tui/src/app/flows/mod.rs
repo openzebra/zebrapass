@@ -39,3 +39,4 @@ pub mod shared_edit;
 pub mod unlock;
 mod unlock_controls;
 pub mod unlocked;
+mod unlocked_outcomes;

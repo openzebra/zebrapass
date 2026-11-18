@@ -1,9 +1,9 @@
 //! First run: the banner and the two ways in.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::gate::WelcomeState;
@@ -118,8 +118,9 @@ mod tests {
     fn banner_rows_are_even() {
         let rows = banner("ZEBRAPASS", true);
         assert_eq!(rows.len(), 5);
-        assert!(rows
-            .iter()
-            .all(|row| row.chars().count() == rows[0].chars().count()));
+        assert!(
+            rows.iter()
+                .all(|row| row.chars().count() == rows[0].chars().count())
+        );
     }
 }

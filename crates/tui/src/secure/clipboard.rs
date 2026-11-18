@@ -214,11 +214,11 @@ pub fn base64_decode(input: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     if input.is_empty() {
         return Some(Zeroizing::new(Vec::new()));
     }
-    if input.len() % 4 != 0 {
+    if !input.len().is_multiple_of(4) {
         return None;
     }
     let mut out = Zeroizing::new(Vec::with_capacity((input.len() / 4) * 3));
-    for chunk in input.chunks_exact(4) {
+    for chunk in input.as_chunks::<4>().0 {
         let c0 = decode_b64_digit(chunk.first().copied()?)?;
         let c1 = decode_b64_digit(chunk.get(1).copied()?)?;
         let byte2 = chunk.get(2).copied()?;
@@ -380,7 +380,7 @@ mod tests {
 
     use std::time::{Duration, Instant};
 
-    use super::{base64_decode, extract_osc52_payload, osc52, osc52_likely, Clipboard};
+    use super::{Clipboard, base64_decode, extract_osc52_payload, osc52, osc52_likely};
 
     #[test]
     fn base64_matches_rfc4648_vectors() {

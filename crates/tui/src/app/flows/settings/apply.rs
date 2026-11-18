@@ -4,12 +4,13 @@
 use crate::app::action::Action;
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog};
-use crate::app::flows::factors::{form, palette_action, FactorsState};
+use crate::app::flows::factors::{FactorsState, form, palette_action};
 use crate::app::flows::form::Form;
 use crate::app::flows::settings::rows::Row;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::screen::Nav;
 use crate::ui::widgets::toast::Tone;
+use crate::vault::create::unix_ms;
 use crate::vault::factors::presence;
 use crate::vault::ops::{FactorRef, Op};
 
@@ -60,6 +61,7 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         Row::AutoLock
         | Row::FocusLock
         | Row::RevealHide
+        | Row::BackupKeep
         | Row::ClipClear
         | Row::Theme
         | Row::Animation
@@ -81,6 +83,12 @@ pub fn activate(state: &mut Unlocked, row: Row, ctx: &mut Ctx) -> Nav {
         Row::DeviceStatus => form(state, Form::add_device()),
         Row::DevicePin if owned.is_some() => form(state, Form::change_pin()),
         Row::SyncNow => state.sync_now(ctx),
+        Row::SyncServers => form(state, sync_servers_form(state)),
+        Row::SyncProxy => form(state, sync_proxy_form(state)),
+        Row::BackupDir => form(state, backup_dir_form(state)),
+        Row::BackupExport => form(state, backup_export_form(state)),
+        Row::CloudBackupPush => cloud_backup_push(state, ctx),
+        Row::CloudBackupPull => cloud_backup_pull(state, ctx),
         Row::SyncDevices => state.open_addresses(false),
         Row::Name => form(state, Form::rename(&state.info.label)),
         Row::RotateKey => form(state, Form::rotate(found.password)),
@@ -131,4 +139,72 @@ fn leave_for(state: &mut Unlocked, view: View, ctx: &mut Ctx) {
     }
     discard(state, ctx);
     state.view = view;
+}
+
+fn sync_servers_form(state: &Unlocked) -> Form {
+    let current = state.settings.as_deref().map_or_else(String::new, |m| {
+        m.draft
+            .sync_servers
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>()
+            .join(", ")
+    });
+    Form::sync_servers(&current)
+}
+
+fn sync_proxy_form(state: &Unlocked) -> Form {
+    let current = state
+        .settings
+        .as_deref()
+        .and_then(|m| m.draft.sync_proxy.as_deref())
+        .unwrap_or("");
+    Form::sync_proxy(current)
+}
+
+fn backup_dir_form(state: &Unlocked) -> Form {
+    let current = state
+        .settings
+        .as_deref()
+        .and_then(|m| m.draft.backup_dir.as_deref())
+        .unwrap_or("");
+    Form::backup_dir(current)
+}
+
+fn backup_export_form(state: &Unlocked) -> Form {
+    let default_path = state
+        .base
+        .join("backups")
+        .join(format!("zebrapass-{}.zpbackup", unix_ms() / 1000));
+    Form::backup_export(&default_path.to_string_lossy())
+}
+
+fn cloud_backup_push(state: &Unlocked, ctx: &mut Ctx) {
+    match (state.vault.as_deref(), state.https.as_deref()) {
+        (Some(vault), Some(https)) => {
+            match local::build_backup_bundle(
+                &state.base,
+                &vault.session,
+                &vault.file,
+                &vault.meta.name,
+            ) {
+                Ok(bytes) => {
+                    https.push_cloud_backup(bytes);
+                    ctx.toast(Tone::Info, "Uploading encrypted backup...");
+                }
+                Err(err) => ctx.toast(Tone::Warn, err.to_string()),
+            }
+        }
+        (_, None) => ctx.toast(Tone::Info, "Configure and save a sync server first."),
+        (None, _) => ctx.toast(Tone::Info, "Vault busy."),
+    }
+}
+
+fn cloud_backup_pull(state: &Unlocked, ctx: &mut Ctx) {
+    if let Some(https) = state.https.as_deref() {
+        https.pull_cloud_backup();
+        ctx.toast(Tone::Info, "Downloading encrypted backup...");
+    } else {
+        ctx.toast(Tone::Info, "Configure and save a sync server first.");
+    }
 }

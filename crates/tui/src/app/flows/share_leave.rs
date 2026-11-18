@@ -8,7 +8,7 @@
 //! that. Until then the person still holds the old key, but they are no
 //! longer a member, so the others refuse their device and what they write.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use local::purge_shared_vault;
 use memberlog::Role;
 
@@ -95,6 +95,7 @@ impl Unlocked {
                     vault.leave(reference, identity)
                 })?;
                 self.reload_shared(&vault_id);
+                self.sync_push_shared_full(&vault_id);
                 self.check_in_now(&vault_id);
                 ctx.toast(
                     Tone::Success,
@@ -144,8 +145,7 @@ impl Unlocked {
         let delivered = self
             .p2p
             .as_deref()
-            .map(|p2p| p2p.provider.take_delivered())
-            .unwrap_or_default();
+            .map_or_default(|p2p| p2p.provider.take_delivered());
         for vault_id in delivered {
             let name = self
                 .shared_item(&vault_id)

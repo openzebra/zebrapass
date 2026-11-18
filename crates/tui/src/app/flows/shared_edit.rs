@@ -73,6 +73,7 @@ impl Unlocked {
         match saved {
             Some(Ok(id)) => {
                 self.reload_shared(&vault_id);
+                self.sync_push_shared_record(&vault_id, id);
                 if !deleting {
                     self.view = View::Home;
                     self.select(id);

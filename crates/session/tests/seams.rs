@@ -6,9 +6,9 @@
 mod common;
 
 use session::{
-    add_human_password, check_seen, create, list_records, open_record, revoke, rotate_vault_key,
-    unlock, wrap_directory, write_record, BodyAlg, Factor, HumanPasswordPublics, KdfProfile,
-    Revoke, RotateCreds, Seen, SessionError, UnlockCreds, VaultFile,
+    BodyAlg, Factor, HumanPasswordPublics, KdfProfile, Revoke, RotateCreds, Seen, SessionError,
+    UnlockCreds, VaultFile, add_human_password, check_seen, create, list_records, open_record,
+    revoke, rotate_vault_key, unlock, wrap_directory, write_record,
 };
 
 const SEED: [u8; 64] = [0x5A; 64];

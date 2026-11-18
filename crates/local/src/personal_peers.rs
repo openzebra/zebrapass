@@ -15,11 +15,11 @@
 
 use std::path::Path;
 
-use frame::{open, seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
+use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION, open, seal};
 use secret::Secret;
 use syncwire::reader::Reader;
 
-use crate::limits::{PERSONAL_PEERS_MAX, PERSONAL_PEER_MAX_LEN};
+use crate::limits::{PERSONAL_PEER_MAX_LEN, PERSONAL_PEERS_MAX};
 use crate::parse_personal_target;
 
 const FORMAT_2: u16 = 0x8000;

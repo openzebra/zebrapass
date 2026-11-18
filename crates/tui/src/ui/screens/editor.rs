@@ -1,13 +1,13 @@
 //! Record editor: one row per field, secrets masked, live size and field
 //! counters against the record limits.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::editor::{EditorState, Part, Value, ADD_KINDS};
+use crate::app::flows::editor::{ADD_KINDS, EditorState, Part, Value};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::keymap::Scope;
 use crate::secure::reveal::RevealKey;
@@ -173,12 +173,12 @@ fn field_lines<'a>(
         };
         spans.extend(value.spans);
         lines.push(Line::from(spans));
-        if let (Value::Secret(input), record::TAG_PASSWORD) = (&field.value, field.tag) {
-            if !input.is_empty() {
-                let mut strength = vec![Span::raw("               ")];
-                strength.extend(strength_spans(estimate(input.expose()), 10, theme));
-                lines.push(Line::from(strength));
-            }
+        if let (Value::Secret(input), record::TAG_PASSWORD) = (&field.value, field.tag)
+            && !input.is_empty()
+        {
+            let mut strength = vec![Span::raw("               ")];
+            strength.extend(strength_spans(estimate(input.expose()), 10, theme));
+            lines.push(Line::from(strength));
         }
     }
     (lines, focus_line)

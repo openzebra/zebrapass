@@ -19,13 +19,13 @@ use std::time::{Duration, Instant};
 use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
 use session::write_record;
+use tui::App;
 use tui::app::flows::home::Filter;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
-use tui::App;
 
-use common::{app, make_vault, press, render, temp_dir, tick, type_text, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, render, temp_dir, tick, type_text, unlock, wait};
 
 fn state(app: &App) -> &Unlocked {
     let Screen::Unlocked(state) = &app.screen else {
@@ -118,7 +118,7 @@ fn bob_and_alice_share_a_vault_through_the_interface() {
     let screen = render(&alice, 100, 30);
     assert!(screen.contains("vault number"), "{screen}");
     press(&mut alice, KeyCode::Enter);
-    assert!(!alice.ctx.clipboard.outbox().is_empty());
+    assert_ne!(alice.ctx.clipboard.outbox(), []);
     press(&mut alice, KeyCode::Esc);
 
     // Bob joins: paste, compare, confirm.
@@ -229,13 +229,15 @@ fn the_listening_choice_cycles_and_is_always_visible() {
     let screen = render(&alice, 100, 30);
     assert!(screen.contains("off"), "{screen}");
     assert!(screen.contains("not listening"), "{screen}");
-    assert!(state(&alice)
-        .p2p
-        .as_deref()
-        .unwrap()
-        .service
-        .local_addr()
-        .is_none());
+    assert!(
+        state(&alice)
+            .p2p
+            .as_deref()
+            .unwrap()
+            .service
+            .local_addr()
+            .is_none()
+    );
     press(&mut alice, KeyCode::Char('l'));
     wait(&mut alice);
     let screen = render(&alice, 100, 30);

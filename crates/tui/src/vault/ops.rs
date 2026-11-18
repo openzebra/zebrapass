@@ -4,20 +4,22 @@
 //! advances the rollback cursor. The vault moves into the worker and back;
 //! it is never cloned.
 
-use local::Prefs;
+use std::path::PathBuf;
+
+use local::{Prefs, export_backup_file};
 use record::{Document, TAG_PASSWORD};
 use seed::SeedPhrase;
 use session::{
-    clear_history, delete_record, drop_recovery_wrap, remove_chip_unlock, remove_human_password,
-    remove_prf_unlock, replace_human_password, restore_revision, revoke, rotate_vault_key, unlock,
-    write_record, Factor, KdfProfile, Revoke, RotateCreds, UnlockCreds,
+    Factor, KdfProfile, Revoke, RotateCreds, UnlockCreds, clear_history, delete_record,
+    drop_recovery_wrap, remove_chip_unlock, remove_human_password, remove_prf_unlock,
+    replace_human_password, restore_revision, revoke, rotate_vault_key, unlock, write_record,
 };
 use zeroize::Zeroizing;
 
-use crate::secure::health::{analyze, Candidate, HealthReport};
+use crate::secure::health::{Candidate, HealthReport, analyze};
 use crate::vault::create::{add_password, password_publics, unix_ms};
 use crate::vault::device;
-use crate::vault::factors::{presence, FactorKind};
+use crate::vault::factors::{FactorKind, presence};
 use crate::vault::open::Vault;
 
 /// A wrap addressed by kind and id.
@@ -98,6 +100,8 @@ pub enum Op {
     Health,
     /// Add reviewed records from another manager, skipping duplicates.
     Import(Vec<Document>),
+    /// Export a `.zpbackup` file to this path.
+    ExportBackup(PathBuf),
 }
 
 impl std::fmt::Debug for Op {
@@ -137,6 +141,8 @@ pub enum Outcome {
     Health(Box<HealthReport>),
     /// Records imported.
     Imported(import::Merged),
+    /// Backup written.
+    BackupExported(PathBuf),
 }
 
 /// Run `op` on `vault`.
@@ -231,6 +237,16 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
             &mut vault.file,
             records,
         )?),
+        Op::ExportBackup(dest) => {
+            export_backup_file(
+                &dest,
+                &vault.paths.base,
+                &vault.session,
+                &vault.file,
+                &vault.meta.name,
+            )?;
+            return Ok(Outcome::BackupExported(dest));
+        }
     };
     vault.persist()?;
     Ok(outcome)
@@ -264,6 +280,18 @@ fn rotate(vault: &mut Vault, rotation: &Rotation) -> anyhow::Result<Outcome> {
             .ok_or_else(|| anyhow::anyhow!("the current password is needed"))?;
         check_password(vault, current)?;
     }
+    // Load local VK-sealed sidecars before rotating VK so they can be re-sealed
+    // under the newly generated vault key.
+    let old_identity = vault
+        .session
+        .sync_identity_key()
+        .ok()
+        .and_then(|key| local::SyncIdentity::load(&vault.paths.sync_identity(), &key).ok());
+    let old_peers =
+        vault.session.personal_peers_key().ok().and_then(|key| {
+            local::load_personal_entries(&vault.paths.peers_store(), &key, true).ok()
+        });
+
     let human: Option<&[u8]> = rotation
         .current
         .as_deref()
@@ -291,6 +319,19 @@ fn rotate(vault: &mut Vault, rotation: &Rotation) -> anyhow::Result<Outcome> {
             &creds,
         )?,
         None => rotate_vault_key(&mut vault.session, &mut vault.file, &creds)?,
+    }
+    if let Some(identity) = old_identity {
+        identity.save(
+            &vault.paths.sync_identity(),
+            &vault.session.sync_identity_key()?,
+        )?;
+    }
+    if let Some(peers) = old_peers {
+        local::save_personal_entries(
+            &vault.paths.peers_store(),
+            &vault.session.personal_peers_key()?,
+            &peers,
+        )?;
     }
     Ok(Outcome::Rotated(rotation.revoke.is_some()))
 }

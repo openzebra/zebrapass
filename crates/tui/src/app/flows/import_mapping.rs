@@ -1,7 +1,7 @@
 //! The CSV column step of the import wizard: which column feeds what.
 //! Headers, samples, and cycling come from the `import` crate.
 
-use import::{csv_columns, Column, Credentials, Mapping};
+use import::{Column, Credentials, Mapping, csv_columns};
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;

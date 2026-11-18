@@ -6,11 +6,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
-use crate::app::flows::editing::{edit_secret, edit_text, printable, Hold};
+use crate::app::flows::editing::{Hold, edit_secret, edit_text, printable};
 use crate::app::flows::enroll::EnrollFactor;
-use crate::app::flows::form::{Form, FormFocus};
+use crate::app::flows::form::{Form, FormFocus, FormKind};
 use crate::app::flows::unlocked::Unlocked;
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::ui::widgets::toast::Tone;
 use crate::vault::ops::FactorRef;
@@ -78,10 +78,10 @@ pub enum Dialog {
 impl Dialog {
     /// A key was released: end a true hold early.
     pub fn release(&mut self, ctx: &Ctx) {
-        if let Self::Form(form) = self {
-            if let Some(hold) = form.hold.as_mut() {
-                hold.release(ctx.caps.key_release);
-            }
+        if let Self::Form(form) = self
+            && let Some(hold) = form.hold.as_mut()
+        {
+            hold.release(ctx.caps.key_release);
         }
     }
 
@@ -188,27 +188,27 @@ fn form_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
         return Nav::Stay;
     };
     let action = resolve(Scope::Dialog, event);
-    if action != Some(Action::Confirm) {
-        if let Some(hold) = form.hold.as_mut().filter(|_| !ctx.caps.key_release) {
-            hold.cancel();
-        }
+    if action != Some(Action::Confirm)
+        && let Some(hold) = form.hold.as_mut().filter(|_| !ctx.caps.key_release)
+    {
+        hold.cancel();
     }
-    if form.focus == FormFocus::Phrase {
-        if let Some(phrase) = form.phrase.as_mut() {
-            if let Some(ch) = printable(event).filter(|ch| *ch != ' ') {
-                phrase.type_char(ch);
-                return Nav::Stay;
+    if form.focus == FormFocus::Phrase
+        && let Some(phrase) = form.phrase.as_mut()
+    {
+        if let Some(ch) = printable(event).filter(|ch| *ch != ' ') {
+            phrase.type_char(ch);
+            return Nav::Stay;
+        }
+        if event.code == KeyCode::Backspace {
+            phrase.backspace();
+            return Nav::Stay;
+        }
+        if action == Some(Action::NextWord) {
+            if !phrase.space() {
+                form.error = Some("Keep typing: that is not a whole word yet.".into());
             }
-            if event.code == KeyCode::Backspace {
-                phrase.backspace();
-                return Nav::Stay;
-            }
-            if action == Some(Action::NextWord) {
-                if !phrase.space() {
-                    form.error = Some("Keep typing: that is not a whole word yet.".into());
-                }
-                return Nav::Stay;
-            }
+            return Nav::Stay;
         }
     }
     match action {
@@ -257,6 +257,20 @@ pub fn submit(state: &mut Unlocked, ctx: &mut Ctx) -> Nav {
         state.dialog = Some(dialog);
         return Nav::Stay;
     };
+    if let Some(outcome) = submit_settings_form(state, &form) {
+        match outcome {
+            Ok(msg) => {
+                ctx.redraw();
+                ctx.toast(Tone::Info, msg);
+            }
+            Err(message) => {
+                form.error = Some(message.into());
+                ctx.toast(Tone::Warn, message);
+                state.dialog = Some(Box::new(Dialog::Form(form)));
+            }
+        }
+        return Nav::Stay;
+    }
     match form.build() {
         Ok((op, task)) => {
             ctx.redraw();
@@ -272,4 +286,53 @@ pub fn submit(state: &mut Unlocked, ctx: &mut Ctx) -> Nav {
         }
     }
     Nav::Stay
+}
+
+fn submit_settings_form(
+    state: &mut Unlocked,
+    form: &Form,
+) -> Option<Result<&'static str, &'static str>> {
+    let raw = form.text.as_ref().map_or("", |t| t.value().trim());
+    match form.kind {
+        FormKind::SyncServers => {
+            let normalized = raw.replace(',', "\n");
+            let list = match local::parse_sync_server_list(&normalized, true) {
+                Ok(list) => list,
+                Err(err) => return Some(Err(err)),
+            };
+            if let Some(modal) = state.settings.as_deref_mut() {
+                modal.draft.sync_servers = list;
+            }
+            Some(Ok("Staged. Press Ctrl-S in Settings to save."))
+        }
+        FormKind::SyncProxy => {
+            let parsed = if raw.is_empty() {
+                None
+            } else {
+                match local::parse_sync_proxy_url(raw) {
+                    Ok(url) => Some(url),
+                    Err(err) => return Some(Err(err)),
+                }
+            };
+            if let Some(modal) = state.settings.as_deref_mut() {
+                modal.draft.sync_proxy = parsed;
+            }
+            Some(Ok("Staged. Press Ctrl-S in Settings to save."))
+        }
+        FormKind::BackupDir => {
+            let parsed = if raw.is_empty() {
+                None
+            } else {
+                match local::parse_backup_dir(raw) {
+                    Ok(dir) => Some(dir),
+                    Err(err) => return Some(Err(err)),
+                }
+            };
+            if let Some(modal) = state.settings.as_deref_mut() {
+                modal.draft.backup_dir = parsed;
+            }
+            Some(Ok("Staged. Press Ctrl-S in Settings to save."))
+        }
+        _ => None,
+    }
 }

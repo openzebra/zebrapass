@@ -6,11 +6,11 @@
 use local::Listen;
 use memberlog::Role;
 use p2p_net::FetchError;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use sharing::Fingerprint;
 
 use crate::app::ctx::Ctx;

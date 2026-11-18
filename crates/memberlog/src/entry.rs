@@ -1,8 +1,8 @@
 //! One signed membership change.
 
-use anyhow::{anyhow, Result};
-use pq::{sync_sign, MEMBER_LOG_CTX, SYNC_VK_LEN};
-use session::{frame_parts, DeviceCert, DeviceSignKey};
+use anyhow::{Result, anyhow};
+use pq::{MEMBER_LOG_CTX, SYNC_VK_LEN, sync_sign};
+use session::{DeviceCert, DeviceSignKey, frame_parts};
 use sha2::{Digest, Sha256};
 
 use crate::role::Role;

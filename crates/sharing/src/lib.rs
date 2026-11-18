@@ -13,10 +13,10 @@ mod fingerprint;
 mod invitation;
 mod text;
 
-pub use card::{ContactCard, CARD_PREFIX, CARD_WIRE_LEN, MAX_CARD_AGE_MS};
-pub use fingerprint::{account_fingerprint, vault_fingerprint, vault_number, Fingerprint};
+pub use card::{CARD_PREFIX, CARD_WIRE_LEN, ContactCard, MAX_CARD_AGE_MS};
+pub use fingerprint::{Fingerprint, account_fingerprint, vault_fingerprint, vault_number};
 pub use invitation::{
-    Invitation, Inviter, Offer, Opened, INVITE_PREFIX, MAX_HINT, MAX_HINTS, MAX_INVITE_WIRE_LEN,
-    MAX_NAME,
+    INVITE_PREFIX, Invitation, Inviter, MAX_HINT, MAX_HINTS, MAX_INVITE_WIRE_LEN, MAX_NAME, Offer,
+    Opened,
 };
 pub use text::{decode as decode_text, encode as encode_text};

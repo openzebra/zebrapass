@@ -4,7 +4,7 @@
 //! world sees. The person writes it here and the node signs it into the
 //! addresses it hands to members. An empty entry takes it back.
 
-use local::{offer_observed, parse_advertise, Offer};
+use local::{Offer, offer_observed, parse_advertise};
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;

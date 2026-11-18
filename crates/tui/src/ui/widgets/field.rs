@@ -5,13 +5,13 @@
 
 use std::borrow::Cow;
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
-use crate::secure::secret_input::{SecretInput, PHASES};
+use crate::secure::secret_input::{PHASES, SecretInput};
 use crate::ui::input::TextInput;
 use crate::ui::theme::{Glyphs, Theme};
 use crate::ui::widgets::stripes::MASK_CELLS;

@@ -5,9 +5,9 @@
 //! the OS keychain: unlocking takes this disk and the PIN.
 
 use kdf::KdfProfile;
-use local::{device_key_info, open_device_key, seal_device_key, DeviceKey, Paths};
+use local::{DeviceKey, Paths, device_key_info, open_device_key, seal_device_key};
 use session::{
-    add_chip_unlock, unlock as open_vault, wrap_directory, Factor, Session, UnlockCreds, VaultFile,
+    Factor, Session, UnlockCreds, VaultFile, add_chip_unlock, unlock as open_vault, wrap_directory,
 };
 
 /// Argon2id preset a new device PIN is stretched with.

@@ -1,8 +1,10 @@
-//! A placeholder vault asks the network for the account's vault: when
-//! another device is found, its vault is fetched and opened with the
-//! password that unlocked this one.
+//! A placeholder vault asks sync servers and LAN peers for the account's
+//! vault: when another copy is found, it is fetched, unlocked with the held
+//! credentials, and enrolled with this device's own password or Device PIN.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::dialog::Dialog;
@@ -10,13 +12,19 @@ use crate::app::flows::unlocked::Unlocked;
 use crate::app::screen::Screen;
 use crate::app::worker::Job;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::adopt::{is_placeholder, unmark_placeholder, AdoptRequest, Held};
-use crate::vault::error::UnlockError;
 use crate::vault::Vault;
+use crate::vault::adopt::{AdoptRequest, Held, is_placeholder, unmark_placeholder};
+use crate::vault::error::UnlockError;
 
 impl crate::app::App {
-    /// Open `vault` and keep `held`, the password of a placeholder.
-    pub(super) fn opened_holding(&mut self, vault: Box<Vault>, message: &str, held: Option<Held>) {
+    /// Open `vault` and keep `held`, the credentials of a placeholder.
+    pub(super) fn opened_holding(
+        &mut self,
+        mut vault: Box<Vault>,
+        message: &str,
+        held: Option<Arc<Held>>,
+    ) {
+        crate::app::jobs::seed_cli_sync_prefs(&mut vault, &self.ctx);
         self.opened(vault, message);
         if let Screen::Unlocked(unlocked) = &mut self.screen {
             let show_modal = held.is_some() && unlocked.cache.is_empty();
@@ -29,9 +37,9 @@ impl crate::app::App {
 }
 
 impl Unlocked {
-    /// Keep the password the placeholder was unlocked with.
+    /// Keep the credentials the placeholder was unlocked with.
     #[must_use]
-    pub fn with_held(mut self, held: Option<Held>) -> Self {
+    pub fn with_held(mut self, held: Option<Arc<Held>>) -> Self {
         let show_modal = held.is_some() && self.cache.is_empty();
         self.held = held;
         if show_modal {
@@ -41,7 +49,7 @@ impl Unlocked {
     }
 
     /// Dismiss the restore-sync modal while keeping background adoption
-    /// active if the user adds a manual device address in Settings.
+    /// active if the user adds a manual device address or sync server.
     pub fn cancel_adopt(&mut self, ctx: &mut Ctx) {
         if matches!(self.dialog.as_deref(), Some(Dialog::RestoreSync(_))) {
             self.dialog = None;
@@ -60,10 +68,10 @@ impl Unlocked {
         if matches!(self.dialog.as_deref(), Some(Dialog::RestoreSync(_))) {
             self.dialog = None;
         }
-        if let Some(vault) = self.vault.as_deref() {
-            if is_placeholder(&vault.paths) {
-                unmark_placeholder(&vault.paths);
-            }
+        if let Some(vault) = self.vault.as_deref()
+            && is_placeholder(&vault.paths)
+        {
+            unmark_placeholder(&vault.paths);
         }
         self.refresh_personal();
         if let Some(p2p) = self.p2p.as_deref() {
@@ -71,16 +79,14 @@ impl Unlocked {
         }
     }
 
-    /// Ask the devices found so far for the account's vault, when this vault
-    /// is still an untouched placeholder and a new device was heard or the
-    /// check-in timer is due.
+    /// Ask configured sync servers and any discovered peers for the account's
+    /// vault when this vault is still an untouched placeholder.
     pub fn try_adopt(&mut self, ctx: &mut Ctx) {
         if ctx.busy() || self.held.is_none() || !self.cache.is_empty() {
             return;
         }
-        let (Some(vault), Some(p2p), Some(identity), Some(held)) = (
+        let (Some(vault), Some(identity), Some(held)) = (
             self.vault.as_deref(),
-            self.p2p.as_deref_mut(),
             self.identity.as_ref(),
             self.held.as_ref(),
         ) else {
@@ -89,36 +95,65 @@ impl Unlocked {
         if !is_placeholder(&vault.paths) {
             return;
         }
+        let sync_servers: Vec<String> = vault
+            .meta
+            .prefs
+            .as_ref()
+            .filter(|p| !p.sync_servers.is_empty())
+            .map_or_else(
+                || ctx.sync_servers.iter().map(ToString::to_string).collect(),
+                |p| p.sync_servers.iter().map(ToString::to_string).collect(),
+            );
+        let sync_proxy = vault
+            .meta
+            .prefs
+            .as_ref()
+            .and_then(|p| p.sync_proxy.as_deref())
+            .or(ctx.sync_proxy.as_deref())
+            .map(ToString::to_string);
         let manual: Vec<String> = self
             .devices
             .iter()
             .filter(|entry| entry.manual)
             .map(|entry| entry.address.to_string())
             .collect();
-        let known = p2p.discovered.len() + manual.len() + p2p.relays.len();
-        let due = p2p.check_due();
-        let catalog_count = if due && self.beacon.is_none() { 2 } else { 0 };
-        if (known == 0 && catalog_count == 0) || (known == self.adopt_seen && !due) {
+        let (known, due) = self.p2p.as_deref_mut().map_or((0, false), |p2p| {
+            (
+                p2p.discovered.len() + manual.len() + p2p.relays.len(),
+                p2p.check_due(),
+            )
+        });
+        let server_due = !sync_servers.is_empty()
+            && self
+                .adopt_last_try
+                .is_none_or(|t| ctx.now.saturating_duration_since(t) >= Duration::from_secs(2));
+        let peer_due = known > 0 && (known != self.adopt_seen || due);
+        if !server_due && !peer_due {
             return;
         }
         self.adopt_seen = known;
-        let primary: Vec<String> = p2p
-            .discovered
-            .iter()
-            .filter(|address| {
-                address.parse::<SocketAddr>().is_ok() || local::parse_relay_hint(address).is_ok()
-            })
-            .cloned()
-            .chain(manual.iter().rev().cloned())
-            .collect();
-        let chain = crate::app::p2p::personal_candidates(p2p, &manual, catalog_count);
-        let mut addresses: Vec<String> = chain
-            .into_iter()
-            .filter(|cand| !primary.contains(cand))
-            .rev()
-            .collect();
-        addresses.extend(primary);
-        if let Some(target) = addresses.last() {
+        self.adopt_last_try = Some(ctx.now);
+        let addresses = self.p2p.as_deref().map_or_else(Vec::new, |p2p| {
+            let primary: Vec<String> = p2p
+                .discovered
+                .iter()
+                .filter(|address| {
+                    address.parse::<SocketAddr>().is_ok()
+                        || local::parse_relay_hint(address).is_ok()
+                })
+                .cloned()
+                .chain(manual.iter().rev().cloned())
+                .collect();
+            let chain = crate::app::p2p::personal_candidates(p2p, &manual);
+            let mut list: Vec<String> = chain
+                .into_iter()
+                .filter(|cand| !primary.contains(cand))
+                .rev()
+                .collect();
+            list.extend(primary);
+            list
+        });
+        if let (Some(p2p), Some(target)) = (self.p2p.as_deref_mut(), addresses.last()) {
             p2p.log.push_line(format!(
                 "adopt // dialing {target} ({} candidates)",
                 addresses.len()
@@ -126,21 +161,24 @@ impl Unlocked {
         }
         let request = AdoptRequest {
             placeholder: vault.paths.clone(),
-            identity: std::sync::Arc::clone(identity),
+            identity: Arc::clone(identity),
             client_id: vault.meta.client_id,
             name: vault.meta.name.clone(),
-            password: held.copy(),
+            held: Arc::clone(held),
             addresses,
             manual,
             loopback: self.beacon.is_some_and(|config| config.loopback),
+            sync_servers,
+            sync_proxy,
+            extra_ca_pem: ctx.extra_ca_pem.clone(),
         };
         ctx.start(Job::Adopt(Box::new(request)), Task::Adopt);
         ctx.redraw();
     }
 
     /// The attempt failed. Not finding a device is the ordinary case and
-    /// stays quiet; a vault that does not open with this password ends the
-    /// attempts.
+    /// stays quiet; a vault that does not open with the held credentials ends
+    /// the attempts.
     pub fn adopt_failed(&mut self, error: UnlockError, ctx: &mut Ctx) {
         let message = match error {
             UnlockError::Peer(reason) => {

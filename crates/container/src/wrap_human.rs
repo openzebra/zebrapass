@@ -7,8 +7,8 @@
 use std::marker::PhantomData;
 
 use crate::limits::{
-    concat_array, read_array, read_u32, shift, wire_len, HUMAN_PASSWORD_PAYLOAD_LEN, KDF_M_KIB_MAX,
-    KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX, KDF_T_MIN, KIND_PASSWORD_HUMAN,
+    HUMAN_PASSWORD_PAYLOAD_LEN, KDF_M_KIB_MAX, KDF_M_KIB_MIN, KDF_P_MAX, KDF_P_MIN, KDF_T_MAX,
+    KDF_T_MIN, KIND_PASSWORD_HUMAN, concat_array, read_array, read_u32, shift, wire_len,
 };
 
 const HPW_KID: usize = 0;

@@ -4,8 +4,8 @@
 #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
 
 use session::{
-    change_master, create, reencrypt_body, unlock, write_records, BodyAlg, KdfProfile, UnlockCreds,
-    VaultFile,
+    BodyAlg, KdfProfile, UnlockCreds, VaultFile, change_master, create, reencrypt_body, unlock,
+    write_records,
 };
 
 const SEED: [u8; 64] = [0x11; 64];

@@ -16,15 +16,15 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use local::{create_vault, write_atomic, Paths, SyncIdentity};
+use local::{Paths, SyncIdentity, create_vault, write_atomic};
 use p2p_net::{
-    fetch_personal, personal_view, Conn, Dialing, FetchError, Limits, Policy, Service,
-    SharedProvider,
+    Conn, Dialing, FetchError, Limits, Policy, Service, SharedProvider, fetch_personal,
+    personal_view,
 };
 use record::{Document, TAG_TITLE};
 use session::{
-    accept_peer_frame, frontier, latest_frame, list_records, open_record, unlock, write_record,
-    BodyAlg, KdfProfile, Session, UnlockCreds, VaultFile,
+    BodyAlg, KdfProfile, Session, UnlockCreds, VaultFile, accept_peer_frame, frontier,
+    latest_frame, list_records, open_record, unlock, write_record,
 };
 use syncwire::{decode_announce, decode_frontier, decode_personal_frame};
 
@@ -293,7 +293,7 @@ fn a_device_of_the_account_can_push_a_frame_and_the_owner_takes_it_once() {
     assert_eq!(verdicts.0, [p2p_net::Push::Applied]);
     assert_eq!(verdicts.1, [p2p_net::Push::Refused]);
     assert_eq!(first.provider.take_pushed(), [frame]);
-    assert!(first.provider.take_pushed().is_empty());
+    assert_eq!(first.provider.take_pushed(), [] as [std::vec::Vec<u8>; 0]);
 }
 
 #[test]
@@ -384,10 +384,12 @@ fn a_revision_one_identity_upgrades_in_place_keeps_its_device_and_then_serves() 
         local::upgrade_sync_identity(&file, &key, &[4; 64]).is_err(),
         "another account's phrase changes nothing"
     );
-    assert!(SyncIdentity::load(&file, &key)
-        .unwrap()
-        .account_gate()
-        .is_none());
+    assert!(
+        SyncIdentity::load(&file, &key)
+            .unwrap()
+            .account_gate()
+            .is_none()
+    );
     assert!(local::upgrade_sync_identity(&file, &key, &SEED).unwrap());
     assert!(!local::upgrade_sync_identity(&file, &key, &SEED).unwrap());
     assert_eq!(
@@ -440,10 +442,7 @@ impl Sleeper {
         let provider = Arc::new(SharedProvider::new(base, Arc::new(second_device(&SEED, 7))));
         provider.allow_loopback_peers();
         let node = Service::start(listens.then_some("127.0.0.1:0"), Arc::clone(&provider)).unwrap();
-        let address = node
-            .local_addr()
-            .map(|addr| addr.to_string())
-            .unwrap_or_default();
+        let address = node.local_addr().map_or_default(|addr| addr.to_string());
         Self {
             session,
             file,
@@ -455,9 +454,10 @@ impl Sleeper {
     }
 
     fn unlock(&self) {
-        assert!(self
-            .provider
-            .serve_personal(self.path.clone(), self.session.reopen_key()));
+        assert!(
+            self.provider
+                .serve_personal(self.path.clone(), self.session.reopen_key())
+        );
     }
 
     /// Apply frames as the open vault does, save it, and count the ones it
@@ -507,7 +507,7 @@ fn a_push_to_a_peer_that_was_locked_lands_on_the_next_check_in() {
         push(&first, &sleeper),
         p2p_net::Event::FetchFailed { .. }
     ));
-    assert!(sleeper.provider.take_pushed().is_empty());
+    assert_eq!(sleeper.provider.take_pushed(), [] as [std::vec::Vec<u8>; 0]);
     assert_ne!(
         frontier(&sleeper.session).unwrap(),
         frontier(&first.session).unwrap()
@@ -532,7 +532,7 @@ fn a_push_to_a_peer_that_was_locked_lands_on_the_next_check_in() {
         push(&first, &sleeper),
         p2p_net::Event::PersonalPulled { .. }
     ));
-    assert!(sleeper.provider.take_pushed().is_empty());
+    assert_eq!(sleeper.provider.take_pushed(), [] as [std::vec::Vec<u8>; 0]);
     drop(sleeper.node);
 }
 

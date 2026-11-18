@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use local::{is_pending, open_shared_vault, read_member_log, SharedRef, SharedVault, SyncIdentity};
+use local::{SharedRef, SharedVault, SyncIdentity, is_pending, open_shared_vault, read_member_log};
 use memberlog::Role;
 use p2p_net::{FetchError, Known};
 use session::Session;
 
-use crate::vault::records::{build_cache, Summary};
+use crate::vault::records::{Summary, build_cache};
 
 /// Where a shared vault stands on this device.
 pub enum Status {

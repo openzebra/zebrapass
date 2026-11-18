@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use sharing::Fingerprint;
 
 use crate::app::flows::share_leave::LeaveMode;
-use crate::ui::screens::sync::{blank, heading, print_lines, role_gloss, role_name, say, INDENT};
+use crate::ui::screens::sync::{INDENT, blank, heading, print_lines, role_gloss, role_name, say};
 use crate::ui::theme::Theme;
 
 pub(super) fn remove_confirm_lines(

@@ -2,13 +2,13 @@
 //! fixed and only described. Later steps delegate to the ceremony and enroll
 //! screens.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::flows::create::{estimate, profile_info, CreateState, SetupField, Step, PROFILES};
+use crate::app::flows::create::{CreateState, PROFILES, SetupField, Step, estimate, profile_info};
 use crate::cli::Flags;
 use crate::ui::layout::{body_and_hints, centered, row};
 use crate::ui::widgets::chrome::{button, hint_bar, panel, radio, step_dots};

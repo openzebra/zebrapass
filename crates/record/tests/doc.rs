@@ -8,7 +8,7 @@
     reason = "tests may unwrap, index, and panic"
 )]
 
-use record::{Document, ValueType, TAG_NOTES, TAG_PASSWORD, TAG_TITLE};
+use record::{Document, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, ValueType};
 use record::{MAX_CUSTOM_NAME, MAX_FIELDS, SCHEMA_VERSION};
 
 fn sample_doc() -> Document {
@@ -75,9 +75,10 @@ fn custom_fields_add_and_lookup() {
 fn custom_name_length_is_enforced() {
     let mut doc = Document::new();
     let long = "x".repeat(MAX_CUSTOM_NAME + 1);
-    assert!(doc
-        .set_custom(0x8001, &long, ValueType::Bytes, b"")
-        .is_err());
+    assert!(
+        doc.set_custom(0x8001, &long, ValueType::Bytes, b"")
+            .is_err()
+    );
     let ok = "x".repeat(MAX_CUSTOM_NAME);
     doc.set_custom(0x8001, &ok, ValueType::Bytes, b"").unwrap();
     let parsed = Document::parse(&doc.encode().unwrap()).unwrap();

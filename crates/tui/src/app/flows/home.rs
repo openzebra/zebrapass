@@ -4,13 +4,13 @@ use std::cmp::Reverse;
 
 use local::Usage;
 use record::{
-    Document, ValueType, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TOTP, TAG_URL, TAG_USERNAME,
+    Document, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TOTP, TAG_URL, TAG_USERNAME, ValueType,
 };
 
 use crate::secure::health::HealthReport;
 use crate::secure::reveal::RevealGuard;
 use crate::ui::input::TextInput;
-use crate::vault::records::{standard_label, RecordKind, Summary, CUSTOM_FAVORITE, CUSTOM_TAGS};
+use crate::vault::records::{CUSTOM_FAVORITE, CUSTOM_TAGS, RecordKind, Summary, standard_label};
 
 /// Longest search query.
 pub const MAX_QUERY: usize = 128;
@@ -339,8 +339,8 @@ mod tests {
     use local::Usage;
     use record::{Document, TAG_TITLE};
 
-    use super::{visible, Filter};
-    use crate::vault::records::{Summary, CUSTOM_FAVORITE};
+    use super::{Filter, visible};
+    use crate::vault::records::{CUSTOM_FAVORITE, Summary};
 
     const NOW: u64 = 1_800_000_000_000;
     const DAY_MS: u64 = 86_400_000;

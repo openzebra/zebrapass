@@ -10,7 +10,7 @@ use crate::app::ctx::Ctx;
 use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog};
 use crate::app::flows::home::Detail;
 use crate::app::flows::unlocked::{Unlocked, View};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::vault::records::standard_label;
 use session::Session;
@@ -192,7 +192,7 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
 
 #[cfg(test)]
 mod tests {
-    use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE, TAG_URL};
+    use record::{Document, TAG_PASSWORD, TAG_TITLE, TAG_URL, ValueType};
 
     use super::diff;
 

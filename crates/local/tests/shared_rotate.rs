@@ -11,14 +11,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use local::{
-    adopt_rekeyed, adopt_shared_file, apply_rotation, create_shared_vault, is_behind,
-    join_shared_vault, open_shared_vault, plan_rotation, seed_matches_log, Attested, Replace,
-    SharedRef, SharedVault, SyncIdentity,
+    Attested, Replace, SharedRef, SharedVault, SyncIdentity, adopt_rekeyed, adopt_shared_file,
+    apply_rotation, create_shared_vault, is_behind, join_shared_vault, open_shared_vault,
+    plan_rotation, seed_matches_log,
 };
 use memberlog::{Action, Role};
 use record::{Document, TAG_TITLE};
 use secret::Secret;
-use session::{list_records, unlock, write_record, KdfProfile, UnlockCreds, VaultFile};
+use session::{KdfProfile, UnlockCreds, VaultFile, list_records, unlock, write_record};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let mut suffix = [0u8; 8];

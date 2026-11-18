@@ -39,16 +39,16 @@ mod text;
 
 use zeroize::Zeroizing;
 
-pub use csv_columns::{csv_columns, Column, TARGETS};
+pub use csv_columns::{Column, TARGETS, csv_columns};
 pub use csv_map::{Mapping, Preset, Target};
-pub use item::{Draft, Item, ItemKind, Slot, CUSTOM_KIND};
-pub use kdbx_header::{check as check_kdf_cost, kdf_cost, KdfCost};
+pub use item::{CUSTOM_KIND, Draft, Item, ItemKind, Slot};
+pub use kdbx_header::{KdfCost, check as check_kdf_cost, kdf_cost};
 pub use limits::{MAX_CSV_COLUMNS, MAX_CUSTOM, MAX_FIELD, MAX_IMPORT_FILE, MAX_ITEMS};
-pub use load::{expand_home, inspect, load, Credentials, FileHint, Load};
-pub use merge::{into_session, Merged};
+pub use load::{Credentials, FileHint, Load, expand_home, inspect, load};
+pub use merge::{Merged, into_session};
 pub use report::{Report, Skip, SkipReason};
 pub use review::{Review, Row};
-pub use source::{read_file, read_head, sniff, Source};
+pub use source::{Source, read_file, read_head, sniff};
 
 /// What to read.
 pub struct Request {

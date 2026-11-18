@@ -19,18 +19,18 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use p2p_net::{Relay, RelayLimits};
+use tui::App;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
 use tui::vault::discover::discover;
-use tui::vault::open::{unlock_vault, Credential};
-use tui::vault::ops::{apply, Op};
-use tui::App;
+use tui::vault::open::{Credential, unlock_vault};
+use tui::vault::ops::{Op, apply};
 use zeroize::Zeroizing;
 
 use common::{
-    app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock, wait,
-    PASSWORD,
+    PASSWORD, app, keep_to_this_device, make_vault, press, render, temp_dir, type_text, unlock,
+    wait,
 };
 
 fn relay() -> Relay {
@@ -190,13 +190,10 @@ fn taking_every_relay_back_turns_the_switch_off_and_frees_the_slot() {
     wait(&mut app);
     assert!(matches!(share(&app).step, Step::Overview));
     assert!(!holds(&app), "nothing to announce through");
-    assert!(state(&app)
-        .info
-        .prefs
-        .as_ref()
-        .unwrap()
-        .p2p_relays
-        .is_empty());
+    assert_eq!(
+        state(&app).info.prefs.as_ref().unwrap().p2p_relays,
+        [] as [std::boxed::Box<str>; 0]
+    );
     assert!(reservations(&relay, 0));
     press(&mut app, KeyCode::Char('t'));
     assert!(render(&app, 160, 30).contains("Save a relay first"));

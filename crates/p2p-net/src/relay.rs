@@ -13,14 +13,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use syncwire::limits::RELAY_OPEN_LEN;
-use syncwire::{decode_open, Challenge, RelaySide, RelayType};
+use syncwire::{Challenge, RelaySide, RelayType, decode_open};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio::time::timeout;
 
-use crate::relay_wire::{receive, send, MESSAGE_TIMEOUT};
+use crate::relay_wire::{MESSAGE_TIMEOUT, receive, send};
 
 /// What a relay holds, allows and asks for. Every number is the operator's.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,11 +64,11 @@ impl Default for RelayLimits {
             per_address_connections: 16,
             max_reservations: 256,
             per_address_reservations: 8,
-            reservation_ttl: Duration::from_secs(10 * 60),
+            reservation_ttl: Duration::from_mins(10),
             splices_per_slot: 4,
             max_splices: 128,
             splice_bytes: 64 << 20,
-            splice_time: Duration::from_secs(15 * 60),
+            splice_time: Duration::from_mins(15),
             splice_idle: Duration::from_secs(120),
             splice_rate: 2 << 20,
             total_rate: 32 << 20,
@@ -199,10 +199,10 @@ impl State {
     }
 
     pub fn release_reservation(&self, ip: IpAddr) {
-        if let Ok(mut tables) = self.tables.lock() {
-            if let Some(counts) = tables.per_ip.get_mut(&ip) {
-                counts.reservations = counts.reservations.saturating_sub(1);
-            }
+        if let Ok(mut tables) = self.tables.lock()
+            && let Some(counts) = tables.per_ip.get_mut(&ip)
+        {
+            counts.reservations = counts.reservations.saturating_sub(1);
         }
     }
 
@@ -388,37 +388,13 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, state: Arc<State>) {
             return;
         }
     };
-    let mut prefix = [0u8; 4];
-    if !matches!(
-        timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut prefix)).await,
-        Ok(Ok(_))
-    ) {
-        return;
-    }
     let mut open = [0u8; RELAY_OPEN_LEN];
-    if &prefix == b"GET " {
-        let Some(upgraded) = crate::ws_relay::upgrade_after_get(stream).await else {
-            return;
-        };
-        stream = upgraded;
-        let opened = timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut open)).await;
-        if !matches!(opened, Ok(Ok(_))) || decode_open(&open).is_err() {
-            return;
-        }
-    } else {
-        let mut rest = [0u8; 2];
-        if !matches!(
-            timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut rest)).await,
-            Ok(Ok(_))
-        ) {
-            return;
-        }
-        let [p0, p1, p2, p3] = prefix;
-        let [v0, v1] = rest;
-        open = [p0, p1, p2, p3, v0, v1];
-        if decode_open(&open).is_err() {
-            return;
-        }
+    if !matches!(
+        timeout(MESSAGE_TIMEOUT, stream.read_exact(&mut open)).await,
+        Ok(Ok(_))
+    ) || decode_open(&open).is_err()
+    {
+        return;
     }
     let Ok(salt) = p2p_core::relay_random() else {
         return;

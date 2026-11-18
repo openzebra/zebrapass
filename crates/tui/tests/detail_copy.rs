@@ -13,15 +13,15 @@
 mod common;
 
 use crossterm::event::KeyCode;
-use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE, TAG_URL};
+use record::{Document, TAG_PASSWORD, TAG_TITLE, TAG_URL, ValueType};
+use tui::App;
 use tui::app::ctx::Task;
 use tui::app::flows::home::Pane;
 use tui::app::screen::Screen;
 use tui::secure::clipboard::osc52;
 use tui::vault::ops::Op;
-use tui::App;
 
-use common::{app, make_vault, press, render, temp_dir, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, render, temp_dir, unlock, wait};
 
 fn vault_with_custom_fields() -> App {
     let base = temp_dir("detail-copy");

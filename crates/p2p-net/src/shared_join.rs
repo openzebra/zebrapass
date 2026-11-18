@@ -5,9 +5,10 @@ use std::path::Path;
 
 use anyhow::Result;
 use local::{
-    adopt_shared_file, prepare_rekey, read_member_log, save_member_log, shared_paths_for, Attested,
-    RekeyPlan, SharedRef, SharedVault, SyncIdentity,
+    Attested, RekeyPlan, SharedRef, SharedVault, SyncIdentity, adopt_shared_file, prepare_rekey,
+    read_member_log, save_member_log, shared_paths_for,
 };
+use memberlog::MemberLog;
 use secret::Secret;
 use session::VaultFile;
 use syncwire::decode_snapshot;
@@ -116,8 +117,13 @@ pub fn finish_join(
     let (file, attestations) = decode_snapshot(snapshot)?;
     let paths = shared_paths_for(base, &reference.vault_id);
     let key = kdf::shared_members_key(reference.seed.expose(), &reference.vault_id)?;
-    let mut log = read_member_log(base, reference)?;
-    log.merge(&entries)?;
+    let log = if paths.members_log().is_file() {
+        let mut existing = read_member_log(base, reference)?;
+        existing.merge(&entries)?;
+        existing
+    } else {
+        MemberLog::from_entries(reference.vault_id, &entries, &reference.anchor)?
+    };
     let own = identity.devices().first().ok_or_else(unavailable)?;
     let introduced = reference
         .introduction

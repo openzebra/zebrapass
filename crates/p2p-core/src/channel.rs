@@ -6,9 +6,9 @@
 //! and carries the sender, the direction and a counter, so a replayed,
 //! reordered, reflected or re-addressed message fails to open.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use frame::{
-    open, parse, seal, FrameMeta, ALG_CASCADE, CASCADE_OVERHEAD, HEADER_LEN, KIND_REVISION, TAG_LEN,
+    ALG_CASCADE, CASCADE_OVERHEAD, FrameMeta, HEADER_LEN, KIND_REVISION, TAG_LEN, open, parse, seal,
 };
 use secret::Secret;
 

@@ -14,14 +14,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use local::{
-    create_shared_vault, is_pending, join_shared_vault, open_shared_vault, Introduction, SharedRef,
-    SyncIdentity,
+    Introduction, SharedRef, SyncIdentity, create_shared_vault, is_pending, join_shared_vault,
+    open_shared_vault,
 };
 use memberlog::{Action, Role};
-use p2p_net::{finish_join, Event, Joined, Known, Service, SharedProvider};
+use p2p_net::{Event, Joined, Known, Service, SharedProvider, finish_join};
 use record::{Document, TAG_TITLE};
 use secret::Secret;
-use session::{list_records, open_record, write_record, KdfProfile};
+use session::{KdfProfile, list_records, open_record, write_record};
 use sharing::{ContactCard, Invitation, Inviter, Offer};
 
 const WAIT: Duration = Duration::from_secs(60);
@@ -402,27 +402,31 @@ fn a_tampered_vault_file_is_refused_and_the_device_stays_pending() {
     let mut bad_log = log.clone();
     let last = bad_log.len() - 1;
     bad_log[last] ^= 1;
-    assert!(finish_join(
-        &w.bob_dir,
-        &bob_ref,
-        &w.bob,
-        &bad_log,
-        snapshot.clone(),
-        None,
-        None
-    )
-    .is_err());
+    assert!(
+        finish_join(
+            &w.bob_dir,
+            &bob_ref,
+            &w.bob,
+            &bad_log,
+            snapshot.clone(),
+            None,
+            None
+        )
+        .is_err()
+    );
     assert!(is_pending(&w.bob_dir, &bob_ref));
-    assert!(finish_join(
-        &w.bob_dir,
-        &bob_ref,
-        &w.bob,
-        &log[..log.len() - 1],
-        snapshot.clone(),
-        None,
-        None
-    )
-    .is_err());
+    assert!(
+        finish_join(
+            &w.bob_dir,
+            &bob_ref,
+            &w.bob,
+            &log[..log.len() - 1],
+            snapshot.clone(),
+            None,
+            None
+        )
+        .is_err()
+    );
 
     assert!(finish_join(&w.bob_dir, &bob_ref, &w.bob, &log, snapshot, None, None).is_ok());
 }
@@ -562,28 +566,32 @@ fn a_removed_member_is_refused_and_a_remaining_one_receives_the_new_seed() {
     // owner's commitment, or a wrong epoch, is refused.
     let mut lying = rekey.to_vec();
     lying[0] ^= 1;
-    assert!(finish_join(
-        &carol_dir,
-        &carol_ref,
-        &carol,
-        &log,
-        snapshot.clone(),
-        Some(&lying),
-        Some(known)
-    )
-    .is_err());
+    assert!(
+        finish_join(
+            &carol_dir,
+            &carol_ref,
+            &carol,
+            &log,
+            snapshot.clone(),
+            Some(&lying),
+            Some(known)
+        )
+        .is_err()
+    );
     let mut skipped = rekey.to_vec();
     skipped[67] = 5;
-    assert!(finish_join(
-        &carol_dir,
-        &carol_ref,
-        &carol,
-        &log,
-        snapshot.clone(),
-        Some(&skipped),
-        Some(known)
-    )
-    .is_err());
+    assert!(
+        finish_join(
+            &carol_dir,
+            &carol_ref,
+            &carol,
+            &log,
+            snapshot.clone(),
+            Some(&skipped),
+            Some(known)
+        )
+        .is_err()
+    );
     let joined = finish_join(
         &carol_dir,
         &carol_ref,

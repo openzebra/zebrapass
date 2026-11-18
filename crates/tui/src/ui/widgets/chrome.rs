@@ -1,15 +1,15 @@
 //! Frame pieces every screen shares: panels, buttons, the hint bar, step
 //! dots, radios, and the "terminal too small" card.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
-use crate::app::keymap::{hints, label, Scope};
-use crate::ui::layout::{centered, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::keymap::{Scope, hints, label};
+use crate::ui::layout::{MIN_HEIGHT, MIN_WIDTH, centered};
 use crate::ui::theme::Theme;
 
 /// A rounded panel with a title.
@@ -121,11 +121,7 @@ pub fn radio(on: bool, theme: &Theme) -> String {
 /// `[x]` or `[ ]`.
 #[must_use]
 pub const fn checkbox(on: bool) -> &'static str {
-    if on {
-        "[x]"
-    } else {
-        "[ ]"
-    }
+    if on { "[x]" } else { "[ ]" }
 }
 
 /// The `PQ` badge.

@@ -10,11 +10,11 @@ use crate::app::ctx::Ctx;
 use crate::app::flows::dialog::{Confirm, ConfirmKind, Dialog, Info};
 use crate::app::flows::form::Form;
 use crate::app::flows::unlocked::{Unlocked, View};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::ui::widgets::fingerprint::grouped_hex;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::factors::{presence, views, FactorKind, FactorView};
+use crate::vault::factors::{FactorKind, FactorView, presence, views};
 use crate::vault::ops::FactorRef;
 
 /// Constellation animation.
@@ -53,7 +53,7 @@ pub const fn factor_ref(view: &FactorView) -> Option<FactorRef> {
 /// `device A021-5B7E`.
 #[must_use]
 pub fn factor_label(view: &FactorView) -> String {
-    let id = view.id.map(|id| grouped_hex(&id, 2)).unwrap_or_default();
+    let id = view.id.map_or_default(|id| grouped_hex(&id, 2));
     let owned = if view.owned { " (this device)" } else { "" };
     format!("{} {id}{owned}", view.kind.noun())
         .trim()

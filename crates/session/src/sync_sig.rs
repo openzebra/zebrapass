@@ -11,10 +11,10 @@
 
 use zeroize::Zeroizing;
 
-pub use pq::{sync_verifying_key, DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_VK_LEN};
+pub use pq::{DEVICE_CERT_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_VK_LEN, sync_verifying_key};
 
 use crate::error::SessionError;
-use crate::sync_msg::{frame_parts, record_message, MSG_VERSION, MSG_VERSION_V1};
+use crate::sync_msg::{MSG_VERSION, MSG_VERSION_V1, frame_parts, record_message};
 
 /// Length prefix for the ciphertext tail of a version-1 message.
 ///
@@ -263,9 +263,9 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use super::{issue_device_cert, sign_record, verify_record, DeviceSignKey, SyncRecord};
+    use super::{DeviceSignKey, SyncRecord, issue_device_cert, sign_record, verify_record};
     use crate::error::SessionError;
-    use crate::sync_msg::{record_message, MSG_VERSION, MSG_VERSION_V1};
+    use crate::sync_msg::{MSG_VERSION, MSG_VERSION_V1, record_message};
 
     fn unsigned(frame: Vec<u8>) -> SyncRecord {
         SyncRecord {

@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use local::{create_shared_vault, join_shared_vault, Introduction, Listen, SharedRef};
+use anyhow::{Result, anyhow};
+use local::{Introduction, Listen, SharedRef, create_shared_vault, join_shared_vault};
 use memberlog::{Action as LogAction, Role};
-use sharing::{account_fingerprint, vault_number, ContactCard, Invitation, Inviter, Offer, Opened};
+use sharing::{ContactCard, Invitation, Inviter, Offer, Opened, account_fingerprint, vault_number};
 use zeroize::Zeroizing;
 
 use crate::app::ctx::{Ctx, Task};
@@ -94,6 +94,7 @@ impl Unlocked {
             .ok_or_else(|| anyhow!("This vault has no sync identity."))?;
         let (vault, reference) =
             create_shared_vault(&self.base, &identity, name, kdf::KdfProfile::Fast)?;
+        let vault_id = reference.vault_id;
         let reference = Arc::new(reference);
         let item = SharedItem::created(&self.base, Arc::clone(&reference), vault, &identity);
         self.shared.push(item);
@@ -101,8 +102,35 @@ impl Unlocked {
         if let Some(p2p) = self.p2p.as_deref() {
             p2p.provider.serve(Arc::clone(&reference));
         }
+        self.refresh_https_sync(ctx);
+        self.sync_push_shared_full(&vault_id);
         self.remember(&reference, ctx);
         Ok(())
+    }
+
+    pub(crate) fn invite_hints(&self, ctx: &Ctx) -> Vec<String> {
+        let mut hints = Vec::new();
+        if let Some(p2p) = self.p2p.as_deref() {
+            for h in p2p.hints() {
+                if !hints.contains(&h) {
+                    hints.push(h);
+                }
+            }
+        }
+        let configured = self
+            .info
+            .prefs
+            .as_ref()
+            .filter(|p| !p.sync_servers.is_empty())
+            .map_or(&ctx.sync_servers[..], |p| &p.sync_servers[..]);
+        for url in configured {
+            let owned = url.to_string();
+            if owned.len() <= sharing::MAX_HINT && !hints.contains(&owned) {
+                hints.push(owned);
+            }
+        }
+        hints.truncate(sharing::MAX_HINTS);
+        hints
     }
 
     pub(super) fn begin_add(&mut self, ctx: &mut Ctx) -> Step {
@@ -115,11 +143,15 @@ impl Unlocked {
             None => "Make a shared vault first (n).",
             Some((false, _)) => "That vault is still syncing.",
             Some((true, role)) if role != Some(Role::Owner) => "Only owners can add people.",
-            Some(_) if !self.ensure_p2p() => "This vault has no sync identity.",
-            Some(_) if self.p2p.as_deref().is_none_or(|p2p| p2p.hints().is_empty()) => {
-                "Listening is off. Press l, then add them."
+            Some(_) if self.identity.is_none() => "This vault has no sync identity.",
+            Some(_) => {
+                let _ = self.ensure_p2p();
+                if self.invite_hints(ctx).is_empty() {
+                    "Configure a sync server or press l to listen, then add them."
+                } else {
+                    return Step::PasteCard;
+                }
             }
-            Some(_) => return Step::PasteCard,
         };
         ctx.toast(Tone::Info, message);
         Step::Overview
@@ -148,7 +180,7 @@ impl Unlocked {
     }
 
     pub(super) fn finish_add(&mut self, card: Box<ContactCard>, role: Role, ctx: &mut Ctx) -> Step {
-        match self.add_person(&card, role) {
+        match self.add_person(&card, role, ctx) {
             Ok((invitation, number)) => Step::AddDone {
                 invitation,
                 print: card.fingerprint(),
@@ -165,18 +197,17 @@ impl Unlocked {
         &mut self,
         card: &ContactCard,
         role: Role,
+        ctx: &Ctx,
     ) -> Result<(Zeroizing<String>, String)> {
         let identity = self
             .identity
             .clone()
             .ok_or_else(|| anyhow!("This vault has no sync identity."))?;
-        let hints = self
-            .p2p
-            .as_deref()
-            .map(crate::app::p2p::P2p::hints)
-            .unwrap_or_default();
+        let hints = self.invite_hints(ctx);
         if hints.is_empty() {
-            return Err(anyhow!("Listening is off. Press l, then add them."));
+            return Err(anyhow!(
+                "Configure a sync server or press l to listen, then add them."
+            ));
         }
         let cursor = self.share_cursor();
         let item = self
@@ -223,8 +254,10 @@ impl Unlocked {
             unix_ms(),
         )?
         .to_text()?;
+        let vault_id = reference.vault_id;
         let people = vault.log.members().len();
         item.people = people;
+        self.sync_push_shared_full(&vault_id);
         Ok((
             Zeroizing::new(invitation),
             vault_number(&reference.vault_id),
@@ -317,6 +350,10 @@ impl Unlocked {
             p2p.provider.serve(Arc::clone(&item.reference));
             crate::app::p2p::fetch(p2p, item);
         }
+        self.refresh_https_sync(ctx);
+        if let Some(https) = self.https.as_deref() {
+            https.trigger_pull_shared(&reference);
+        }
         self.remember(&reference, ctx);
         Ok(())
     }
@@ -350,14 +387,23 @@ impl Unlocked {
         }
     }
 
-    /// Check in with every peer once, now: each shared vault's members and
-    /// the account's other devices.
+    /// Check in with every peer and sync server once, now.
     pub fn sync_now(&mut self, ctx: &mut Ctx) {
+        if let Some(https) = self.https.as_deref() {
+            https.trigger_pull_personal(false);
+            for item in &self.shared {
+                https.trigger_pull_shared(&item.reference);
+            }
+        }
         if self.p2p.is_none() && self.listen_mode() == Listen::Off {
-            ctx.toast(
-                Tone::Info,
-                "Sync is off for this vault. l on the Share screen turns it on.",
-            );
+            if self.https.is_some() {
+                ctx.toast(Tone::Info, "Checking sync server.");
+            } else {
+                ctx.toast(
+                    Tone::Info,
+                    "Sync is off for this vault. l on the Share screen turns it on.",
+                );
+            }
             return;
         }
         if !self.ensure_p2p() {

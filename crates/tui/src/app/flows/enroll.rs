@@ -8,11 +8,11 @@ use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::editing::edit_secret;
 use crate::app::flows::unlock::MAX_PASSWORD;
-use crate::app::keymap::{resolve, Scope};
-use crate::secure::generator::{generate, GenMode, GenSpec};
+use crate::app::keymap::{Scope, resolve};
+use crate::secure::generator::{GenMode, GenSpec, generate};
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
-use crate::secure::strength::{estimate, Strength, StrengthLabel};
+use crate::secure::strength::{Strength, StrengthLabel, estimate};
 use crate::ui::widgets::toast::Tone;
 use crate::vault::create::Enrollment;
 use crate::vault::device::PIN_PROFILE;
@@ -126,11 +126,10 @@ impl EnrollState {
 
     /// Handle a key.
     pub fn on_key(&mut self, event: &KeyEvent, ctx: &mut Ctx) -> EnrollEvent {
-        if let Some(action) = resolve(Scope::Enroll, event) {
-            if !(matches!(action, Action::Left | Action::Right) && self.focus != EnrollFocus::Cards)
-            {
-                return self.on_action(action, ctx);
-            }
+        if let Some(action) = resolve(Scope::Enroll, event)
+            && !(matches!(action, Action::Left | Action::Right) && self.focus != EnrollFocus::Cards)
+        {
+            return self.on_action(action, ctx);
         }
         let input = match self.focus {
             EnrollFocus::Cards => return EnrollEvent::Stay,

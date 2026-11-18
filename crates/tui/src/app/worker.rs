@@ -6,17 +6,17 @@
 //! no longer waits for (a cancelled unlock) is dropped on arrival, and with it
 //! any session or secret it holds.
 
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use local::Paths;
 use session::KdfProfile;
 
-use crate::vault::adopt::{adopt, AdoptRequest};
-use crate::vault::create::{create, restore, NewVault, RestoreVault};
-use crate::vault::error::{describe, UnlockError};
-use crate::vault::open::{unlock_vault, Credential, Vault};
-use crate::vault::ops::{apply, Op, Outcome};
+use crate::vault::adopt::{AdoptRequest, adopt};
+use crate::vault::create::{NewVault, RestoreVault, create, restore};
+use crate::vault::error::{UnlockError, describe};
+use crate::vault::open::{Credential, Vault, unlock_vault};
+use crate::vault::ops::{Op, Outcome, apply};
 
 /// Work for the worker thread.
 pub enum Job {

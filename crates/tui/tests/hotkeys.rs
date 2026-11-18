@@ -14,13 +14,13 @@ mod common;
 
 use crossterm::event::KeyCode;
 use tui::app::flows::ceremony::CeremonyFocus;
-use tui::app::flows::create::{SetupField, Step, DEFAULT_PROFILE};
+use tui::app::flows::create::{DEFAULT_PROFILE, SetupField, Step};
 use tui::app::flows::enroll::{EnrollFactor, EnrollFocus};
 use tui::app::flows::restore::RestoreField;
-use tui::app::keymap::{Scope, KEYMAP};
+use tui::app::keymap::{KEYMAP, Scope};
 use tui::app::screen::Screen;
 
-use common::{app, ctrl, press, temp_dir, tick, type_text, wait, PASSWORD};
+use common::{PASSWORD, app, ctrl, press, temp_dir, tick, type_text, wait};
 
 fn create_state(app: &tui::App) -> &tui::app::flows::create::CreateState {
     let Screen::Create(state) = &app.screen else {
@@ -83,9 +83,11 @@ fn restore_hides_the_typed_word_with_ctrl_e() {
             .any(|binding| binding.key.ctrl && binding.key.code == KeyCode::Char('h')),
         "Ctrl-H arrives as Backspace in legacy terminals"
     );
-    assert!(KEYMAP
-        .iter()
-        .any(|binding| binding.scope == Scope::Ceremony && binding.key.code == KeyCode::Tab));
+    assert!(
+        KEYMAP
+            .iter()
+            .any(|binding| binding.scope == Scope::Ceremony && binding.key.code == KeyCode::Tab)
+    );
 }
 
 #[test]
@@ -229,7 +231,10 @@ fn the_phrase_step_copies_the_phrase_and_the_clipboard_clears_after_25_seconds()
         .unwrap()
         .phrase_normalized()
         .to_owned();
-    assert!(app.take_outbox().is_empty());
+    assert_eq!(
+        app.take_outbox(),
+        [] as [zeroize::Zeroizing<std::vec::Vec<u8>>; 0]
+    );
 
     press(&mut app, KeyCode::Char('c'));
     let sent = app.take_outbox();

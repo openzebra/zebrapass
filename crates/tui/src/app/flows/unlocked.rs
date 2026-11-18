@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use local::{SyncIdentity, Usage};
@@ -10,11 +11,11 @@ use local::{SyncIdentity, Usage};
 use crate::app::ctx::{Ctx, Task};
 use crate::app::flows::dialog::Dialog;
 use crate::app::flows::editor::EditorState;
-use crate::app::flows::factors::{Anim, FactorsState};
+use crate::app::flows::factors::FactorsState;
 use crate::app::flows::generator::{GenEvent, GeneratorState};
 use crate::app::flows::history::HistoryState;
 use crate::app::flows::home::Filter;
-use crate::app::flows::home::{visible, Detail, Home};
+use crate::app::flows::home::{Detail, Home, visible};
 use crate::app::flows::import::ImportState;
 pub use crate::app::flows::info::VaultInfo;
 use crate::app::flows::settings::SettingsModal;
@@ -24,12 +25,12 @@ use crate::app::screen::Nav;
 use crate::app::worker::Job;
 use crate::secure::health::HealthReport;
 use crate::ui::widgets::toast::Tone;
+use crate::vault::Vault;
 use crate::vault::create::unix_ms;
 use crate::vault::discover::VaultRef;
-use crate::vault::ops::{Op, Outcome};
-use crate::vault::records::{build_cache, Summary};
+use crate::vault::ops::Op;
+use crate::vault::records::{Summary, build_cache};
 use crate::vault::shared::SharedItem;
-use crate::vault::Vault;
 
 /// Active view.
 #[derive(Debug)]
@@ -67,18 +68,24 @@ pub struct Unlocked {
     pub cache: Box<[Summary]>,
     /// Shared vaults this account belongs to.
     pub shared: Vec<SharedItem>,
-    /// The peer-to-peer node, while there is a shared vault to serve or the
+    /// Peer-to-peer node, while there is a shared vault to serve or the
     /// personal vault may be served to this account's other devices.
     pub p2p: Option<Box<P2p>>,
+    /// HTTPS/WSS + `SplitHTTP` sync client and live worker, when configured.
+    pub https: Option<Box<crate::app::https_sync::HttpsSync>>,
     /// This device's sync identity, when the vault has one.
     pub identity: Option<Arc<SyncIdentity>>,
     /// Where LAN beacons go and are heard, when the command line says.
     pub beacon: Option<p2p_net::BeaconConfig>,
-    /// The password that unlocked a placeholder vault, until the account's
-    /// vault has been brought in with it.
-    pub held: Option<crate::vault::adopt::Held>,
+    /// Credentials kept for a placeholder vault until the account's vault is
+    /// adopted onto this device.
+    pub held: Option<Arc<crate::vault::adopt::Held>>,
     /// Devices known when the last attempt to bring the vault in began.
     pub adopt_seen: usize,
+    /// When the last HTTPS adoption attempt began.
+    pub adopt_last_try: Option<Instant>,
+    /// Factor target for an in-flight `Op::Rotate` revocation.
+    pub pending_revoke: Option<crate::vault::ops::FactorRef>,
     /// Where the vaults live on this device.
     pub base: PathBuf,
     /// Copy usage on this device, for list order.
@@ -129,10 +136,13 @@ impl Unlocked {
             cache,
             shared,
             p2p,
+            https: None,
             identity,
             beacon,
             held: None,
             adopt_seen: 0,
+            adopt_last_try: None,
+            pending_revoke: None,
             base,
             usage,
             view: View::Home,
@@ -229,6 +239,9 @@ impl Unlocked {
 
     /// Hand the vault to the worker for `op`.
     pub fn run(&mut self, op: Op, task: Task, ctx: &mut Ctx) {
+        if let Op::Rotate(rot) = &op {
+            self.pending_revoke = rot.revoke;
+        }
         match self.vault.take() {
             Some(mut vault) => {
                 vault.meta.usage.clone_from(&self.usage);
@@ -284,10 +297,11 @@ impl Unlocked {
         if let Some(dialog) = self.dialog.as_mut() {
             dialog.release(ctx);
         }
-        if let Some(detail) = self.home.detail.as_mut() {
-            if event.code == KeyCode::Char(' ') && detail.reveal.hide() {
-                ctx.redraw();
-            }
+        if let Some(detail) = self.home.detail.as_mut()
+            && event.code == KeyCode::Char(' ')
+            && detail.reveal.hide()
+        {
+            ctx.redraw();
         }
     }
 
@@ -311,6 +325,7 @@ impl Unlocked {
     /// Timers: reveals and hold-to-confirm.
     pub fn on_tick(&mut self, ctx: &mut Ctx) -> Nav {
         self.poll_p2p(ctx);
+        self.poll_https(ctx);
         let mut hid = false;
         if let Some(detail) = self.home.detail.as_mut() {
             hid |= detail.reveal.tick(ctx.now, ctx.reveal_after);
@@ -321,126 +336,20 @@ impl Unlocked {
         if let View::Import(import) = &mut self.view {
             hid |= import.reveal.tick(ctx.now, ctx.reveal_after);
         }
-        if let View::Sync(share) = &mut self.view {
-            if let crate::app::flows::share::Step::Upgrade(prompt) = &mut share.step {
-                hid |= prompt.reveal.tick(ctx.now, ctx.reveal_after);
-            }
+        if let View::Sync(share) = &mut self.view
+            && let crate::app::flows::share::Step::Upgrade(prompt) = &mut share.step
+        {
+            hid |= prompt.reveal.tick(ctx.now, ctx.reveal_after);
         }
         if hid {
             ctx.redraw();
         }
-        if let Some(dialog) = self.dialog.as_mut() {
-            if dialog.tick(ctx) {
-                return crate::app::flows::dialog::submit(self, ctx);
-            }
+        if let Some(dialog) = self.dialog.as_mut()
+            && dialog.tick(ctx)
+        {
+            return crate::app::flows::dialog::submit(self, ctx);
         }
         Nav::Stay
-    }
-
-    /// A job handed the vault back.
-    pub fn on_result(&mut self, vault: Box<Vault>, result: Result<Outcome, String>, ctx: &mut Ctx) {
-        self.info = VaultInfo::from(&*vault);
-        self.vault = Some(vault);
-        self.refresh_personal();
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(message) => {
-                ctx.toast(Tone::Danger, message);
-                return;
-            }
-        };
-        match outcome {
-            Outcome::Saved(id) => {
-                // A write made from the share screen is the reference to a
-                // shared vault: stay there, and select nothing.
-                let on_share = matches!(self.view, View::Sync(_));
-                self.promote_if_placeholder();
-                self.refresh();
-                if !on_share {
-                    self.view = View::Home;
-                    self.select(id);
-                    ctx.toast(Tone::Success, "Saved.");
-                }
-            }
-            Outcome::Deleted(_) => {
-                self.refresh();
-                ctx.toast(
-                    Tone::Success,
-                    "Record deleted. It stays in history until cleared.",
-                );
-            }
-            Outcome::Restored(id, revision) => {
-                self.view = View::Home;
-                self.refresh();
-                self.select(id);
-                ctx.toast(Tone::Success, format!("Restored as revision {revision}."));
-            }
-            Outcome::HistoryCleared => {
-                self.refresh();
-                ctx.toast(Tone::Success, "History cleared.");
-            }
-            Outcome::Renamed => ctx.toast(Tone::Success, "Renamed on this device."),
-            Outcome::PrefsSaved => {
-                if let Some(prefs) = self.info.prefs.as_ref() {
-                    ctx.apply_prefs(prefs);
-                    if let Some(settings) = self.settings.as_deref_mut() {
-                        settings.saved = prefs.clone();
-                    }
-                }
-                ctx.toast(
-                    Tone::Success,
-                    "Settings saved for this vault on this device.",
-                );
-            }
-            Outcome::FactorAdded(kind) => {
-                self.animate(Anim::Add, ctx);
-                ctx.toast(Tone::Success, format!("Added {}.", kind.noun()));
-            }
-            Outcome::FactorRemoved => {
-                ctx.toast(Tone::Success, "Wrap removed. The vault key did not change.");
-            }
-            Outcome::PasswordChanged => {
-                ctx.toast(Tone::Success, "Password changed.");
-            }
-            Outcome::PinChanged => {
-                ctx.toast(
-                    Tone::Success,
-                    "Device PIN changed. The vault did not change.",
-                );
-            }
-            Outcome::Rotated(revoked) => {
-                self.refresh();
-                self.animate(if revoked { Anim::Revoke } else { Anim::Rotate }, ctx);
-                let what = if revoked {
-                    "Revoked. New vault key"
-                } else {
-                    "New vault key"
-                };
-                ctx.toast(
-                    Tone::Success,
-                    format!("{what} · generation {}.", self.info.generation),
-                );
-            }
-            Outcome::RecoveryDropped => {
-                ctx.toast(Tone::Warn, "Recovery wrap dropped from this copy.");
-            }
-            Outcome::Imported(merged) => {
-                if !merged.ids.is_empty() {
-                    self.promote_if_placeholder();
-                }
-                crate::app::flows::import_vault::done(self, &merged, ctx);
-            }
-            Outcome::Health(report) => {
-                self.health = Some(report);
-                self.view = View::Health(0);
-            }
-        }
-    }
-
-    const fn animate(&mut self, anim: Anim, ctx: &Ctx) {
-        if let View::Factors(factors) = &mut self.view {
-            factors.anim = Some((anim, ctx.now));
-        }
     }
 
     /// Rebuild the cache and the detail after a write.

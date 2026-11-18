@@ -151,8 +151,8 @@ pub fn verifying_key_of(key: &SigningKeyMirror) -> anyhow::Result<[u8; SYNC_VK_L
 #[cfg(test)]
 mod tests {
     use super::{
-        sync_sign, sync_verify, sync_verifying_key, DEVICE_CERT_CTX, SYNC_CTX, SYNC_SIG_LEN,
-        SYNC_VK_LEN,
+        DEVICE_CERT_CTX, SYNC_CTX, SYNC_SIG_LEN, SYNC_VK_LEN, sync_sign, sync_verify,
+        sync_verifying_key,
     };
 
     #[test]

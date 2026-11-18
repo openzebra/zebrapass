@@ -149,7 +149,7 @@ mod tests {
     use kdf::KdfProfile;
     use local::Prefs;
 
-    use super::{posture, Facts};
+    use super::{Facts, posture};
     use crate::vault::factors::Presence;
 
     fn strong_facts() -> Facts {

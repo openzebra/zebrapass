@@ -13,19 +13,19 @@
 
 use std::path::Path;
 
-use frame::{seal, FrameMeta, ALG_CASCADE, KIND_REVISION};
-use record::{Document, ValueType, TAG_SYNC_OWN_CERT, TAG_SYNC_PEER_MIN, TAG_SYNC_ROOT_VK};
+use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION, seal};
+use record::{Document, TAG_SYNC_OWN_CERT, TAG_SYNC_PEER_MIN, TAG_SYNC_ROOT_VK, ValueType};
 use secret::Secret;
 use session::{
-    issue_device_cert, issue_revocation, sync_verifying_key, DeviceCert, DeviceSignKey, Revocation,
-    SYNC_SEED_LEN, SYNC_VK_LEN,
+    DeviceCert, DeviceSignKey, Revocation, SYNC_SEED_LEN, SYNC_VK_LEN, issue_device_cert,
+    issue_revocation, sync_verifying_key,
 };
 use syncwire::{decode_cert, encode_cert};
 
 use crate::last_seen::LastSeen;
 use crate::limits::PEERS_MAX;
 use crate::revocations::Revocations;
-use crate::share_keys::{ShareKeys, SharePublics, SHARE_KEYS_LEN};
+use crate::share_keys::{SHARE_KEYS_LEN, ShareKeys, SharePublics};
 
 /// Signing identity of this device for one vault.
 #[derive(Debug)]

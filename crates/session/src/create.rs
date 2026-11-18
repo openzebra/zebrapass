@@ -1,15 +1,14 @@
 //! Create a vault and the shared commit/body helpers.
 
-use aead::{encrypt_body, BodyAlg};
+use aead::{BodyAlg, encrypt_body};
 use container::{
-    assemble, encode_chip_entry, encode_human_password_entry, encode_password_entry,
-    encode_prf_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry, BODY_AEGIS256,
-    BODY_FRAMES, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY, KDF_ARGON2ID,
-    WRAP_AEGIS256,
+    BODY_AEGIS256, BODY_FRAMES, BODY_KUZ_CTR_HMAC, BODY_KUZ_MGM, COMMIT_LEN, DOMAIN_BODY,
+    KDF_ARGON2ID, StaticHeader, VaultFile, WRAP_AEGIS256, WrapEntry, assemble, encode_chip_entry,
+    encode_human_password_entry, encode_password_entry, encode_prf_entry, encode_wrap_dir,
 };
 use frame::encode_frames;
 use hmac::{Hmac, KeyInit, Mac};
-use kdf::{derive_vault_keys, local_meta_key, KdfProfile};
+use kdf::{KdfProfile, derive_vault_keys, local_meta_key};
 use secret::Secret;
 use sha2::{Digest, Sha256};
 use wraps::seal_password;
@@ -263,7 +262,7 @@ pub fn encrypt_records(
         BodyAlg::KuzMgm => {
             return Err(anyhow::anyhow!(
                 "unsupported body algorithm {BODY_KUZ_MGM:#06x}"
-            ))
+            ));
         }
         BodyAlg::Aegis256 => 32,
         BodyAlg::KuzCtrHmac => 16,

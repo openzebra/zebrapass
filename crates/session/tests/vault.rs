@@ -14,17 +14,17 @@ use aead::BodyAlg;
 mod common;
 
 use container::{
-    assemble, encode_password_entry, encode_wrap_dir, StaticHeader, VaultFile, WrapEntry,
     BODY_AEGIS256, BODY_KUZ_CTR_HMAC, COMMIT_LEN, HEADER_LEN, KDF_ARGON2ID, KDF_M_KIB_MAX,
-    KDF_P_MIN, KDF_T_MIN, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, WRAP_AEGIS256,
+    KDF_P_MIN, KDF_T_MIN, PASSWORD_PAYLOAD_LEN, PASSWORD_RECORD_LEN, StaticHeader, VaultFile,
+    WRAP_AEGIS256, WrapEntry, assemble, encode_password_entry, encode_wrap_dir,
 };
 use kdf::KdfProfile;
 use local::DeviceKey;
 use record::Document;
 use session::{
-    add_chip_unlock, add_prf_unlock, change_master, create, list_records, reencrypt_body,
-    remove_chip_unlock, remove_prf_unlock, revoke, unlock, write_record, ChipPublics, Revoke,
-    RotateCreds, Seen, Session, UnlockCreds,
+    ChipPublics, Revoke, RotateCreds, Seen, Session, UnlockCreds, add_chip_unlock, add_prf_unlock,
+    change_master, create, list_records, reencrypt_body, remove_chip_unlock, remove_prf_unlock,
+    revoke, unlock, write_record,
 };
 use wraps::PrfPublics;
 
@@ -334,14 +334,18 @@ fn remove_and_check(session: &mut Session, file: &mut VaultFile, device_id: &[u8
     assert_eq!(body_of(file), body_before);
     assert_eq!(session.generation(), generation + 1);
     let parsed = file.parse().unwrap();
-    assert!(parsed
-        .entries
-        .iter()
-        .any(|entry| matches!(entry, WrapEntry::Password(_))));
-    assert!(parsed
-        .entries
-        .iter()
-        .all(|entry| { !matches!(entry, WrapEntry::Chip(chip) if chip.id == *device_id) }));
+    assert!(
+        parsed
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, WrapEntry::Password(_)))
+    );
+    assert!(
+        parsed
+            .entries
+            .iter()
+            .all(|entry| { !matches!(entry, WrapEntry::Chip(chip) if chip.id == *device_id) })
+    );
 }
 
 fn desktop_once() {
@@ -547,12 +551,14 @@ fn remaining_factors_still_unlock_after_revoke() {
     revoke(&mut session, &mut file, &Revoke::Chip(gone.id()), &creds).unwrap();
 
     assert!(common::unlock_device(&file, &kept).is_ok());
-    assert!(unlock(
-        &file,
-        &UnlockCreds::default().with_prf(&publics, &prf_out),
-        None
-    )
-    .is_ok());
+    assert!(
+        unlock(
+            &file,
+            &UnlockCreds::default().with_prf(&publics, &prf_out),
+            None
+        )
+        .is_ok()
+    );
     assert!(unlock(&file, &UnlockCreds::master(&SEED_NEXT), None).is_ok());
     assert!(common::unlock_device(&file, &gone).is_err());
 }

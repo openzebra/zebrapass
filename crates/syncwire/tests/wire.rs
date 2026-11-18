@@ -6,7 +6,7 @@
 )]
 
 use session::{
-    issue_device_cert, sign_record, DeviceSignKey, SyncRecord, MSG_VERSION, SYNC_SIG_LEN,
+    DeviceSignKey, MSG_VERSION, SYNC_SIG_LEN, SyncRecord, issue_device_cert, sign_record,
 };
 use sha2::{Digest, Sha256};
 use syncwire::limits::MAX_FRAME;
@@ -216,9 +216,11 @@ fn revocation_round_trips_and_is_strict() {
     let mut flipped = bytes;
     flipped[80] ^= 1;
     if let Ok(parsed) = syncwire::decode_revocation(&flipped) {
-        assert!(parsed
-            .verify(&root.verifying_key().unwrap(), 1_000)
-            .is_err());
+        assert!(
+            parsed
+                .verify(&root.verifying_key().unwrap(), 1_000)
+                .is_err()
+        );
     }
 }
 
@@ -285,10 +287,9 @@ fn a_frontier_round_trips_and_refuses_disorder_and_oversize() {
     let bytes = syncwire::encode_frontier(&entries).unwrap();
     assert_eq!(bytes.len(), 4 + 3 * 28);
     assert_eq!(syncwire::decode_frontier(&bytes).unwrap(), entries);
-    assert!(
-        syncwire::decode_frontier(&syncwire::encode_frontier(&[]).unwrap())
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        syncwire::decode_frontier(&syncwire::encode_frontier(&[]).unwrap()).unwrap(),
+        [] as [session::FrontierEntry; 0]
     );
 
     assert!(syncwire::encode_frontier(&[entry(4), entry(1)]).is_err());
@@ -319,8 +320,8 @@ fn a_frontier_round_trips_and_refuses_disorder_and_oversize() {
 }
 
 mod peers {
-    use session::{issue_device_cert, DeviceSignKey, PeerRecord};
-    use syncwire::{decode_peers, encode_peers, MAX_PEERS};
+    use session::{DeviceSignKey, PeerRecord, issue_device_cert};
+    use syncwire::{MAX_PEERS, decode_peers, encode_peers};
 
     fn record(n: u8) -> PeerRecord {
         let key = DeviceSignKey::from_seed(&[n; 32]);
@@ -349,9 +350,10 @@ mod peers {
         let bytes = encode_peers(&list).unwrap();
         assert_eq!(&bytes[..4], b"ZPRP");
         assert_eq!(decode_peers(&bytes).unwrap(), list);
-        assert!(decode_peers(&encode_peers(&[]).unwrap())
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            decode_peers(&encode_peers(&[]).unwrap()).unwrap(),
+            [] as [session::PeerRecord; 0]
+        );
     }
 
     #[test]
@@ -438,7 +440,7 @@ mod peers {
 }
 
 mod canonical {
-    use session::{issue_device_cert, DeviceSignKey, FrontierEntry, PeerRecord};
+    use session::{DeviceSignKey, FrontierEntry, PeerRecord, issue_device_cert};
     use syncwire::{decode_frontier, decode_peers, encode_frontier, encode_peers};
 
     /// Whatever a mutated list still decodes to must encode back to exactly
@@ -512,7 +514,7 @@ fn a_snapshot_round_trips_and_is_strict() {
     let (empty_file, none) =
         syncwire::decode_snapshot(syncwire::encode_snapshot(&file, &[]).unwrap()).unwrap();
     assert_eq!(empty_file, file);
-    assert!(none.is_empty());
+    assert_eq!(none, [] as [session::Attestation; 0]);
 
     for len in 0..8 + 2 * syncwire::ATTESTATION_WIRE_LEN {
         assert!(syncwire::decode_snapshot(bytes[..len].to_vec()).is_err());
@@ -595,8 +597,8 @@ fn a_personal_frame_round_trips_and_is_strict() {
 
 mod beacon {
     use syncwire::{
-        decode_beacon, encode_beacon, Beacon, RelayHint, BEACON_WIRE_MAX, MAX_BEACON_RELAYS,
-        MAX_BEACON_VAULTS,
+        BEACON_WIRE_MAX, Beacon, MAX_BEACON_RELAYS, MAX_BEACON_VAULTS, RelayHint, decode_beacon,
+        encode_beacon,
     };
 
     fn relay(n: u8) -> RelayHint {
@@ -731,11 +733,13 @@ mod beacon {
         assert!(encode_beacon(&bare(vec![], 1, vec![])).is_err());
         assert!(encode_beacon(&bare(vec![[0; 16]], 0, vec![])).is_err());
         assert!(encode_beacon(&bare(vec![[0; 16]; MAX_BEACON_VAULTS + 1], 1, vec![])).is_err());
-        assert!(encode_beacon(&bare(
-            vec![[0; 16]],
-            1,
-            vec![relay(1); MAX_BEACON_RELAYS + 1]
-        ))
-        .is_err());
+        assert!(
+            encode_beacon(&bare(
+                vec![[0; 16]],
+                1,
+                vec![relay(1); MAX_BEACON_RELAYS + 1]
+            ))
+            .is_err()
+        );
     }
 }

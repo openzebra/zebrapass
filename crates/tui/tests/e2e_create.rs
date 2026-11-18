@@ -16,7 +16,7 @@ use crossterm::event::KeyCode;
 use tui::app::flows::create::Step;
 use tui::app::screen::Screen;
 
-use common::{app, ctrl, pass_verify, press, render, temp_dir, type_text, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, ctrl, pass_verify, press, render, temp_dir, type_text, unlock, wait};
 
 const RECORD_PASSWORD: &str = "S3cure-Pa55!word";
 

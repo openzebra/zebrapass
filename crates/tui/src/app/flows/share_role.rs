@@ -4,13 +4,13 @@
 //! The vault keeps its key: a person made a reader can still read what they
 //! could before, and their writes are refused from now on.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use memberlog::Role;
 use sharing::Fingerprint;
 
 use crate::app::action::Action;
 use crate::app::ctx::Ctx;
-use crate::app::flows::share::{cycle, Step};
+use crate::app::flows::share::{Step, cycle};
 use crate::app::flows::unlocked::Unlocked;
 use crate::ui::widgets::toast::Tone;
 
@@ -127,6 +127,7 @@ impl Unlocked {
             vault.set_role(reference, identity, target, role)
         })?;
         self.reload_shared(&vault_id);
+        self.sync_push_shared_full(&vault_id);
         self.check_in_now(&vault_id);
         Ok(())
     }

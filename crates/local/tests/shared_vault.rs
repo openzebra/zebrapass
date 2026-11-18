@@ -11,14 +11,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use local::{
-    adopt_shared_file, create_shared_vault, is_pending, join_shared_vault, open_shared_vault,
-    SharedRef, SyncIdentity,
+    SharedRef, SyncIdentity, adopt_shared_file, create_shared_vault, is_pending, join_shared_vault,
+    open_shared_vault,
 };
 use memberlog::{Action, Role};
 use record::{Document, TAG_TITLE};
 use secret::Secret;
 use session::{
-    history, list_records, open_record, unlock, write_record, KdfProfile, UnlockCreds, VaultFile,
+    KdfProfile, UnlockCreds, VaultFile, history, list_records, open_record, unlock, write_record,
 };
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -184,14 +184,16 @@ fn a_wrong_seed_a_foreign_file_and_a_wrong_anchor_are_refused() {
         create_shared_vault(&other_dir, &s.alice, "Other", KdfProfile::Fast).unwrap();
     let foreign =
         fs::read(local::shared_paths_for(&other_dir, &other_ref.vault_id).vault_file).unwrap();
-    assert!(adopt_shared_file(
-        &s.bob_dir,
-        &s.bob_ref,
-        VaultFile::new(foreign),
-        &s.attested,
-        &s.bob,
-    )
-    .is_err());
+    assert!(
+        adopt_shared_file(
+            &s.bob_dir,
+            &s.bob_ref,
+            VaultFile::new(foreign),
+            &s.attested,
+            &s.bob,
+        )
+        .is_err()
+    );
 
     let mut wrong_anchor = copy_of(&s.bob_ref);
     wrong_anchor.anchor = [1; 32];
@@ -259,16 +261,20 @@ fn the_reference_record_round_trips_and_other_records_are_not_references() {
     crowded.hints = vec![String::new(), String::from("x:1")];
     assert!(SharedRef::from_document(&crowded.to_document()).is_err());
     crowded.hints = Vec::new();
-    assert!(SharedRef::from_document(&crowded.to_document())
-        .unwrap()
-        .unwrap()
-        .hints
-        .is_empty());
+    assert_eq!(
+        SharedRef::from_document(&crowded.to_document())
+            .unwrap()
+            .unwrap()
+            .hints,
+        [] as [String; 0]
+    );
     let shown = format!("{parsed:?}");
     assert!(shown.contains("[REDACTED]") && !shown.contains("7, 7"));
-    assert!(SharedRef::from_document(&titled("a login"))
-        .unwrap()
-        .is_none());
+    assert!(
+        SharedRef::from_document(&titled("a login"))
+            .unwrap()
+            .is_none()
+    );
 
     let mut broken = doc;
     broken.remove(record::TAG_SHARED_SEED);
@@ -355,25 +361,29 @@ fn an_attestation_of_another_revision_or_by_an_outsider_does_not_count() {
     let s = scene();
     let mut stale = s.attested.clone();
     stale[0].revision += 1;
-    assert!(adopt_shared_file(
-        &s.bob_dir,
-        &s.bob_ref,
-        VaultFile::new(alice_file(&s)),
-        &stale,
-        &s.bob
-    )
-    .is_err());
+    assert!(
+        adopt_shared_file(
+            &s.bob_dir,
+            &s.bob_ref,
+            VaultFile::new(alice_file(&s)),
+            &stale,
+            &s.bob
+        )
+        .is_err()
+    );
 
     let mut forged = s.attested.clone();
     forged[0].plain_digest[0] ^= 1;
-    assert!(adopt_shared_file(
-        &s.bob_dir,
-        &s.bob_ref,
-        VaultFile::new(alice_file(&s)),
-        &forged,
-        &s.bob
-    )
-    .is_err());
+    assert!(
+        adopt_shared_file(
+            &s.bob_dir,
+            &s.bob_ref,
+            VaultFile::new(alice_file(&s)),
+            &forged,
+            &s.bob
+        )
+        .is_err()
+    );
 
     let outsider = person(9);
     let other_dir = temp_dir("outsider");
@@ -386,14 +396,16 @@ fn an_attestation_of_another_revision_or_by_an_outsider_does_not_count() {
         .attestations(&their_ref, &outsider)
         .unwrap()
         .remove(0);
-    assert!(adopt_shared_file(
-        &s.bob_dir,
-        &s.bob_ref,
-        VaultFile::new(alice_file(&s)),
-        &swapped,
-        &s.bob
-    )
-    .is_err());
+    assert!(
+        adopt_shared_file(
+            &s.bob_dir,
+            &s.bob_ref,
+            VaultFile::new(alice_file(&s)),
+            &swapped,
+            &s.bob
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -427,14 +439,17 @@ fn only_an_owner_changes_roles_and_the_change_is_stored() {
     )
     .unwrap();
     bobs.log.merge(alice.log.entries()).unwrap();
-    assert!(bobs
-        .set_role(&s.bob_ref, &s.bob, bob_id, Role::Owner)
-        .is_err());
+    assert!(
+        bobs.set_role(&s.bob_ref, &s.bob, bob_id, Role::Owner)
+            .is_err()
+    );
     assert_eq!(bobs.log.role_of(&bob_id), Some(Role::Reader));
 
-    assert!(alice
-        .set_role(&s.alice_ref, &s.alice, [9; 64], Role::Writer)
-        .is_err());
+    assert!(
+        alice
+            .set_role(&s.alice_ref, &s.alice, [9; 64], Role::Writer)
+            .is_err()
+    );
     assert!(
         alice
             .set_role(&s.alice_ref, &s.alice, [1; 64], Role::Writer)

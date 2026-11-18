@@ -1,9 +1,9 @@
 //! Exact-length encodings of the three handshake messages.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use syncwire::reader::Reader;
 
-use crate::admission::{gate_tag, Cookie};
+use crate::admission::{Cookie, gate_tag};
 use crate::suite::{
     CHALLENGE_LEN, EC_PUB_LEN, FINISH_LEN, GATE_TAG_LEN, HELLO_BODY_LEN, HELLO_LEN, KIND_CHALLENGE,
     KIND_FINISH, KIND_HELLO, KIND_REPLY, KIND_SOLVED, MAGIC, NONCE_LEN, REPLY_FIXED_LEN, REPLY_LEN,
@@ -15,7 +15,7 @@ fn malformed() -> anyhow::Error {
     anyhow!("malformed handshake message")
 }
 
-fn header(kind: u8) -> [u8; 9] {
+const fn header(kind: u8) -> [u8; 9] {
     let mut out = [0u8; 9];
     let (magic, rest) = out.split_at_mut(4);
     magic.copy_from_slice(&MAGIC);

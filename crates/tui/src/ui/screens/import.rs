@@ -2,14 +2,14 @@
 //! step lives in `import_preview`.
 
 use import::{FileHint, Source};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::import::{
-    Choice, ImportState, ImportStep, Target, UnlockField, REVEAL_PASSWORD,
+    Choice, ImportState, ImportStep, REVEAL_PASSWORD, Target, UnlockField,
 };
 use crate::app::keymap::Scope;
 use crate::ui::layout::{body_and_hints, centered};

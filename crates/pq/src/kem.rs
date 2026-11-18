@@ -80,7 +80,7 @@ pub fn kem_decapsulate(dk: &[u8], ciphertext: &[u8]) -> anyhow::Result<Secret<[u
 
 #[cfg(test)]
 mod tests {
-    use super::{kem_decapsulate, kem_encapsulate, kem_keypair, KEM_CT_LEN, KEM_EK_LEN};
+    use super::{KEM_CT_LEN, KEM_EK_LEN, kem_decapsulate, kem_encapsulate, kem_keypair};
 
     #[test]
     fn roundtrip_and_rejects_short_ciphertext() -> anyhow::Result<()> {

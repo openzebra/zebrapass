@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use kdf::sync_identity_key;
 use local::SyncIdentity;
-use session::{issue_device_cert, sign_record, DeviceSignKey, SyncRecord, MSG_VERSION};
+use session::{DeviceSignKey, MSG_VERSION, SyncRecord, issue_device_cert, sign_record};
 use sha2::{Digest, Sha256};
 
 const MASTER: [u8; 64] = [0x42; 64];
@@ -112,14 +112,18 @@ fn the_root_seed_is_never_written_to_disk() {
     enrolled().save(&path, &key).unwrap();
     let plaintext = frame::open(&key, &fs::read(&path).unwrap()).unwrap();
     let root_seed = kdf::sync_seed(&MASTER).unwrap();
-    assert!(!plaintext
-        .expose()
-        .windows(32)
-        .any(|window| window == root_seed.expose().as_slice()));
-    assert!(!plaintext
-        .expose()
-        .windows(64)
-        .any(|window| window == MASTER.as_slice()));
+    assert!(
+        !plaintext
+            .expose()
+            .windows(32)
+            .any(|window| window == root_seed.expose().as_slice())
+    );
+    assert!(
+        !plaintext
+            .expose()
+            .windows(64)
+            .any(|window| window == MASTER.as_slice())
+    );
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -163,12 +167,14 @@ fn a_known_device_id_cannot_be_rebound_to_another_key() {
     let mut id = enrolled();
     id.add_peer(peer_cert(&MASTER, &CLIENT, PEER, 8, u64::MAX), 10)
         .unwrap();
-    assert!(id
-        .add_peer(peer_cert(&MASTER, &CLIENT, PEER, 9, u64::MAX), 10)
-        .is_err());
-    assert!(id
-        .add_peer(peer_cert(&MASTER, &CLIENT, OWN, 9, u64::MAX), 10)
-        .is_err());
+    assert!(
+        id.add_peer(peer_cert(&MASTER, &CLIENT, PEER, 9, u64::MAX), 10)
+            .is_err()
+    );
+    assert!(
+        id.add_peer(peer_cert(&MASTER, &CLIENT, OWN, 9, u64::MAX), 10)
+            .is_err()
+    );
 }
 
 #[test]
@@ -183,9 +189,10 @@ fn a_full_device_list_refuses_more_and_still_reloads() {
         id.add_peer(peer_cert(&MASTER, &CLIENT, peer, 20, u64::MAX), 10)
             .unwrap();
     }
-    assert!(id
-        .add_peer(peer_cert(&MASTER, &CLIENT, [0xD0; 16], 21, u64::MAX), 10)
-        .is_err());
+    assert!(
+        id.add_peer(peer_cert(&MASTER, &CLIENT, [0xD0; 16], 21, u64::MAX), 10)
+            .is_err()
+    );
     id.save(&path, &key).unwrap();
     let loaded = SyncIdentity::load(&path, &key).unwrap();
     assert_eq!(loaded.devices().len(), local::PEERS_MAX + 1);

@@ -10,8 +10,8 @@ use syncwire::limits::{
     RELAY_RESERVED_LEN,
 };
 use syncwire::{
-    decode_incoming, decode_open, encode_incoming, encode_open, Challenge, Claim, Ping,
-    RelayHeader, RelayHint, RelaySide, RelayType, Reserved,
+    Challenge, Claim, Ping, RelayHeader, RelayHint, RelaySide, RelayType, Reserved,
+    decode_incoming, decode_open, encode_incoming, encode_open,
 };
 
 const ALL: [RelayType; 11] = [

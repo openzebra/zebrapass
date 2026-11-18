@@ -12,11 +12,11 @@
 
 use std::time::{Duration, Instant};
 
-use import::{kdf_cost, parse, Item, KdfCost, Parsed, Request, SkipReason, Source};
+use import::{Item, KdfCost, Parsed, Request, SkipReason, Source, kdf_cost, parse};
 use keepass::config::KdfConfig;
 use keepass::db::Value;
 use keepass::{Database, DatabaseKey};
-use record::{ValueType, CUSTOM_TAGS, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_USERNAME};
+use record::{CUSTOM_TAGS, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_USERNAME, ValueType};
 use zeroize::Zeroizing;
 
 const PASSWORD: &str = "kdbx-master-pass";
@@ -182,10 +182,12 @@ fn wrong_password_and_wrong_key_file_fail_the_same_way() {
     assert_eq!(wrong_password, wrong_key_file);
     assert_eq!(wrong_password, damaged);
     assert!(!wrong_password.contains(PASSWORD));
-    assert!(open(&bytes, None, None)
-        .unwrap_err()
-        .to_string()
-        .contains("password"));
+    assert!(
+        open(&bytes, None, None)
+            .unwrap_err()
+            .to_string()
+            .contains("password")
+    );
 }
 
 #[test]

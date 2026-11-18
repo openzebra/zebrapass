@@ -8,9 +8,9 @@ mod common;
 use container::WrapEntry;
 use platform::{ChipBackend, SoftwareChip};
 use session::{
-    add_chip_unlock, add_human_password, create, drop_recovery_wrap, open_record,
-    remove_human_password, replace_human_password, revoke, unlock, write_record, BodyAlg, ChipKeys,
-    ChipPublics, HumanPasswordPublics, KdfProfile, Revoke, RotateCreds, UnlockCreds,
+    BodyAlg, ChipKeys, ChipPublics, HumanPasswordPublics, KdfProfile, Revoke, RotateCreds,
+    UnlockCreds, add_chip_unlock, add_human_password, create, drop_recovery_wrap, open_record,
+    remove_human_password, replace_human_password, revoke, unlock, write_record,
 };
 
 const SEED: [u8; 64] = [0x6B; 64];

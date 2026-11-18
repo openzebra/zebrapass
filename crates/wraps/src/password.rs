@@ -5,7 +5,7 @@
 //! not a user-chosen string — feeds Argon2id here. The wrap format is
 //! unchanged.
 
-use container::{encode_password_entry, PasswordWrap, StaticHeader};
+use container::{PasswordWrap, StaticHeader, encode_password_entry};
 use kdf::argon2id;
 use secret::Secret;
 
@@ -77,8 +77,8 @@ pub fn open_password(
 )]
 mod tests {
     use container::{
-        StaticHeader, WrapEntry, BODY_AEGIS256, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN, KDF_T_MIN,
-        PASSWORD_RECORD_LEN, WRAP_AEGIS256,
+        BODY_AEGIS256, KDF_ARGON2ID, KDF_M_KIB_MIN, KDF_P_MIN, KDF_T_MIN, PASSWORD_RECORD_LEN,
+        StaticHeader, WRAP_AEGIS256, WrapEntry,
     };
 
     use super::{open_password, seal_password};

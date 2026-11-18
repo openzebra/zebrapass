@@ -12,12 +12,12 @@
 mod common;
 
 use crossterm::event::KeyCode;
+use tui::App;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::{Unlocked, View};
 use tui::app::screen::Screen;
-use tui::App;
 
-use common::{app, make_vault, press, render, temp_dir, type_text, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, render, temp_dir, type_text, unlock, wait};
 
 fn state(app: &App) -> &Unlocked {
     let Screen::Unlocked(state) = &app.screen else {
@@ -53,7 +53,7 @@ fn offered(app: &App) -> Vec<String> {
 #[test]
 fn the_address_is_validated_saved_offered_first_and_can_be_cleared() {
     let mut app = with_shared_vault();
-    assert!(!offered(&app).is_empty());
+    assert_ne!(offered(&app), [] as [std::string::String; 0]);
     assert!(state(&app).advertised().is_none());
 
     press(&mut app, KeyCode::Char('p'));

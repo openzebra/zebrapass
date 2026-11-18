@@ -87,8 +87,7 @@ mod tests {
 
     use super::SeedPhrase;
 
-    const ABANDON_12: &str =
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const ABANDON_12: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     const ABANDON_24: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 
@@ -139,8 +138,7 @@ mod tests {
     #[test]
     fn checksum_and_wordlist_enforced() {
         // Last word replaced: checksum must fail.
-        let bad_checksum =
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+        let bad_checksum = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
         assert_eq!(
             SeedPhrase::parse(&secret(bad_checksum), &secret(""))
                 .unwrap_err()
@@ -148,8 +146,7 @@ mod tests {
             "invalid seed phrase"
         );
         // A word outside the wordlist.
-        let not_a_word =
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon zebraa";
+        let not_a_word = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon zebraa";
         assert_eq!(
             SeedPhrase::parse(&secret(not_a_word), &secret(""))
                 .unwrap_err()

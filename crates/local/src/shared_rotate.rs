@@ -10,12 +10,12 @@
 
 use std::path::Path;
 
-use memberlog::{rotation_commit, Action, Entry, MemberLog};
-use secret::{ct_eq_32, Secret};
-use session::{rotate_vault_key, unlock, Attestation, RotateCreds, UnlockCreds, VaultFile};
+use memberlog::{Action, Entry, MemberLog, rotation_commit};
+use secret::{Secret, ct_eq_32};
+use session::{Attestation, RotateCreds, UnlockCreds, VaultFile, rotate_vault_key, unlock};
 
 use crate::meta::LocalMeta;
-use crate::shared::{file_keys, load_log_any, load_state_any, SharedVault};
+use crate::shared::{SharedVault, file_keys, load_log_any, load_state_any};
 use crate::shared_files::save_member_log;
 use crate::shared_ref::SharedRef;
 use crate::shared_sync::attested_store;

@@ -9,7 +9,7 @@ use crate::app::flows::editor::{EditorState, Part};
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::home::{Filter, Pane};
 use crate::app::flows::unlocked::{Unlocked, View};
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::secure::health::HealthReport;
 use crate::ui::widgets::toast::Tone;
@@ -57,11 +57,9 @@ fn health_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
     let row = rows.get(*cursor).copied();
     let ids: Vec<u32> = match row {
         Some(HealthRow::Weak) => report.weak.to_vec(),
-        Some(HealthRow::Reused(group)) => report
-            .reused
-            .get(group)
-            .map(|ids| ids.to_vec())
-            .unwrap_or_default(),
+        Some(HealthRow::Reused(group)) => {
+            report.reused.get(group).map_or_default(|ids| ids.to_vec())
+        }
         Some(HealthRow::Old) => report.old.to_vec(),
         None => Vec::new(),
     };

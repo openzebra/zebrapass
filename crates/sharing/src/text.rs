@@ -3,7 +3,7 @@
 //! wraps long lines), is strict about the alphabet and trailing bits, and
 //! bounds the output before allocating it.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 

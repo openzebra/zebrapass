@@ -11,7 +11,7 @@
 )]
 
 use record::{MAX_CUSTOM_NAME, MAX_DOC_LEN};
-use tui::app::flows::editor::{EditorState, Part, Value, VALUE_MAX};
+use tui::app::flows::editor::{EditorState, Part, VALUE_MAX, Value};
 
 fn focus(editor: &mut EditorState, index: usize, part: Part) {
     editor.focus = editor

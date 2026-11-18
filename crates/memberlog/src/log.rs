@@ -7,12 +7,12 @@
 //! Every later entry must chain to the one before it and be signed by a
 //! device of a current owner (or by a member removing itself).
 
-use anyhow::{anyhow, Result};
-use pq::{sync_verify, MEMBER_LOG_CTX, SYNC_VK_LEN};
+use anyhow::{Result, anyhow};
+use pq::{MEMBER_LOG_CTX, SYNC_VK_LEN, sync_verify};
 use secret::ct_eq_32;
 use session::{DeviceCert, DeviceSignKey};
 
-use crate::entry::{sign_entry, Action, Entry};
+use crate::entry::{Action, Entry, sign_entry};
 use crate::role::Role;
 
 /// Most entries one log holds; it bounds both storage and replay time.
@@ -226,11 +226,7 @@ impl MemberLog {
             Action::Rotate { .. } => role.can_manage() && commits,
             Action::Add { .. } | Action::SetRole { .. } => role.can_manage(),
         };
-        if allowed {
-            Ok(())
-        } else {
-            Err(rejected())
-        }
+        if allowed { Ok(()) } else { Err(rejected()) }
     }
 
     fn apply(&mut self, action: &Action) -> Result<()> {

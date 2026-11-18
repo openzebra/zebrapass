@@ -8,14 +8,14 @@
 
 use aead::BodyAlg;
 use kdf::KdfProfile;
-use record::{Document, ValueType, TAG_NAME, TAG_PASSWORD, TAG_TITLE};
+use record::{Document, TAG_NAME, TAG_PASSWORD, TAG_TITLE, ValueType};
 
 use super::{
-    delete_record, history, list_records, open_record, open_revision, restore_revision, vault_meta,
-    RecordSummary,
+    RecordSummary, delete_record, history, list_records, open_record, open_revision,
+    restore_revision, vault_meta,
 };
 use crate::{
-    create, unlock, write_record, write_records_batch, write_vault_meta, UnlockCreds, MAX_BATCH,
+    MAX_BATCH, UnlockCreds, create, unlock, write_record, write_records_batch, write_vault_meta,
 };
 
 fn sample_doc(title: &str, password: &str) -> Document {
@@ -66,7 +66,10 @@ fn record_lifecycle() {
 
     let tomb = delete_record(&mut session, &mut file, 1).unwrap();
     assert_eq!(tomb, 4);
-    assert!(list_records(&session).unwrap().is_empty());
+    assert_eq!(
+        list_records(&session).unwrap(),
+        [] as [super::RecordSummary; 0]
+    );
     assert_eq!(
         open_record(&session, 1).unwrap_err().to_string(),
         "record deleted"
@@ -204,7 +207,10 @@ fn vault_meta_round_trip() {
     let meta = vault_meta(&session).unwrap();
     assert_eq!(meta.text(TAG_NAME).unwrap().unwrap(), "Personal");
     // Vault meta is hidden from the record list.
-    assert!(list_records(&session).unwrap().is_empty());
+    assert_eq!(
+        list_records(&session).unwrap(),
+        [] as [super::RecordSummary; 0]
+    );
     // Unknown frames and vault meta survive record writes.
     write_record(&mut session, &mut file, Some(1), &sample_doc("R", "")).unwrap();
     assert_eq!(
@@ -264,8 +270,9 @@ fn batch_over_limit_leaves_the_vault_unchanged() {
         "batch too large"
     );
     assert_eq!(file.as_bytes(), before.as_slice());
-    assert!(write_records_batch(&mut session, &mut file, &[])
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        write_records_batch(&mut session, &mut file, &[]).unwrap(),
+        [] as [u32; 0]
+    );
     assert_eq!(file.as_bytes(), before.as_slice());
 }

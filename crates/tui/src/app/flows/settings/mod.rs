@@ -7,6 +7,7 @@
 pub mod apply;
 pub mod posture;
 pub mod rows;
+mod rows_why;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use local::Prefs;
@@ -15,11 +16,11 @@ use crate::app::action::Action;
 use crate::app::ctx::Ctx;
 use crate::app::flows::editing::edit_text;
 use crate::app::flows::unlocked::Unlocked;
-use crate::app::keymap::{resolve, Scope};
+use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
 use crate::ui::input::TextInput;
 
-use rows::{in_section, matching, Row, Section};
+use rows::{Row, Section, in_section, matching};
 
 /// Longest search query.
 const MAX_QUERY: usize = 40;

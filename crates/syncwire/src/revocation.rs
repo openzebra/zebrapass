@@ -1,9 +1,9 @@
 //! Wire form of [`Revocation`]: fixed length, strictly parsed.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use session::{Revocation, SYNC_SIG_LEN};
 
-use crate::cert::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use crate::cert::{CERT_WIRE_LEN, decode_cert, encode_cert};
 use crate::reader::Reader;
 
 /// First four bytes of an encoded revocation.

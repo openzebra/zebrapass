@@ -12,14 +12,14 @@
 mod common;
 
 use crossterm::event::KeyCode;
-use record::{Document, ValueType, TAG_PASSWORD, TAG_TITLE};
+use record::{Document, TAG_PASSWORD, TAG_TITLE, ValueType};
+use tui::App;
 use tui::app::ctx::Task;
 use tui::app::flows::unlocked::Unlocked;
 use tui::app::screen::Screen;
 use tui::vault::ops::Op;
-use tui::App;
 
-use common::{app, make_vault, press, temp_dir, unlock, wait, PASSWORD};
+use common::{PASSWORD, app, make_vault, press, temp_dir, unlock, wait};
 
 fn unlocked(app: &App) -> &Unlocked {
     let Screen::Unlocked(state) = &app.screen else {

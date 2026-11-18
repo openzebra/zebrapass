@@ -1,9 +1,10 @@
 //! Unlock screen: pick a factor the wrap directory offers, submit it to the
 //! worker, and show one uniform error with exponential backoff.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use local::{device_key_info, DEVICE_PIN_LEN};
+use local::{DEVICE_PIN_LEN, device_key_info};
 use session::WrapDirectory;
 
 use crate::app::ctx::{Ctx, Task};
@@ -11,12 +12,12 @@ use crate::app::worker::Job;
 use crate::secure::reveal::{RevealGuard, RevealKey};
 use crate::secure::secret_input::SecretInput;
 use crate::ui::widgets::toast::Tone;
-use crate::vault::adopt::{is_placeholder, Held};
+use crate::vault::adopt::{Held, is_placeholder};
 use crate::vault::device;
 use crate::vault::discover::VaultRef;
 use crate::vault::error::UnlockError;
-use crate::vault::factors::{presence, views, FactorKind, Presence};
-use crate::vault::open::{read_directory, Credential};
+use crate::vault::factors::{FactorKind, Presence, presence, views};
+use crate::vault::open::{Credential, read_directory};
 
 /// Longest password accepted.
 pub const MAX_PASSWORD: usize = 1024;
@@ -78,7 +79,7 @@ pub struct UnlockState {
     pub reveal: RevealGuard,
     /// The password just submitted for a placeholder vault, kept for the
     /// session so the account's vault can be opened with it once found.
-    pub held: Option<Held>,
+    pub held: Option<Arc<Held>>,
 }
 
 /// Reveal key of the password field.
@@ -125,8 +126,7 @@ impl UnlockState {
     pub fn presence(&self) -> Presence {
         self.directory
             .as_ref()
-            .map(|directory| presence(directory, self.owned_device()))
-            .unwrap_or_default()
+            .map_or_default(|directory| presence(directory, self.owned_device()))
     }
 
     /// Modes this vault offers, in Tab order.
@@ -206,7 +206,9 @@ impl UnlockState {
             }
         };
         self.held = match &credential {
-            Credential::Password(password) if is_placeholder(&paths) => Some(Held::new(password)),
+            Credential::Password(password) if is_placeholder(&paths) => {
+                Some(Held::password_only(password))
+            }
             _ => None,
         };
         self.reveal_off(ctx);

@@ -4,12 +4,12 @@
 //! Every failure here is the same error, so a peer cannot tell a bad
 //! certificate from a bad signature or from the wrong account.
 
-use anyhow::{anyhow, Result};
-use pq::{sync_sign, sync_verify, P2P_AUTH_CTX, SYNC_SIG_LEN, SYNC_VK_LEN};
+use anyhow::{Result, anyhow};
+use pq::{P2P_AUTH_CTX, SYNC_SIG_LEN, SYNC_VK_LEN, sync_sign, sync_verify};
 use secret::Secret;
-use session::{frame_parts, DeviceCert, DeviceSignKey, Revocation};
+use session::{DeviceCert, DeviceSignKey, Revocation, frame_parts};
 use sha2::{Digest, Sha256};
-use syncwire::{decode_cert, encode_cert, CERT_WIRE_LEN};
+use syncwire::{CERT_WIRE_LEN, decode_cert, encode_cert};
 
 use crate::suite::{PROOF_LEN, SUITE};
 

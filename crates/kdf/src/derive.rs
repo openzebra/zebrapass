@@ -286,7 +286,7 @@ pub fn sync_seed(seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; OUTPUT_LEN]>> {
 
 /// Builds `label || u16 len || part` per part, so variable parts can never
 /// alias a shorter label or a sibling part.
-fn framed_info(label: &[u8], parts: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
+pub fn framed_info(label: &[u8], parts: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
     let cap = label.len() + parts.iter().map(|part| 2 + part.len()).sum::<usize>();
     let mut info = Vec::with_capacity(cap);
     info.extend_from_slice(label);

@@ -11,11 +11,11 @@
 use std::path::PathBuf;
 
 use import::{
-    parse, read_file, sniff, Item, ItemKind, Parsed, Preset, Request, SkipReason, Source,
+    Item, ItemKind, Parsed, Preset, Request, SkipReason, Source, parse, read_file, sniff,
 };
 use record::{
-    ValueType, CUSTOM_FAVORITE, CUSTOM_TAGS, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TITLE,
-    TAG_TOTP, TAG_URL, TAG_USERNAME,
+    CUSTOM_FAVORITE, CUSTOM_TAGS, TAG_EMAIL, TAG_NOTES, TAG_PASSWORD, TAG_TITLE, TAG_TOTP, TAG_URL,
+    TAG_USERNAME, ValueType,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -144,11 +144,12 @@ fn chrome_and_firefox_csv() {
         only.doc.text(TAG_TITLE).unwrap(),
         Some("accounts.example.org")
     );
-    assert!(only
-        .doc
-        .fields()
-        .iter()
-        .all(|field| !record::is_custom(field.tag)));
+    assert!(
+        only.doc
+            .fields()
+            .iter()
+            .all(|field| !record::is_custom(field.tag))
+    );
 }
 
 #[test]

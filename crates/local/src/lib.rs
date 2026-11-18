@@ -8,6 +8,9 @@
 mod address;
 mod atomic;
 mod attest_store;
+mod backup;
+mod backup_open;
+mod backup_roll;
 mod device_key;
 mod last_seen;
 mod limits;
@@ -15,6 +18,7 @@ mod listen;
 mod meta;
 mod peer_store;
 mod personal_peers;
+mod personal_rekey;
 mod prefs;
 mod revocations;
 mod share_keys;
@@ -24,51 +28,67 @@ mod shared_ref;
 mod shared_rotate;
 mod shared_sync;
 mod sync_identity;
+mod sync_url;
 mod usage;
 
 use std::path::{Path, PathBuf};
 
 use aead::BodyAlg;
 use kdf::KdfProfile;
-use session::{create, Session, VaultFile};
+use session::{Session, VaultFile, create};
 
 pub use address::{
-    never_dialable, offer_observed, parse_advertise, parse_peer_address, parse_personal_target,
-    parse_relay_hint, Offer,
+    Offer, never_dialable, offer_observed, parse_advertise, parse_peer_address,
+    parse_personal_target, parse_relay_hint,
 };
 pub use atomic::write_atomic;
 pub use attest_store::AttestStore;
+pub use backup::{
+    BACKUP_COMMIT_LEN, BACKUP_HEADER_LEN, BACKUP_MAGIC, BACKUP_VERSION, BackupContents,
+    BundleBackup, LegacyBackup, MAX_BACKUP_AUX, MAX_BACKUP_FILE, MAX_BACKUP_SHARED,
+    MAX_BACKUP_VAULT, RestoredShared, build_backup_bundle, export_backup_file,
+};
+pub use backup_open::{open_backup_bundle, open_backup_with_vk, restore_shared_entries};
+pub use backup_roll::write_rolling_backup;
 pub use device_key::{
-    device_key_info, open_device_key, seal_device_key, DeviceKey, DeviceKeyInfo,
-    DEVICE_KEY_FILE_LEN,
+    DEVICE_KEY_FILE_LEN, DeviceKey, DeviceKeyInfo, device_key_info, open_device_key,
+    seal_device_key,
 };
 pub use last_seen::LastSeen;
 pub use limits::{
-    CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S, PEERS_MAX, PERSONAL_PEERS_MAX,
-    PERSONAL_PEER_MAX_LEN, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX, SHARED_NAME_MAX,
+    BACKUP_DIR_MAX_LEN, BACKUP_KEEP_MAX, CLIP_CLEAR_S, DEVICE_PIN_LEN, LAST_SEEN_MAX, LOCK_AFTER_S,
+    PEERS_MAX, PERSONAL_PEER_MAX_LEN, PERSONAL_PEERS_MAX, RELAYS_MAX, REVEAL_HIDE_S, REVOKED_MAX,
+    SHARED_NAME_MAX, SYNC_PROXY_MAX_LEN, SYNC_SERVER_MAX_LEN, SYNC_SERVERS_MAX,
 };
 pub use listen::Listen;
-pub use meta::{load_local_meta, save_local_meta, LocalMeta, SeenCursor};
+pub use meta::{LocalMeta, SeenCursor, load_local_meta, save_local_meta};
 pub use peer_store::{load_peers, save_peers};
 pub use personal_peers::{
-    add_manual_peer, load_personal_entries, load_personal_peers, remember_personal_peer,
-    remove_personal_peer, save_personal_entries, save_personal_peers, PersonalPeer,
+    PersonalPeer, add_manual_peer, load_personal_entries, load_personal_peers,
+    remember_personal_peer, remove_personal_peer, save_personal_entries, save_personal_peers,
+};
+pub use personal_rekey::{
+    PERSONAL_DEVICE_MAGIC, PERSONAL_HEAD_LEN, PersonalDeviceEntry, decode_personal_head,
+    encode_personal_head, open_personal_rekey, seal_personal_rekey,
 };
 pub use prefs::Prefs;
 pub use revocations::Revocations;
 pub use share_keys::{ShareKeys, SharePublics};
 pub use shared::{
-    adopt_shared_file, create_shared_vault, is_pending, join_shared_vault, open_shared_vault,
-    purge_shared_vault, read_member_log, read_shared_state, SharedVault,
+    SharedVault, adopt_shared_file, create_shared_vault, is_pending, join_shared_vault,
+    open_shared_vault, purge_shared_vault, read_member_log, read_shared_state,
 };
-pub use shared_files::{load_member_log, save_member_log, SharedState};
-pub use shared_ref::{Introduction, SharedRef};
+pub use shared_files::{SharedState, load_member_log, save_member_log};
+pub use shared_ref::{Introduction, SharedRef, list_shared_refs};
 pub use shared_rotate::{
-    adopt_rekeyed, apply_rotation, is_behind, plan_rotation, prepare_rekey, seed_matches_log,
-    Attested, RekeyPlan, Replace,
+    Attested, RekeyPlan, Replace, adopt_rekeyed, apply_rotation, is_behind, plan_rotation,
+    prepare_rekey, seed_matches_log,
 };
-pub use shared_sync::{verdict_of, Edit, Verdict};
-pub use sync_identity::{upgrade_sync_identity, SyncIdentity};
+pub use shared_sync::{Edit, Verdict, verdict_of};
+pub use sync_identity::{SyncIdentity, upgrade_sync_identity};
+pub use sync_url::{
+    parse_backup_dir, parse_sync_proxy_url, parse_sync_server_list, parse_sync_server_url,
+};
 pub use usage::{Usage, UsageEntry};
 
 /// Locations of one vault on this device.

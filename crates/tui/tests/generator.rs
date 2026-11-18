@@ -8,7 +8,7 @@
     reason = "tests may unwrap and index; ratatui pulls duplicate transitive crates"
 )]
 
-use tui::secure::generator::{alphabet, generate, CharSets, GenMode, GenSpec};
+use tui::secure::generator::{CharSets, GenMode, GenSpec, alphabet, generate};
 
 #[test]
 fn every_mode_respects_length_and_alphabet() {

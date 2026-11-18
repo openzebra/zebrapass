@@ -17,6 +17,21 @@ pub const REVEAL_HIDE_S: RangeInclusive<u8> = 3..=30;
 /// Relay slots a vault may be told about.
 pub const RELAYS_MAX: usize = 4;
 
+/// Maximum sync server endpoints saved per vault.
+pub const SYNC_SERVERS_MAX: usize = 8;
+
+/// Longest sync server URL in bytes (fits within invitation hints).
+pub const SYNC_SERVER_MAX_LEN: usize = 255;
+
+/// Longest proxy URL in bytes.
+pub const SYNC_PROXY_MAX_LEN: usize = 256;
+
+/// Longest automatic backup directory path in bytes.
+pub const BACKUP_DIR_MAX_LEN: usize = 512;
+
+/// Maximum rolling backup files retained automatically.
+pub const BACKUP_KEEP_MAX: u8 = 30;
+
 /// Longest name of a shared vault in bytes.
 pub const SHARED_NAME_MAX: usize = 64;
 
@@ -24,7 +39,7 @@ pub const SHARED_NAME_MAX: usize = 64;
 pub const SHARED_HINTS_MAX: usize = 4;
 
 /// Longest address hint in bytes.
-pub const SHARED_HINT_MAX: usize = 64;
+pub const SHARED_HINT_MAX: usize = 255;
 
 /// Most records of a shared vault with a stored attestation.
 pub const ATTESTATIONS_MAX: usize = 4096;
