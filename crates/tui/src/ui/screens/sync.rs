@@ -68,19 +68,21 @@ pub(super) fn print_lines(print: &Fingerprint, label: &str, theme: &Theme) -> Ve
     ]
 }
 
-pub(super) const fn role_name(role: Role) -> &'static str {
+pub(crate) const fn role_name(role: Role) -> &'static str {
     match role {
         Role::Owner => "owner",
+        Role::Admin => "admin",
         Role::Writer => "writer",
         Role::Reader => "reader",
     }
 }
 
-pub(super) const fn role_gloss(role: Role) -> &'static str {
+pub(crate) const fn role_gloss(role: Role) -> &'static str {
     match role {
         Role::Reader => "can read",
         Role::Writer => "can read and edit",
-        Role::Owner => "can also add people",
+        Role::Admin => "can read, edit, and delete records",
+        Role::Owner => "can also manage members and key",
     }
 }
 

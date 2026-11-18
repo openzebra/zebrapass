@@ -14,8 +14,9 @@ use crate::app::flows::home::{Filter, Pane};
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::idle::clock;
 use crate::ui::layout::Breakpoint;
-use crate::ui::screens::detail;
 use crate::ui::screens::p2p_status::{Light, summary};
+use crate::ui::screens::{detail, members};
+use crate::ui::theme::{Theme, ThemeName};
 use crate::ui::widgets::chrome::row_style;
 use crate::ui::widgets::field::text_line;
 use crate::ui::widgets::list;
@@ -88,6 +89,45 @@ fn link_indicator(
     (glyph, style)
 }
 
+fn active_permissions(state: &Unlocked) -> (bool, bool, bool) {
+    let Filter::Shared(vault_id, _) = &state.home.filter else {
+        return (true, true, false);
+    };
+    let Some(item) = state.shared_item(vault_id) else {
+        return (false, false, true);
+    };
+    let ready = item.ready();
+    let can_edit = ready && item.my_role.is_some_and(memberlog::Role::can_write);
+    let can_delete = ready && item.my_role.is_some_and(memberlog::Role::can_delete);
+    (can_edit, can_delete, true)
+}
+
+fn action_chip(
+    key: &'static str,
+    label: &'static str,
+    enabled: bool,
+    danger: bool,
+    theme: &Theme,
+) -> [Span<'static>; 3] {
+    let chip_bg = if matches!(theme.name, ThemeName::Mono) || !enabled {
+        Style::new()
+    } else {
+        Style::new().bg(theme.palette.surface)
+    };
+    let (key_style, lbl_style) = if !enabled {
+        (theme.muted(), theme.muted())
+    } else if danger {
+        (theme.danger().patch(chip_bg), theme.text().patch(chip_bg))
+    } else {
+        (theme.accent().patch(chip_bg), theme.text().patch(chip_bg))
+    };
+    [
+        Span::raw(" "),
+        Span::styled(format!("[{key}] "), key_style),
+        Span::styled(label, lbl_style),
+    ]
+}
+
 fn draw_action_bar(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
     let theme = &ctx.theme;
     if state.home.searching {
@@ -98,36 +138,32 @@ fn draw_action_bar(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ct
         frame.render_widget(Paragraph::new(line).style(theme.base()), area);
         return;
     }
-    let sep = if theme.ascii { " | " } else { " │ " };
-    let btn = |k: &'static str, label: &'static str| {
-        [
-            Span::styled(format!(" [{k}]"), theme.accent()),
-            Span::styled(format!(" {label} "), theme.text()),
-        ]
+    let (can_edit, can_delete, in_shared) = active_permissions(state);
+    let compact = area.width < 136;
+    let sep = if theme.ascii || compact {
+        " | "
+    } else {
+        " │ "
     };
-    let mut spans = Vec::with_capacity(24);
-    for pair in [btn("n", "NEW"), btn("E", "EDIT"), btn("d", "DEL")] {
-        spans.extend(pair);
+    let mut spans = Vec::with_capacity(48);
+    spans.extend(action_chip("n", "NEW", can_edit, false, theme));
+    spans.extend(action_chip("E", "EDIT", can_edit, false, theme));
+    spans.extend(action_chip("d", "DEL", can_delete, true, theme));
+    spans.push(Span::styled(sep, theme.muted()));
+    for (key, label) in [("g", "RNG"), ("i", "P2P")] {
+        spans.extend(action_chip(key, label, true, false, theme));
+    }
+    if in_shared {
+        let lbl = if compact { "MEM" } else { "MEMBERS" };
+        spans.extend(action_chip("m", lbl, true, false, theme));
+    }
+    for (key, label) in [("S", "SHARE"), ("F", "KEYS"), ("D", "DEV"), ("H", "AUDIT")] {
+        spans.extend(action_chip(key, label, true, false, theme));
     }
     spans.push(Span::styled(sep, theme.muted()));
-    for pair in [
-        btn("g", "RNG"),
-        btn("i", "P2P"),
-        btn("S", "SHARE"),
-        btn("F", "KEYS"),
-        btn("D", "DEV"),
-        btn("H", "AUDIT"),
-    ] {
-        spans.extend(pair);
-    }
-    spans.push(Span::styled(sep, theme.muted()));
-    for pair in [
-        btn(",", "settings"),
-        btn("L", "LOCK"),
-        btn("?", "HELP"),
-        btn("q", "QUIT"),
-    ] {
-        spans.extend(pair);
+    let cfg_lbl = if compact { "cfg" } else { "settings" };
+    for (key, label) in [(",", cfg_lbl), ("L", "LOCK"), ("?", "HELP"), ("q", "QUIT")] {
+        spans.extend(action_chip(key, label, true, false, theme));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.base()), area);
 }
@@ -147,15 +183,33 @@ fn pane_block<'a>(title: Line<'a>, focused: bool, ctx: &Ctx) -> Block<'a> {
 
 /// Draw the home view.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, state: &Unlocked, ctx: &Ctx) {
-    let [top, actions, body] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .areas(area);
-    header(frame, top, state, "", ctx);
-    draw_action_bar(frame, actions, state, ctx);
-    match Breakpoint::from(area.width) {
+    if state.in_shared() {
+        let [top, actions, shared_bar, body] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(area);
+        header(frame, top, state, "", ctx);
+        draw_action_bar(frame, actions, state, ctx);
+        members::draw_shared_banner(frame, shared_bar, state, ctx);
+        draw_body(frame, body, state, ctx);
+    } else {
+        let [top, actions, body] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(area);
+        header(frame, top, state, "", ctx);
+        draw_action_bar(frame, actions, state, ctx);
+        draw_body(frame, body, state, ctx);
+    }
+}
+
+fn draw_body(frame: &mut Frame<'_>, body: Rect, state: &Unlocked, ctx: &Ctx) {
+    match Breakpoint::from(body.width) {
         Breakpoint::Wide => {
             let [filters, records, detail_area] = Layout::horizontal([
                 Constraint::Length(22),

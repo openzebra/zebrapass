@@ -18,7 +18,8 @@ use local::{
 use memberlog::{Action, Role};
 use record::{Document, TAG_TITLE};
 use session::{
-    KdfProfile, VaultFile, attest_latest, list_records, open_record, reconcile, write_record,
+    KdfProfile, SessionError, VaultFile, attest_latest, delete_record, list_records, open_record,
+    reconcile, write_record,
 };
 use syncwire::{decode_bundle, decode_frontier};
 
@@ -327,4 +328,101 @@ fn attestations_and_records_survive_a_reopen_and_a_rotation() {
     attestation.verify(bob.id.root_vk(), 1).unwrap();
     assert_ne!(frame, []);
     assert_eq!(alice.vault.attest.len(), 1);
+}
+
+#[test]
+fn writers_cannot_delete_and_admins_can_delete_but_not_manage_members() {
+    let [mut alice, mut bob, _] = trio();
+    let dave_id = person(4);
+    let add_dave = Action::Add {
+        client_id: dave_id.devices()[0].client_id,
+        root_vk: Box::new(*dave_id.root_vk()),
+        role: Role::Admin,
+    };
+    let entry = alice
+        .vault
+        .log
+        .propose(&alice.id.sign_key(), &alice.id.devices()[0], add_dave, 2)
+        .unwrap();
+    alice.vault.log.append(entry).unwrap();
+    alice.vault.save_log(&alice.reference.seed).unwrap();
+    alice.vault.persist(&alice.reference.seed).unwrap();
+
+    let dave_dir = temp_dir("d-admin");
+    let dave_ref = dup(&alice.reference);
+    let attested = alice
+        .vault
+        .attestations(&alice.reference, &alice.id)
+        .unwrap();
+    join_shared_vault(&dave_dir, &dave_ref, &alice.vault.log).unwrap();
+    let dave_vault = adopt_shared_file(
+        &dave_dir,
+        &dave_ref,
+        VaultFile::new(alice.vault.file.as_bytes().to_vec()),
+        &attested,
+        &dave_id,
+    )
+    .unwrap();
+    let mut dave = Member {
+        base: dave_dir,
+        id: dave_id,
+        reference: dave_ref,
+        vault: dave_vault,
+    };
+
+    // Owner creates record; Writer can update it, cannot delete it.
+    let id = alice
+        .vault
+        .edit(&alice.reference, &alice.id, Edit::Create(titled("secret")))
+        .unwrap();
+    exchange(&mut bob, &mut alice);
+    bob.vault
+        .edit(&bob.reference, &bob.id, Edit::Update(id, titled("updated")))
+        .unwrap();
+    exchange(&mut alice, &mut bob);
+    assert_eq!(titles(&alice), ["updated"]);
+
+    let denied = bob
+        .vault
+        .edit(&bob.reference, &bob.id, Edit::Delete(id))
+        .unwrap_err();
+    assert_eq!(
+        denied.downcast_ref::<SessionError>(),
+        Some(&SessionError::NotADeleter)
+    );
+
+    // Writer bypasses local::Edit::Delete via session::delete_record and signs tombstone;
+    // Owner refuses it.
+    delete_record(&mut bob.vault.session, &mut bob.vault.file, id).unwrap();
+    let (attestation, frame) = attest_latest(
+        &bob.vault.session,
+        &bob.id.sign_key(),
+        &bob.id.devices()[0],
+        id,
+    )
+    .unwrap();
+    let bundle = syncwire::encode_bundle(&attestation, &frame).unwrap();
+    let refused = alice.vault.accept(&alice.reference, &bundle).unwrap_err();
+    assert_eq!(verdict_of(&refused), Verdict::Refused);
+    assert_eq!(titles(&alice), ["updated"]);
+
+    // Admin can delete the record and Owner accepts the tombstone; Admin cannot set roles.
+    exchange(&mut dave, &mut alice);
+    assert_eq!(titles(&dave), ["updated"]);
+    dave.vault
+        .edit(&dave.reference, &dave.id, Edit::Delete(id))
+        .unwrap();
+    assert_eq!(exchange(&mut alice, &mut dave), Vec::<Verdict>::new());
+    assert_eq!(titles(&alice), [] as [String; 0]);
+
+    assert!(
+        dave.vault
+            .set_role(
+                &dave.reference,
+                &dave.id,
+                bob.id.devices()[0].client_id,
+                Role::Reader,
+            )
+            .is_err()
+    );
 }

@@ -98,6 +98,8 @@ actions! {
     OpenDevices,
     /// Sync.
     OpenSync,
+    /// Manage shared vault participants.
+    OpenMembers,
     /// Vault health.
     OpenHealth,
     /// Settings.
@@ -268,6 +270,11 @@ pub const PALETTE: &[(Action, &str, Section)] = &[
     ),
     (Action::OpenDevices, "Devices and trust", Section::Devices),
     (Action::OpenSync, "Sync", Section::Devices),
+    (
+        Action::OpenMembers,
+        "Shared vault members",
+        Section::Devices,
+    ),
     (
         Action::EnrollDevice,
         "Enroll a new device",

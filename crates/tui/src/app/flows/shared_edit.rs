@@ -2,6 +2,7 @@
 //! the worker, a shared vault in place by its writers.
 
 use local::Edit;
+use memberlog::Role;
 use record::Document;
 use session::Session;
 
@@ -38,6 +39,33 @@ impl Unlocked {
             ctx.toast(Tone::Info, "You can read this vault, not change it.");
         }
         writer
+    }
+
+    /// Whether this account may delete records of the vault the list shows;
+    /// writers and readers are told why not.
+    pub fn may_delete_here(&self, ctx: &mut Ctx) -> bool {
+        let Filter::Shared(vault_id, _) = &self.home.filter else {
+            return true;
+        };
+        let Some(item) = self.shared_item(vault_id) else {
+            ctx.toast(Tone::Info, "That vault is not available.");
+            return false;
+        };
+        if !item.ready() {
+            ctx.toast(Tone::Info, "That vault is still syncing.");
+            return false;
+        }
+        match item.my_role {
+            Some(role) if role.can_delete() => true,
+            Some(Role::Writer) => {
+                ctx.toast(Tone::Info, "Only owners and admins can delete records.");
+                false
+            }
+            _ => {
+                ctx.toast(Tone::Info, "You can read this vault, not change it.");
+                false
+            }
+        }
     }
 
     /// Save `doc` as record `id`, or as a new record.

@@ -15,4 +15,4 @@ mod wire;
 pub use entry::{Action, Entry, rotation_commit, sign_entry};
 pub use log::{MAX_ENTRIES, MAX_MEMBERS, Member, MemberLog};
 pub use role::Role;
-pub use wire::{ENTRY_MAGIC, ENTRY_WIRE_LEN, ENTRY_WIRE_VERSION};
+pub use wire::{ENTRY_MAGIC, ENTRY_WIRE_LEN, ENTRY_WIRE_VERSION, ENTRY_WIRE_VERSION_V2};

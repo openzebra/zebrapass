@@ -12,8 +12,10 @@ use crate::role::Role;
 
 /// First four bytes of an encoded entry.
 pub const ENTRY_MAGIC: [u8; 4] = *b"ZPML";
-/// Current entry wire version.
-pub const ENTRY_WIRE_VERSION: u16 = 2;
+/// Legacy entry wire version (Reader/Writer/Owner only).
+pub const ENTRY_WIRE_VERSION_V2: u16 = 2;
+/// Current entry wire version (adds [`Role::Admin`]).
+pub const ENTRY_WIRE_VERSION: u16 = 3;
 /// Exact length of an encoded entry.
 pub const ENTRY_WIRE_LEN: usize =
     4 + 2 + 16 + 8 + 32 + 8 + 1 + 1 + 64 + 32 + SYNC_VK_LEN + CERT_WIRE_LEN + SYNC_SIG_LEN;
@@ -27,15 +29,27 @@ impl Entry {
     ///
     /// # Errors
     ///
-    /// The signature is not [`SYNC_SIG_LEN`] bytes, or the signer
-    /// certificate does not encode.
+    /// The wire version is unsupported (or v2 attempts to carry `Role::Admin`),
+    /// the signature is not [`SYNC_SIG_LEN`] bytes, or the signer certificate
+    /// does not encode.
     pub fn encode(&self) -> Result<Vec<u8>> {
+        if !matches!(
+            self.wire_version,
+            ENTRY_WIRE_VERSION_V2 | ENTRY_WIRE_VERSION
+        ) {
+            return Err(malformed());
+        }
+        if self.wire_version == ENTRY_WIRE_VERSION_V2
+            && self.action.role_code() == u8::from(Role::Admin)
+        {
+            return Err(malformed());
+        }
         if self.signature.len() != SYNC_SIG_LEN {
             return Err(malformed());
         }
         let mut out = Vec::with_capacity(ENTRY_WIRE_LEN);
         out.extend_from_slice(&ENTRY_MAGIC);
-        out.extend_from_slice(&ENTRY_WIRE_VERSION.to_be_bytes());
+        out.extend_from_slice(&self.wire_version.to_be_bytes());
         out.extend_from_slice(&self.vault_id);
         out.extend_from_slice(&self.seq.to_be_bytes());
         out.extend_from_slice(&self.prev_hash);
@@ -66,7 +80,11 @@ impl Entry {
             return Err(malformed());
         }
         let mut reader = Reader::new(bytes);
-        if reader.array::<4>()? != ENTRY_MAGIC || reader.u16()? != ENTRY_WIRE_VERSION {
+        if reader.array::<4>()? != ENTRY_MAGIC {
+            return Err(malformed());
+        }
+        let wire_version = reader.u16()?;
+        if !matches!(wire_version, ENTRY_WIRE_VERSION_V2 | ENTRY_WIRE_VERSION) {
             return Err(malformed());
         }
         let vault_id = reader.array()?;
@@ -81,17 +99,24 @@ impl Entry {
         let unused_vk_is_zero = root_vk.iter().all(|byte| *byte == 0);
         let no_commit = commit == [0u8; 32];
         let no_account = client_id == [0u8; 64];
+        let parse_role = |raw: u8| -> Result<Role> {
+            let role = Role::try_from(raw)?;
+            if wire_version == ENTRY_WIRE_VERSION_V2 && role == Role::Admin {
+                return Err(malformed());
+            }
+            Ok(role)
+        };
         let action = match (code, role_code) {
             (1, role) if role != 0 && no_commit => Action::Add {
                 client_id,
                 root_vk: Box::new(root_vk),
-                role: Role::try_from(role)?,
+                role: parse_role(role)?,
             },
             (2, 0) if unused_vk_is_zero => Action::Remove { client_id, commit },
             (4, 0) if unused_vk_is_zero && no_account && !no_commit => Action::Rotate { commit },
             (3, role) if role != 0 && unused_vk_is_zero && no_commit => Action::SetRole {
                 client_id,
-                role: Role::try_from(role)?,
+                role: parse_role(role)?,
             },
             _ => return Err(malformed()),
         };
@@ -106,6 +131,7 @@ impl Entry {
             action,
             signer,
             signature,
+            wire_version,
         })
     }
 }

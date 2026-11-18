@@ -73,6 +73,8 @@ pub enum Dialog {
     P2p(usize),
     /// Waiting for another device to sync the vault after an empty restore.
     RestoreSync(usize),
+    /// Shared vault participants modal opened from Home.
+    Members(crate::app::flows::members::MembersModal),
 }
 
 impl Dialog {
@@ -109,7 +111,8 @@ impl Dialog {
             | Self::Info(_)
             | Self::AddFactor(_)
             | Self::P2p(_)
-            | Self::RestoreSync(_) => {}
+            | Self::RestoreSync(_)
+            | Self::Members(_) => {}
         }
     }
 }
@@ -179,6 +182,7 @@ pub fn on_key(state: &mut Unlocked, event: &KeyEvent, ctx: &mut Ctx) -> Nav {
             }
             _ => Nav::Stay,
         },
+        Dialog::Members(_) => crate::app::flows::members::on_key(state, event, ctx),
         Dialog::Form(_) => form_key(state, event, ctx),
     }
 }

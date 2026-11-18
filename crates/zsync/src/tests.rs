@@ -8,8 +8,9 @@
     reason = "unit test file"
 )]
 
-use kdf::{personal_envelope_key, storage_id};
+use kdf::{personal_envelope_key, shared_envelope_key, shared_storage_id, storage_id};
 use local::SyncIdentity;
+use memberlog::{Action, MemberLog, Role};
 use seed::SeedPhrase;
 use syncwire::encode_cert;
 
@@ -133,4 +134,82 @@ fn one_byte_tamper_in_commit_head_or_rekey_is_rejected() {
     assert!(repo.records.is_empty());
     assert!(repo.head.is_none());
     assert!(repo.rekeys.is_empty());
+}
+
+#[test]
+fn shared_repo_accepts_v3_admin_member_and_commits() {
+    let owner_phrase = SeedPhrase::generate_24().unwrap();
+    let owner_sid = storage_id(owner_phrase.seed()).unwrap();
+    let owner_dev = [0x11u8; 16];
+    let owner = SyncIdentity::enroll(owner_phrase.seed(), &owner_sid, owner_dev, u64::MAX).unwrap();
+
+    let admin_phrase = SeedPhrase::generate_24().unwrap();
+    let admin_sid = storage_id(admin_phrase.seed()).unwrap();
+    let admin_dev = [0x22u8; 16];
+    let admin = SyncIdentity::enroll(admin_phrase.seed(), &admin_sid, admin_dev, u64::MAX).unwrap();
+
+    let shared_seed = [0x77u8; 64];
+    let vault_id = [0x33u8; 16];
+    let shared_sid = shared_storage_id(&shared_seed, &vault_id).unwrap();
+    let now_ms = 1_700_000_000_000u64;
+
+    let mut log = MemberLog::genesis(
+        vault_id,
+        &owner.sign_key(),
+        &owner.devices()[0],
+        owner.root_vk(),
+        now_ms,
+    )
+    .unwrap();
+    let add_admin = log
+        .propose(
+            &owner.sign_key(),
+            &owner.devices()[0],
+            Action::Add {
+                client_id: admin.devices()[0].client_id,
+                root_vk: Box::new(*admin.root_vk()),
+                role: Role::Admin,
+            },
+            now_ms + 1,
+        )
+        .unwrap();
+    log.append(add_admin).unwrap();
+
+    let mut repo = RepoState::new(RepoKind::Shared, shared_sid);
+    let mut delta = SyncDelta::empty(RepoKind::Shared, shared_sid);
+    delta.shared_init = Some((vault_id, *log.anchor()));
+    delta.member_entries = log.entries().iter().map(|e| e.encode().unwrap()).collect();
+    delta.certs.push(encode_cert(&admin.devices()[0]).unwrap());
+
+    let env_key = shared_envelope_key(&shared_seed, &shared_sid).unwrap();
+    let rec_env = seal_blob(
+        &env_key,
+        &shared_sid,
+        EnvelopePurpose::SharedFrame,
+        1,
+        b"rec",
+    )
+    .unwrap();
+    let admin_rec = sign_record(
+        &admin.sign_key(),
+        RecordMeta {
+            storage_id: &shared_sid,
+            revision: 1,
+            key_generation: 1,
+            record_id: 42,
+            origin_device: admin_dev,
+            signer_device: admin_dev,
+            kind: RepoKind::Shared,
+        },
+        rec_env,
+    )
+    .unwrap();
+    delta.records.push(admin_rec);
+
+    let (accepted, changed) = repo.apply_delta(&delta).unwrap();
+    assert!(changed);
+    assert_eq!(accepted.member_entries.len(), 2);
+    assert_eq!(accepted.certs.len(), 1);
+    assert_eq!(accepted.records.len(), 1);
+    assert!(repo.records.contains_key(&42));
 }

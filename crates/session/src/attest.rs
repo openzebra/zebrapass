@@ -293,6 +293,9 @@ pub struct TrustedAccount<'a> {
     pub root_vk: &'a [u8; SYNC_VK_LEN],
     /// Whether the account may write; a reader's attestations are refused.
     pub can_write: bool,
+    /// Whether the account may delete records (write tombstones); writers
+    /// without delete rights have tombstones refused.
+    pub can_delete: bool,
 }
 
 fn check_shape(
@@ -341,6 +344,9 @@ fn check_signed(
         .ok_or(SessionError::DeviceNotTrusted)?;
     if !account.can_write {
         return Err(SessionError::NotAWriter.into());
+    }
+    if header.kind == frame::KIND_TOMBSTONE && !account.can_delete {
+        return Err(SessionError::NotADeleter.into());
     }
     attestation.verify(account.root_vk, now_ms)?;
     if trust
@@ -442,8 +448,8 @@ pub fn verify_snapshot(
 ///
 /// [`SessionError`]: `VaultMismatch`, `ZeroOrigin`, `HeaderMismatch`,
 /// `DeviceNotTrusted` (an account the vault does not list), `NotAWriter`,
-/// `CertRejected` (also for a revoked signer), `CertExpired`, `StaleRevision`, `AttestationMismatch`;
-/// frame-opening and publish errors.
+/// `NotADeleter`, `CertRejected` (also for a revoked signer), `CertExpired`,
+/// `StaleRevision`, `AttestationMismatch`; frame-opening and publish errors.
 pub fn accept_revision(
     session: &mut Session,
     file: &mut VaultFile,

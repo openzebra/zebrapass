@@ -6,8 +6,10 @@ use session::{DeviceCert, DeviceSignKey, frame_parts};
 use sha2::{Digest, Sha256};
 
 use crate::role::Role;
+use crate::wire::{ENTRY_WIRE_VERSION, ENTRY_WIRE_VERSION_V2};
 
-const DOMAIN_ENTRY: &[u8] = b"brby/v2/member-entry";
+const DOMAIN_ENTRY_V2: &[u8] = b"brby/v2/member-entry";
+const DOMAIN_ENTRY_V3: &[u8] = b"brby/v3/member-entry";
 
 /// A change to the member list.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -115,6 +117,8 @@ pub struct Entry {
     pub signer: DeviceCert,
     /// ML-DSA-65 signature over [`Entry::signed_message`].
     pub signature: Vec<u8>,
+    /// Wire format version this entry was encoded/decoded with (`2` or `3`).
+    pub wire_version: u16,
 }
 
 impl Entry {
@@ -122,10 +126,16 @@ impl Entry {
     ///
     /// # Errors
     ///
+    /// `member log rejected` for an unsupported wire version, or
     /// `sync field too long` when a part does not fit a `u16` length.
     pub fn signed_message(&self) -> Result<Vec<u8>> {
+        let domain = match self.wire_version {
+            ENTRY_WIRE_VERSION_V2 => DOMAIN_ENTRY_V2,
+            ENTRY_WIRE_VERSION => DOMAIN_ENTRY_V3,
+            _ => return Err(anyhow!("member log rejected")),
+        };
         frame_parts(&[
-            DOMAIN_ENTRY,
+            domain,
             &self.vault_id,
             &self.seq.to_be_bytes(),
             &self.prev_hash,

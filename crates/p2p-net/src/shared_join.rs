@@ -8,12 +8,12 @@ use local::{
     Attested, RekeyPlan, SharedRef, SharedVault, SyncIdentity, adopt_shared_file, prepare_rekey,
     read_member_log, save_member_log, shared_paths_for,
 };
-use memberlog::MemberLog;
+use memberlog::{ENTRY_WIRE_LEN, Entry, MAX_ENTRIES, MemberLog};
 use secret::Secret;
 use session::VaultFile;
 use syncwire::decode_snapshot;
 
-use crate::shared::{decode_entries, unavailable};
+use crate::shared::unavailable;
 
 /// What finishing a fetch produced.
 pub enum Joined {
@@ -54,6 +54,39 @@ pub fn parse_rekey(bytes: &[u8]) -> Option<(Secret<[u8; 64]>, u32)> {
     let mut secret = Secret::new([0u8; 64]);
     secret.expose_mut().copy_from_slice(seed);
     Some((secret, epoch))
+}
+
+pub fn decode_entries(log_bytes: &[u8]) -> Result<Vec<Entry>> {
+    if !log_bytes.len().is_multiple_of(ENTRY_WIRE_LEN)
+        || log_bytes.len() / ENTRY_WIRE_LEN > MAX_ENTRIES
+    {
+        return Err(unavailable());
+    }
+    log_bytes
+        .as_chunks::<ENTRY_WIRE_LEN>()
+        .0
+        .iter()
+        .map(|chunk| Entry::decode(chunk.as_slice()))
+        .collect()
+}
+
+/// Verify the peer's entries against the stored log and keep the ones that
+/// extend it. Returns whether any new entries were merged.
+pub fn merge_into_stored_log(base: &Path, reference: &SharedRef, log_bytes: &[u8]) -> Result<bool> {
+    let entries = decode_entries(log_bytes)?;
+    let mut log = read_member_log(base, reference)?;
+    let before = log.entries().len();
+    log.merge(&entries)?;
+    if log.entries().len() == before {
+        return Ok(false);
+    }
+    let key = kdf::shared_members_key(reference.seed.expose(), &reference.vault_id)?;
+    save_member_log(
+        &shared_paths_for(base, &reference.vault_id).members_log(),
+        &key,
+        &log,
+    )?;
+    Ok(true)
 }
 
 /// Finish a fetch from what a member sent: its member log, its vault file,

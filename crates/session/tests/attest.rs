@@ -47,10 +47,15 @@ fn person(n: u8, not_after: u64) -> Person {
 }
 
 const fn account(person: &Person, can_write: bool) -> TrustedAccount<'_> {
+    account_roles(person, can_write, can_write)
+}
+
+const fn account_roles(person: &Person, can_write: bool, can_delete: bool) -> TrustedAccount<'_> {
     TrustedAccount {
         client_id: person.client,
         root_vk: &person.root_vk,
         can_write,
+        can_delete,
     }
 }
 
@@ -193,6 +198,7 @@ fn every_forgery_is_refused_and_changes_nothing() {
         client_id: alice.client,
         root_vk: &mallory.root_vk,
         can_write: true,
+        can_delete: true,
     };
     assert_eq!(
         why(accept(&mut b, &frame, &good, &[other_root])),
@@ -503,4 +509,50 @@ const fn trust<'a, 'b>(
     revoked: &'a [session::Revocation],
 ) -> Trust<'a, 'b> {
     Trust { accounts, revoked }
+}
+
+#[test]
+fn writer_without_delete_permission_cannot_attest_tombstone_or_snapshot() {
+    let (alice, bob) = (person(1, u64::MAX), person(2, u64::MAX));
+    let (_, mut sessions) = replicas(&[&alice, &bob]);
+    let mut b = sessions.pop().unwrap();
+    let mut a = sessions.pop().unwrap();
+    let accounts = [account(&alice, true), account_roles(&bob, true, false)];
+
+    let (created, frame) = write(&alice, &mut a, 7, "wifi");
+    accept(&mut b, &frame, &created, &accounts).unwrap();
+
+    // Writer can update record 7.
+    let (updated, update_frame) = write(&bob, &mut b, 7, "wifi-v2");
+    accept(&mut a, &update_frame, &updated, &accounts).unwrap();
+
+    // Writer writes and attests a forged tombstone frame; owner refuses it.
+    delete_record(&mut b.1, &mut b.0, 7).unwrap();
+    let (tombstone, gone) = attest_latest(&b.1, &bob.key, &bob.cert, 7).unwrap();
+    let err = accept(&mut a, &gone, &tombstone, &accounts);
+    assert_eq!(why(err), "not allowed to delete records");
+    assert!(open_record(&a.1, 7).is_ok(), "record still exists on owner");
+
+    // A whole snapshot carrying the writer's tombstone attestation is also refused.
+    let snap_err = verify_snapshot(&b.1, &[tombstone], &trust(&accounts, &[]), NOW);
+    assert_eq!(why_any(snap_err), "not allowed to delete records");
+}
+
+#[test]
+fn admin_with_delete_permission_can_attest_tombstone() {
+    let (alice, admin) = (person(1, u64::MAX), person(2, u64::MAX));
+    let (_, mut sessions) = replicas(&[&alice, &admin]);
+    let mut b = sessions.pop().unwrap();
+    let mut a = sessions.pop().unwrap();
+    let accounts = [account(&alice, true), account_roles(&admin, true, true)];
+
+    let (created, frame) = write(&admin, &mut b, 7, "wifi");
+    accept(&mut a, &frame, &created, &accounts).unwrap();
+    let (updated, update_frame) = write(&admin, &mut b, 7, "wifi-v2");
+    accept(&mut a, &update_frame, &updated, &accounts).unwrap();
+
+    delete_record(&mut b.1, &mut b.0, 7).unwrap();
+    let (tombstone, gone) = attest_latest(&b.1, &admin.key, &admin.cert, 7).unwrap();
+    accept(&mut a, &gone, &tombstone, &accounts).unwrap();
+    assert!(open_record(&a.1, 7).is_err(), "deleted by admin");
 }

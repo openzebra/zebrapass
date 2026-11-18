@@ -12,8 +12,9 @@ use crate::app::flows::editor::EditorState;
 use crate::app::flows::factors::FactorsState;
 use crate::app::flows::generator::GeneratorState;
 use crate::app::flows::history::HistoryState;
-use crate::app::flows::home::{Pane, RowKind};
+use crate::app::flows::home::{Filter, Pane, RowKind};
 use crate::app::flows::settings::SettingsModal;
+use crate::app::flows::share::ReturnTo;
 use crate::app::flows::unlocked::{Unlocked, View};
 use crate::app::keymap::{Scope, resolve};
 use crate::app::screen::Nav;
@@ -66,9 +67,12 @@ fn width(ctx: &Ctx) -> Breakpoint {
 pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
     let changes_records = matches!(
         action,
-        Action::NewRecord | Action::EditRecord | Action::DeleteRecord | Action::ToggleFavorite
+        Action::NewRecord | Action::EditRecord | Action::ToggleFavorite
     );
     if changes_records && !state.may_edit_here(ctx) {
+        return Nav::Stay;
+    }
+    if action == Action::DeleteRecord && !state.may_delete_here(ctx) {
         return Nav::Stay;
     }
     match action {
@@ -105,6 +109,8 @@ pub fn on_action(state: &mut Unlocked, action: Action, ctx: &mut Ctx) -> Nav {
         Action::OpenFactors => state.view = View::Factors(FactorsState::default()),
         Action::OpenDevices => state.view = View::Devices(0),
         Action::OpenSync => state.open_share(),
+        Action::OpenMembers => open_members(state, ctx),
+        Action::ShareAdd => add_to_active_shared(state, ctx),
         Action::OpenHealth => match state.health {
             Some(_) => state.view = View::Health(0),
             None => state.run(Op::Health, Task::Health, ctx),
@@ -337,14 +343,49 @@ fn delete(state: &mut Unlocked) {
         .selected()
         .map(|summary| (summary.id, summary.display_title().to_owned()))
     {
+        let body = match &state.home.filter {
+            Filter::Shared(_, name) => vec![format!(
+                "Removes \"{title}\" from shared vault «{name}» for everyone."
+            )],
+            _ => vec![String::from(
+                "A tombstone revision is written; history keeps older revisions until cleared.",
+            )],
+        };
         state.dialog = Some(Box::new(Dialog::Confirm(Confirm {
             kind: ConfirmKind::Delete(id),
             title: format!("Delete \"{title}\"?"),
-            body: vec![String::from(
-                "A tombstone revision is written; history keeps older revisions until cleared.",
-            )],
+            body,
         })));
     }
+}
+
+fn open_members(state: &mut Unlocked, ctx: &mut Ctx) {
+    let Filter::Shared(vault_id, _) = state.home.filter else {
+        ctx.toast(
+            Tone::Info,
+            "Select a shared vault in Filters first, or press S.",
+        );
+        return;
+    };
+    if state
+        .shared_item(&vault_id)
+        .is_some_and(crate::vault::shared::SharedItem::ready)
+    {
+        state.open_members_modal(vault_id);
+    } else {
+        ctx.toast(Tone::Info, "That vault is still syncing.");
+    }
+}
+
+fn add_to_active_shared(state: &mut Unlocked, ctx: &mut Ctx) {
+    let Filter::Shared(vault_id, _) = state.home.filter else {
+        ctx.toast(
+            Tone::Info,
+            "Select a shared vault in Filters first, or press S.",
+        );
+        return;
+    };
+    state.start_shared_add(vault_id, ReturnTo::Home, ctx);
 }
 
 fn favorite(state: &mut Unlocked, ctx: &mut Ctx) {

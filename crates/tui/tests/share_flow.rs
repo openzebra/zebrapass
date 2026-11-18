@@ -107,8 +107,12 @@ fn bob_and_alice_share_a_vault_through_the_interface() {
     );
     assert!(screen.contains("writer"), "{screen}");
     press(&mut alice, KeyCode::Right);
+    assert!(render(&alice, 100, 30).contains("admin"));
+    press(&mut alice, KeyCode::Right);
     assert!(render(&alice, 100, 30).contains("owner"));
     press(&mut alice, KeyCode::Left);
+    press(&mut alice, KeyCode::Left);
+    assert!(render(&alice, 100, 30).contains("writer"));
     press(&mut alice, KeyCode::Enter);
     let Step::AddDone { invitation, .. } = &share(&alice).step else {
         panic!("not done")

@@ -7,8 +7,10 @@ use anyhow::anyhow;
 pub enum Role {
     /// May read records. Records a reader signs are refused by honest peers.
     Reader,
-    /// May read, create and edit records.
+    /// May read, create and edit records, but not delete them.
     Writer,
+    /// May read, create, edit and delete records.
+    Admin,
     /// May also add and remove members and change roles.
     Owner,
 }
@@ -17,7 +19,13 @@ impl Role {
     /// Whether this role may write records.
     #[must_use]
     pub const fn can_write(self) -> bool {
-        matches!(self, Self::Writer | Self::Owner)
+        matches!(self, Self::Writer | Self::Admin | Self::Owner)
+    }
+
+    /// Whether this role may delete records (write tombstones).
+    #[must_use]
+    pub const fn can_delete(self) -> bool {
+        matches!(self, Self::Admin | Self::Owner)
     }
 
     /// Whether this role may change the member list.
@@ -33,6 +41,7 @@ impl From<Role> for u8 {
             Role::Reader => 1,
             Role::Writer => 2,
             Role::Owner => 3,
+            Role::Admin => 4,
         }
     }
 }
@@ -45,6 +54,7 @@ impl TryFrom<u8> for Role {
             1 => Ok(Self::Reader),
             2 => Ok(Self::Writer),
             3 => Ok(Self::Owner),
+            4 => Ok(Self::Admin),
             _ => Err(anyhow!("member log rejected")),
         }
     }

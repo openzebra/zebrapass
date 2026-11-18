@@ -265,8 +265,15 @@ impl Unlocked {
         };
         let events: Vec<Event> = p2p.service.events().try_iter().collect();
         let pushed = p2p.provider.take_pushed();
+        let shared_updated = p2p.provider.take_shared_updated();
         if !pushed.is_empty() {
             self.apply_pulled(&pushed, ctx);
+        }
+        if !shared_updated.is_empty() {
+            for vault_id in &shared_updated {
+                self.reload_shared(vault_id);
+            }
+            ctx.redraw();
         }
         for event in events {
             if let Some(p2p) = self.p2p.as_deref_mut() {

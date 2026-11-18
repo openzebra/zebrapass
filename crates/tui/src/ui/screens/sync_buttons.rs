@@ -1,4 +1,4 @@
-//! Real bordered and compact pill buttons for the share screen.
+//! Real bordered and compact pill buttons for the share and members screens.
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use crate::app::flows::share_nav::ShareButton;
 use crate::ui::theme::{Theme, ThemeName};
 
-/// Visual tone of a share screen button.
+/// Visual tone of an interactive button.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ButtonTone {
     /// Primary CTA button (accent-framed or filled when focused).
@@ -20,17 +20,17 @@ pub enum ButtonTone {
     Active,
     /// Attention-needed action (e.g. upgrade or rekey after leave).
     Warn,
-    /// Destructive action (leave/delete copy).
+    /// Destructive action (leave/delete copy/remove).
     Danger,
     /// Currently unavailable action (still clickable/focusable, dims visually).
     Muted,
 }
 
-/// Specification for rendering one share screen button.
+/// Specification for rendering one interactive button.
 #[derive(Clone, Copy, Debug)]
-pub struct ButtonSpec {
+pub struct ButtonSpec<Id = ShareButton> {
     /// Logical identifier used for focus matching.
-    pub id: ShareButton,
+    pub id: Id,
     /// Leading glyph from `Theme::glyphs`.
     pub glyph: &'static str,
     /// Full label when space permits.
@@ -44,11 +44,11 @@ pub struct ButtonSpec {
 }
 
 /// Render a horizontal row of evenly sized buttons (`boxed` = 3 rows, else 1-row pill).
-pub fn draw_button_row(
+pub fn draw_button_row<Id: Copy + Eq>(
     frame: &mut Frame<'_>,
     area: Rect,
-    buttons: &[ButtonSpec],
-    focused: Option<ShareButton>,
+    buttons: &[ButtonSpec<Id>],
+    focused: Option<Id>,
     boxed: bool,
     theme: &Theme,
 ) {
@@ -71,7 +71,7 @@ pub fn draw_button_row(
             slot_idx += 1;
         }
         if let Some(&slot) = slots.get(slot_idx) {
-            let is_focused = focused == Some(spec.id);
+            let is_focused = focused.is_some_and(|id| id == spec.id);
             if boxed && area.height >= 3 {
                 draw_boxed(frame, slot, spec, is_focused, theme);
             } else {
@@ -82,7 +82,13 @@ pub fn draw_button_row(
     }
 }
 
-fn draw_boxed(frame: &mut Frame<'_>, area: Rect, spec: &ButtonSpec, focused: bool, theme: &Theme) {
+fn draw_boxed<Id>(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    spec: &ButtonSpec<Id>,
+    focused: bool,
+    theme: &Theme,
+) {
     let border_type = match (theme.ascii, focused) {
         (true, _) => BorderType::Plain,
         (false, true) => BorderType::Thick,
@@ -113,7 +119,13 @@ fn draw_boxed(frame: &mut Frame<'_>, area: Rect, spec: &ButtonSpec, focused: boo
     );
 }
 
-fn draw_pill(frame: &mut Frame<'_>, area: Rect, spec: &ButtonSpec, focused: bool, theme: &Theme) {
+fn draw_pill<Id>(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    spec: &ButtonSpec<Id>,
+    focused: bool,
+    theme: &Theme,
+) {
     let line = button_content(spec, usize::from(area.width), focused, theme);
     let bg = if focused {
         focus_fill_style(spec.tone, theme)
@@ -126,8 +138,8 @@ fn draw_pill(frame: &mut Frame<'_>, area: Rect, spec: &ButtonSpec, focused: bool
     );
 }
 
-fn button_content(
-    spec: &ButtonSpec,
+fn button_content<Id>(
+    spec: &ButtonSpec<Id>,
     max_width: usize,
     focused: bool,
     theme: &Theme,

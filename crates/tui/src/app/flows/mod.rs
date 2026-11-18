@@ -20,6 +20,7 @@ pub mod import;
 pub mod import_mapping;
 pub mod import_vault;
 pub mod info;
+pub mod members;
 pub mod palette;
 pub mod panels;
 pub mod restore;

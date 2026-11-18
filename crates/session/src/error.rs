@@ -58,6 +58,8 @@ pub enum SessionError {
     Entropy,
     /// The signing account may not write in this vault.
     NotAWriter,
+    /// The signing account may not delete records in this vault.
+    NotADeleter,
     /// The frame was written by another device than the one asked to attest.
     NotYours,
     /// The attestation does not describe the frame it came with.
@@ -87,6 +89,7 @@ impl std::fmt::Display for SessionError {
             Self::UnsupportedMsgVersion => "unsupported sync message version",
             Self::Entropy => "os entropy failed",
             Self::NotAWriter => "not a writer",
+            Self::NotADeleter => "not allowed to delete records",
             Self::NotYours => "frame written by another device",
             Self::AttestationMismatch => "attestation mismatch",
         })

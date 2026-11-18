@@ -154,11 +154,30 @@ fn an_owner_makes_a_writer_a_reader_and_the_member_sees_it() {
 }
 
 #[test]
-fn an_owner_can_make_a_second_owner() {
-    let (mut alice, _bob) = owner_and_writer();
-    // Make Bob an owner: Right from writer.
+fn an_owner_can_promote_a_writer_to_admin() {
+    let (mut alice, mut bob) = owner_and_writer();
+    // Make Bob an admin: Right once from writer.
     press(&mut alice, KeyCode::Char('c'));
     press(&mut alice, KeyCode::Enter);
+    press(&mut alice, KeyCode::Right);
+    let screen = render(&alice, 100, 30);
+    assert!(screen.contains("admin"), "{screen}");
+    press(&mut alice, KeyCode::Enter);
+    assert_eq!(state(&alice).people(0)[0].role, Role::Admin);
+
+    press(&mut bob, KeyCode::Char('r'));
+    until(&mut bob, "admin promotion", |app| {
+        state(app).shared[0].my_role == Some(Role::Admin)
+    });
+}
+
+#[test]
+fn an_owner_can_make_a_second_owner() {
+    let (mut alice, _bob) = owner_and_writer();
+    // Make Bob an owner: Right twice from writer (Writer -> Admin -> Owner).
+    press(&mut alice, KeyCode::Char('c'));
+    press(&mut alice, KeyCode::Enter);
+    press(&mut alice, KeyCode::Right);
     press(&mut alice, KeyCode::Right);
     press(&mut alice, KeyCode::Enter);
     assert_eq!(state(&alice).people(0)[0].role, Role::Owner);

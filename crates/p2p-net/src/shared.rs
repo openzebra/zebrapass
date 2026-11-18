@@ -1,21 +1,21 @@
 //! Serving and joining shared vaults from the files `local` keeps.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use local::{
     SharedRef, SharedVault, SyncIdentity, Verdict, is_pending, load_peers, open_shared_vault,
-    read_member_log, read_shared_state, save_member_log, save_peers, shared_paths_for, verdict_of,
+    read_member_log, read_shared_state, save_peers, shared_paths_for, verdict_of,
 };
-use memberlog::{ENTRY_WIRE_LEN, Entry, MAX_ENTRIES};
+use memberlog::Entry;
 use p2p_core::Account;
 use secret::Secret;
 use syncwire::{encode_peers, encode_snapshot_prefix};
 use zeroize::Zeroizing;
 
 use crate::personal::{PersonalServe, personal_view};
-use crate::shared_join::parse_rekey;
+use crate::shared_join::{merge_into_stored_log, parse_rekey};
 use crate::view::{Provider, SnapshotSource, VaultView};
 
 pub fn unavailable() -> anyhow::Error {
@@ -31,6 +31,7 @@ pub struct SharedProvider {
     node: Mutex<()>,
     book: crate::peers::PeerBook,
     delivered: Mutex<Vec<[u8; 16]>>,
+    shared_updated: Mutex<Vec<[u8; 16]>>,
     personal: Mutex<Option<Arc<PersonalServe>>>,
 }
 
@@ -45,6 +46,7 @@ impl SharedProvider {
             node: Mutex::new(()),
             book: crate::peers::PeerBook::default(),
             delivered: Mutex::new(Vec::new()),
+            shared_updated: Mutex::new(Vec::new()),
             personal: Mutex::new(None),
         }
     }
@@ -95,6 +97,22 @@ impl SharedProvider {
     /// fetched from it, once each: the leave has been delivered.
     pub fn take_delivered(&self) -> Vec<[u8; 16]> {
         self.delivered
+            .lock()
+            .map_or_default(|mut list| std::mem::take(&mut *list))
+    }
+
+    fn note_shared_updated(&self, vault_id: [u8; 16]) {
+        if let Ok(mut list) = self.shared_updated.lock()
+            && !list.contains(&vault_id)
+        {
+            list.push(vault_id);
+        }
+    }
+
+    /// Shared vaults updated on disk by incoming peer pushes or log merges
+    /// since the last call, once each.
+    pub fn take_shared_updated(&self) -> Vec<[u8; 16]> {
+        self.shared_updated
             .lock()
             .map_or_default(|mut list| std::mem::take(&mut *list))
     }
@@ -353,15 +371,20 @@ impl Provider for SharedProvider {
         if let Some(serve) = self.personal_for(vault_id) {
             return serve.accept(bundle);
         }
-        self.with_vault(vault_id, |vault, reference, _| {
-            if vault.log.role_of(account).is_none() {
-                return Ok(Verdict::Refused);
-            }
-            Ok(vault
-                .accept(reference, bundle)
-                .map_or_else(|error| verdict_of(&error), |_| Verdict::Applied))
-        })
-        .unwrap_or(Verdict::Refused)
+        let verdict = self
+            .with_vault(vault_id, |vault, reference, _| {
+                if vault.log.role_of(account).is_none() {
+                    return Ok(Verdict::Refused);
+                }
+                Ok(vault
+                    .accept(reference, bundle)
+                    .map_or_else(|error| verdict_of(&error), |_| Verdict::Applied))
+            })
+            .unwrap_or(Verdict::Refused);
+        if verdict == Verdict::Applied {
+            self.note_shared_updated(*vault_id);
+        }
+        verdict
     }
 
     fn peers(&self, vault_id: &[u8; 16]) -> Option<Vec<u8>> {
@@ -416,7 +439,12 @@ impl Provider for SharedProvider {
         let Ok(_held) = self.node.lock() else {
             return false;
         };
-        merge_into_stored_log(&self.base, &reference, log_bytes).is_ok()
+        merge_into_stored_log(&self.base, &reference, log_bytes).is_ok_and(|changed| {
+            if changed {
+                self.note_shared_updated(*vault_id);
+            }
+            true
+        })
     }
 
     fn rekey(&self, vault_id: &[u8; 16], account: &[u8; 64]) -> Option<Zeroizing<Vec<u8>>> {
@@ -446,36 +474,4 @@ impl Provider for SharedProvider {
         }
         out
     }
-}
-
-pub fn decode_entries(log_bytes: &[u8]) -> Result<Vec<Entry>> {
-    if !log_bytes.len().is_multiple_of(ENTRY_WIRE_LEN)
-        || log_bytes.len() / ENTRY_WIRE_LEN > MAX_ENTRIES
-    {
-        return Err(unavailable());
-    }
-    log_bytes
-        .as_chunks::<ENTRY_WIRE_LEN>()
-        .0
-        .iter()
-        .map(|chunk| Entry::decode(chunk.as_slice()))
-        .collect()
-}
-
-/// Verify the peer's entries against the stored log and keep the ones that
-/// extend it.
-fn merge_into_stored_log(base: &Path, reference: &SharedRef, log_bytes: &[u8]) -> Result<()> {
-    let entries = decode_entries(log_bytes)?;
-    let mut log = read_member_log(base, reference)?;
-    let before = log.entries().len();
-    log.merge(&entries)?;
-    if log.entries().len() == before {
-        return Ok(());
-    }
-    let key = kdf::shared_members_key(reference.seed.expose(), &reference.vault_id)?;
-    save_member_log(
-        &shared_paths_for(base, &reference.vault_id).members_log(),
-        &key,
-        &log,
-    )
 }

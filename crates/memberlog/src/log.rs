@@ -14,6 +14,7 @@ use session::{DeviceCert, DeviceSignKey};
 
 use crate::entry::{Action, Entry, sign_entry};
 use crate::role::Role;
+use crate::wire::ENTRY_WIRE_VERSION;
 
 /// Most entries one log holds; it bounds both storage and replay time.
 pub const MAX_ENTRIES: usize = 1024;
@@ -74,6 +75,7 @@ impl MemberLog {
                 },
                 signer: cert.clone(),
                 signature: Vec::new(),
+                wire_version: ENTRY_WIRE_VERSION,
             },
         )?;
         let anchor = entry.hash()?;
@@ -205,6 +207,7 @@ impl MemberLog {
                 action,
                 signer: cert.clone(),
                 signature: Vec::new(),
+                wire_version: ENTRY_WIRE_VERSION,
             },
         )
     }
@@ -305,6 +308,29 @@ impl MemberLog {
     #[must_use]
     pub fn may_write(&self, client_id: &[u8; 64]) -> bool {
         self.role_of(client_id).is_some_and(Role::can_write)
+    }
+
+    /// Whether `client_id` is a member who may delete records.
+    #[must_use]
+    pub fn may_delete(&self, client_id: &[u8; 64]) -> bool {
+        self.role_of(client_id).is_some_and(Role::can_delete)
+    }
+
+    /// Whether `client_id` held a deleting role at some point in the log.
+    #[must_use]
+    pub fn was_deleter(&self, client_id: &[u8; 64]) -> bool {
+        self.entries.iter().any(|entry| match &entry.action {
+            Action::Add {
+                client_id: id,
+                role,
+                ..
+            }
+            | Action::SetRole {
+                client_id: id,
+                role,
+            } => id == client_id && role.can_delete(),
+            Action::Remove { .. } | Action::Rotate { .. } => false,
+        })
     }
 
     /// How many times the shared seed has been replaced: the number of

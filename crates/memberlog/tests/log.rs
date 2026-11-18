@@ -6,7 +6,10 @@
     reason = "tests may unwrap and index"
 )]
 
-use memberlog::{Action, ENTRY_WIRE_LEN, Entry, MAX_ENTRIES, MemberLog, Role, rotation_commit};
+use memberlog::{
+    Action, ENTRY_WIRE_LEN, ENTRY_WIRE_VERSION_V2, Entry, MAX_ENTRIES, MemberLog, Role,
+    rotation_commit, sign_entry,
+};
 use pq::SYNC_VK_LEN;
 use session::{DeviceCert, DeviceSignKey, issue_device_cert, sync_verifying_key};
 
@@ -398,7 +401,7 @@ fn the_wire_form_is_canonical_strict_and_chains_by_hash() {
     for entry in log.entries() {
         let bytes = entry.encode().unwrap();
         assert_eq!(bytes.len(), ENTRY_WIRE_LEN);
-        assert_eq!(&bytes[..6], b"ZPML\x00\x02");
+        assert_eq!(&bytes[..6], b"ZPML\x00\x03");
         assert_eq!(&Entry::decode(&bytes).unwrap(), entry);
         for len in (0..bytes.len()).step_by(997) {
             assert!(Entry::decode(&bytes[..len]).is_err());
@@ -489,7 +492,7 @@ fn a_rotate_entry_is_canonical_on_the_wire() {
     let mut log = created_by(&alice);
     step(&mut log, &alice, Action::Rotate { commit: [4; 32] }).unwrap();
     let bytes = log.entries()[1].encode().unwrap();
-    assert_eq!(&bytes[..6], b"ZPML\x00\x02");
+    assert_eq!(&bytes[..6], b"ZPML\x00\x03");
     assert_eq!(&Entry::decode(&bytes).unwrap(), &log.entries()[1]);
     let account_at = 4 + 2 + 16 + 8 + 32 + 8 + 1 + 1;
     let mut named = bytes.clone();
@@ -605,4 +608,148 @@ fn leaves_are_counted_until_the_key_is_replaced() {
     )
     .unwrap();
     assert_eq!(other.leaves_since_rotation(), 0);
+}
+
+#[test]
+fn admin_can_write_and_delete_but_cannot_manage_members() {
+    let (alice, bob, carol, dave) = (user(1), user(2), user(3), user(4));
+    let mut log = created_by(&alice);
+    step(&mut log, &alice, add(&bob, Role::Writer)).unwrap();
+    step(&mut log, &alice, add(&carol, Role::Admin)).unwrap();
+
+    assert!(log.may_write(&alice.client_id));
+    assert!(log.may_delete(&alice.client_id));
+    assert!(log.was_deleter(&alice.client_id));
+
+    assert!(log.may_write(&bob.client_id));
+    assert!(!log.may_delete(&bob.client_id));
+    assert!(!log.was_deleter(&bob.client_id));
+
+    assert!(log.may_write(&carol.client_id));
+    assert!(log.may_delete(&carol.client_id));
+    assert!(log.was_deleter(&carol.client_id));
+
+    // Admins cannot manage membership or rotate keys.
+    assert!(step(&mut log, &carol, add(&dave, Role::Reader)).is_err());
+    assert!(
+        step(
+            &mut log,
+            &carol,
+            Action::Remove {
+                client_id: bob.client_id,
+                commit: [7; 32],
+            },
+        )
+        .is_err()
+    );
+    assert!(
+        step(
+            &mut log,
+            &carol,
+            Action::SetRole {
+                client_id: bob.client_id,
+                role: Role::Admin,
+            },
+        )
+        .is_err()
+    );
+    assert!(step(&mut log, &carol, Action::Rotate { commit: [7; 32] }).is_err());
+
+    // Self-leave still works for an admin.
+    assert!(
+        step(
+            &mut log,
+            &carol,
+            Action::Remove {
+                client_id: carol.client_id,
+                commit: [0; 32],
+            },
+        )
+        .is_ok()
+    );
+    assert!(!log.may_delete(&carol.client_id));
+    assert!(log.was_deleter(&carol.client_id));
+}
+
+#[test]
+fn v2_entries_decode_verify_and_chain_to_v3_admin_entries() {
+    let (alice, bob, carol) = (user(1), user(2), user(3));
+    let v2_genesis = sign_entry(
+        &alice.key,
+        Entry {
+            vault_id: VAULT,
+            seq: 0,
+            prev_hash: [0u8; 32],
+            at_ms: T0,
+            action: add(&alice, Role::Owner),
+            signer: alice.cert.clone(),
+            signature: Vec::new(),
+            wire_version: ENTRY_WIRE_VERSION_V2,
+        },
+    )
+    .unwrap();
+    let v2_gen_bytes = v2_genesis.encode().unwrap();
+    assert_eq!(&v2_gen_bytes[..6], b"ZPML\x00\x02");
+    let decoded_gen = Entry::decode(&v2_gen_bytes).unwrap();
+    assert_eq!(decoded_gen, v2_genesis);
+    let anchor = decoded_gen.hash().unwrap();
+
+    let v2_writer = sign_entry(
+        &alice.key,
+        Entry {
+            vault_id: VAULT,
+            seq: 1,
+            prev_hash: anchor,
+            at_ms: T0 + 1,
+            action: add(&bob, Role::Writer),
+            signer: alice.cert.clone(),
+            signature: Vec::new(),
+            wire_version: ENTRY_WIRE_VERSION_V2,
+        },
+    )
+    .unwrap();
+    let v2_writer_bytes = v2_writer.encode().unwrap();
+    assert_eq!(&v2_writer_bytes[..6], b"ZPML\x00\x02");
+
+    let mut log = MemberLog::from_entries(
+        VAULT,
+        &[decoded_gen, Entry::decode(&v2_writer_bytes).unwrap()],
+        &anchor,
+    )
+    .unwrap();
+    assert_eq!(log.role_of(&bob.client_id), Some(Role::Writer));
+
+    // Append a v3 Admin entry chained directly onto the v2 history.
+    step(&mut log, &alice, add(&carol, Role::Admin)).unwrap();
+    let v3_bytes = log.entries()[2].encode().unwrap();
+    assert_eq!(&v3_bytes[..6], b"ZPML\x00\x03");
+
+    let replayed = MemberLog::from_entries(VAULT, log.entries(), &anchor).unwrap();
+    assert_eq!(replayed.role_of(&carol.client_id), Some(Role::Admin));
+    assert!(replayed.may_delete(&carol.client_id));
+}
+
+#[test]
+fn v2_rejects_admin_role_and_version_downgrade_fails_signature() {
+    let (alice, bob) = (user(1), user(2));
+    let mut log = created_by(&alice);
+    step(&mut log, &alice, add(&bob, Role::Admin)).unwrap();
+    let v3_bytes = log.entries()[1].encode().unwrap();
+
+    // Downgrading the wire header bytes to v2 makes v2 reject Role::Admin and fails signature.
+    let mut downgraded = v3_bytes;
+    downgraded[4] = 0;
+    downgraded[5] = 2;
+    assert!(Entry::decode(&downgraded).is_err());
+
+    // Even for a Writer entry, flipping version bytes from 3 to 2 invalidates the v3 signature.
+    let mut log_writer = created_by(&alice);
+    let writer_entry = log_writer
+        .propose(&alice.key, &alice.cert, add(&bob, Role::Writer), T0 + 1)
+        .unwrap();
+    let mut writer_downgraded = writer_entry.encode().unwrap();
+    writer_downgraded[4] = 0;
+    writer_downgraded[5] = 2;
+    let decoded = Entry::decode(&writer_downgraded).unwrap();
+    assert!(log_writer.append(decoded).is_err());
 }

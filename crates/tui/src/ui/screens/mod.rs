@@ -20,6 +20,7 @@ pub mod import;
 pub mod import_mapping;
 pub mod import_preview;
 pub mod locked;
+pub mod members;
 pub mod p2p_info;
 pub mod p2p_status;
 pub mod restore;
@@ -86,6 +87,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 Some(Dialog::RestoreSync(scroll)) => {
                     p2p_info::draw_restore_sync(frame, area, *scroll, state, ctx);
                 }
+                Some(Dialog::Members(modal)) => members::draw(frame, area, modal, state, ctx),
                 Some(dialog) => dialog::draw(frame, area, dialog, ctx),
                 None => {}
             }

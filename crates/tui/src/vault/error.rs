@@ -93,6 +93,7 @@ impl From<&anyhow::Error> for UnlockError {
             | SessionError::CertExpired
             | SessionError::UnsupportedMsgVersion
             | SessionError::NotAWriter
+            | SessionError::NotADeleter
             | SessionError::NotYours
             | SessionError::AttestationMismatch => Self::Denied,
         }
@@ -127,6 +128,7 @@ pub fn describe(error: &anyhow::Error) -> String {
         SessionError::UnsupportedMsgVersion => "Rejected: unsupported sync message version.",
         SessionError::Entropy => "The system random source failed.",
         SessionError::NotAWriter => "You can read this vault, not change it.",
+        SessionError::NotADeleter => "Only owners and admins can delete records.",
         SessionError::NotYours => "Rejected: written by another device.",
         SessionError::AttestationMismatch => "Rejected: signature does not match the record.",
     })

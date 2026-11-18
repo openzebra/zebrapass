@@ -158,28 +158,41 @@ impl Unlocked {
         hints
     }
 
-    pub(super) fn begin_add(&mut self, ctx: &mut Ctx) -> Step {
-        let cursor = self.share_cursor();
+    pub(super) fn prepare_add(
+        &mut self,
+        cursor: usize,
+        ctx: &Ctx,
+    ) -> std::result::Result<(), &'static str> {
         let picked = self
             .shared
             .get(cursor)
             .map(|item| (item.ready(), item.my_role));
-        let message = match picked {
-            None => "Make a shared vault first (n).",
-            Some((false, _)) => "That vault is still syncing.",
-            Some((true, role)) if role != Some(Role::Owner) => "Only owners can add people.",
-            Some(_) if self.identity.is_none() => "This vault has no sync identity.",
-            Some(_) => {
-                let _ = self.ensure_p2p();
-                if self.invite_hints(ctx).is_empty() {
-                    "Configure a sync server or press l to listen, then add them."
-                } else {
-                    return Step::PasteCard;
-                }
+        match picked {
+            None => return Err("Make a shared vault first (n)."),
+            Some((false, _)) => return Err("That vault is still syncing."),
+            Some((true, role)) if role != Some(Role::Owner) => {
+                return Err("Only owners can add people.");
             }
-        };
-        ctx.toast(Tone::Info, message);
-        Step::Overview
+            Some(_) if self.identity.is_none() => return Err("This vault has no sync identity."),
+            Some(_) => {}
+        }
+        let _ = self.ensure_p2p();
+        if self.invite_hints(ctx).is_empty() {
+            Err("Configure a sync server or press l to listen, then add them.")
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn begin_add(&mut self, ctx: &mut Ctx) -> Step {
+        let cursor = self.share_cursor();
+        match self.prepare_add(cursor, ctx) {
+            Ok(()) => Step::PasteCard,
+            Err(message) => {
+                ctx.toast(Tone::Info, message);
+                Step::Overview
+            }
+        }
     }
 
     pub(super) fn share_cursor(&self) -> usize {

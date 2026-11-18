@@ -58,6 +58,7 @@ pub fn verdict_of(error: &anyhow::Error) -> Verdict {
         Some(SessionError::StaleRevision) => Verdict::Stale,
         Some(
             SessionError::NotAWriter
+            | SessionError::NotADeleter
             | SessionError::DeviceNotTrusted
             | SessionError::CertRejected
             | SessionError::CertExpired,
@@ -94,6 +95,7 @@ pub fn attested_store(
             client_id: *client_id,
             root_vk,
             can_write: true,
+            can_delete: log.was_deleter(client_id),
         })
         .collect();
     verify_snapshot(
@@ -206,6 +208,7 @@ impl SharedVault {
                 client_id: member.client_id,
                 root_vk: &member.root_vk,
                 can_write: member.role.can_write(),
+                can_delete: member.role.can_delete(),
             })
             .collect();
         let seen = &self.state.last_seen;
@@ -334,6 +337,9 @@ impl SharedVault {
                 id
             }
             Edit::Delete(id) => {
+                if !self.role_of(identity).is_some_and(Role::can_delete) {
+                    return Err(SessionError::NotADeleter.into());
+                }
                 delete_record(&mut self.session, &mut self.file, id)?;
                 id
             }

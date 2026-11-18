@@ -75,6 +75,18 @@ pub enum Step {
     JoinConfirm(Box<Opened>),
 }
 
+/// Where the Share flow returns when a sub-step finishes or cancels.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ReturnTo {
+    /// Stay on the Share overview screen.
+    #[default]
+    ShareOverview,
+    /// Return to the Vault Home screen.
+    Home,
+    /// Return to Vault Home and reopen the Members modal for this vault.
+    HomeMembers([u8; 16]),
+}
+
 /// This device's own key, ready to hand out.
 pub struct Me {
     /// The text to copy.
@@ -89,10 +101,12 @@ pub struct ShareState {
     pub step: Step,
     /// The selected shared vault.
     pub cursor: usize,
-    /// The active focus on the overview screen.
-    pub focus: ShareFocus,
     /// This device's key, when the vault has a sync identity.
     pub me: Option<Me>,
+    /// The active focus on the overview screen.
+    pub focus: ShareFocus,
+    /// Where to return after a sub-step launched from another view completes.
+    pub return_to: ReturnTo,
 }
 
 impl std::fmt::Debug for ShareState {
@@ -110,7 +124,7 @@ enum Next {
 }
 
 pub(super) fn cycle(role: Role, forward: bool) -> Role {
-    const ORDER: [Role; 3] = [Role::Reader, Role::Writer, Role::Owner];
+    const ORDER: [Role; 4] = [Role::Reader, Role::Writer, Role::Admin, Role::Owner];
     let at = ORDER.iter().position(|known| *known == role).unwrap_or(0);
     let step = if forward { 1 } else { ORDER.len() - 1 };
     ORDER
@@ -123,11 +137,20 @@ impl Unlocked {
     /// Open the share screen.
     pub fn open_share(&mut self) {
         let me = self.make_me();
+        let cursor = match &self.home.filter {
+            crate::app::flows::home::Filter::Shared(vault_id, _) => self
+                .shared
+                .iter()
+                .position(|item| &item.reference.vault_id == vault_id)
+                .unwrap_or(0),
+            _ => 0,
+        };
         self.view = View::Sync(Box::new(ShareState {
             step: Step::Overview,
-            cursor: 0,
-            focus: ShareFocus::default(),
+            cursor,
             me,
+            focus: ShareFocus::default(),
+            return_to: ReturnTo::ShareOverview,
         }));
     }
 
@@ -146,7 +169,8 @@ impl Unlocked {
         else {
             return Nav::Stay;
         };
-        let scope = if matches!(step, Step::Overview) {
+        let was_overview = matches!(step, Step::Overview);
+        let scope = if was_overview {
             Scope::Sync
         } else {
             Scope::Share
@@ -162,7 +186,18 @@ impl Unlocked {
         }
         match self.advance(step, action, event, ctx) {
             Next::Stay(next) => {
-                if let Some(share) = self.share_mut() {
+                let return_to = self
+                    .share_mut()
+                    .map_or(ReturnTo::ShareOverview, |share| share.return_to);
+                if !was_overview
+                    && matches!(next, Step::Overview)
+                    && return_to != ReturnTo::ShareOverview
+                {
+                    self.view = View::Home;
+                    if let ReturnTo::HomeMembers(vault_id) = return_to {
+                        self.open_members_modal(vault_id);
+                    }
+                } else if let Some(share) = self.share_mut() {
                     share.step = next;
                 }
             }
