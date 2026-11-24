@@ -4,7 +4,7 @@
 
 use std::net::IpAddr;
 
-use crate::address::never_dialable;
+use crate::address::{is_private_or_local_ip, never_dialable};
 use crate::limits::{BACKUP_DIR_MAX_LEN, SYNC_SERVER_MAX_LEN, SYNC_SERVERS_MAX};
 
 /// Default port for PQ TLS 1.3 `ZebraPass` sync & relay endpoints.
@@ -92,19 +92,22 @@ fn split_host_port(authority: &str, default_port: u16) -> Option<(&str, u16)> {
     }
 }
 
-fn validate_host(host: &str, allow_loopback: bool) -> bool {
+fn validate_host(host: &str, allow_private: bool) -> bool {
     let bare = host
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
         .unwrap_or(host);
     if let Ok(ip) = bare.parse::<IpAddr>() {
         let ip = ip.to_canonical();
-        if ip.is_loopback() {
-            return allow_loopback;
+        if never_dialable(ip) {
+            return false;
         }
-        return !never_dialable(ip);
+        if is_private_or_local_ip(ip) {
+            return allow_private;
+        }
+        return true;
     }
-    if is_loopback_host(host) && !allow_loopback {
+    if is_loopback_host(host) && !allow_private {
         return false;
     }
     valid_hostname(host)

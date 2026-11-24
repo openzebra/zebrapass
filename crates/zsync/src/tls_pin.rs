@@ -97,11 +97,11 @@ impl ServerCertVerifier for PinnedOrWebPkiVerifier {
 
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.inner.verify_tls12_signature(message, cert, dss)
+        Err(Error::General(String::from("TLS 1.2 is disabled")))
     }
 
     fn verify_tls13_signature(

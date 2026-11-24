@@ -28,6 +28,12 @@ const DOMAIN_ATTEST: &[u8] = b"brby/v2/revision-attest";
 pub const MAX_ATTESTED_FRAME: usize =
     frame::HEADER_LEN + frame::MAX_FRAME_PLAINTEXT + frame::CASCADE_OVERHEAD + frame::TAG_LEN;
 
+/// Maximum per-update revision jump accepted from any remote peer or device.
+pub const MAX_PEER_REVISION_JUMP: u64 = 1_000_000;
+
+/// Hard ceiling keeping accepted revisions far away from `u64::MAX` overflow.
+pub const MAX_SAFE_REVISION: u64 = 1u64 << 52;
+
 /// The digest an attestation signs: the vault, the record, the revision, the
 /// frame kind and the plaintext, so it cannot be moved to another revision.
 #[must_use]
@@ -313,6 +319,8 @@ fn check_shape(
         && header.revision == attestation.revision
         && header.origin_device == attestation.origin_device
         && attestation.record_id != 0
+        && attestation.revision > 0
+        && attestation.revision <= MAX_SAFE_REVISION
         && matches!(header.kind, frame::KIND_REVISION | frame::KIND_TOMBSTONE)
         && matches!(header.alg, frame::ALG_CASCADE | frame::ALG_AEGIS256);
     if shape {
@@ -466,6 +474,12 @@ pub fn accept_revision(
     let local =
         frame::latest(&refs, record_id).map(|winner| (winner.revision, winner.origin_device));
     let behind_seen = last_seen(record_id).is_some_and(|seen| attestation.revision < seen);
+    let base_rev = local
+        .map_or(0, |(r, _)| r)
+        .max(last_seen(record_id).unwrap_or(0));
+    if attestation.revision > base_rev.saturating_add(MAX_PEER_REVISION_JUMP) {
+        return Err(SessionError::HeaderMismatch.into());
+    }
     if behind_seen || local.is_some_and(|winner| incoming <= winner) {
         return Err(SessionError::StaleRevision.into());
     }

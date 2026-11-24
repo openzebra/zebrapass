@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use local::{Replace, apply_rotation, plan_rotation};
+use local::{Replace, apply_rotation, plan_rotation, seal_shared_rekey};
 use memberlog::Role;
 use sharing::{Fingerprint, account_fingerprint};
 
@@ -146,6 +146,7 @@ impl Unlocked {
             crate::vault::shared::Status::Ready(vault) => vault.log.epoch(),
             _ => return Err(anyhow!("That vault is still syncing.")),
         };
+        let old_ref = Arc::clone(&item.reference);
         let next = plan_rotation(&item.reference, epoch)?;
         if !self.save_reference(&next) {
             return Err(anyhow!("Could not store the new key. Nothing changed."));
@@ -154,17 +155,62 @@ impl Unlocked {
             .shared
             .get_mut(index)
             .ok_or_else(|| anyhow!("No shared vault is selected."))?;
-        let (people, cache) = {
+        let (people, cache, member_entries, remaining_members) = {
             let vault = item
                 .vault_mut()
                 .ok_or_else(|| anyhow!("That vault is still syncing."))?;
             apply_rotation(vault, &next, &identity, replace)?;
+            let entries: Vec<Vec<u8>> = vault
+                .log
+                .entries()
+                .iter()
+                .filter_map(|e| e.encode().ok())
+                .collect();
+            let remaining: Vec<[u8; 64]> =
+                vault.log.members().iter().map(|m| m.client_id).collect();
             (
                 vault.log.members().len(),
                 build_cache(&vault.session).unwrap_or_default(),
+                entries,
+                remaining,
             )
         };
         let next_vault_id = next.vault_id;
+        let next_epoch = next.epoch;
+        let own_dev = identity.device_id();
+        let rekeys = if let Some(zsync) = self.zsync.as_deref() {
+            let mut grants = Vec::new();
+            let mut seen_devs = Vec::new();
+            let shared_devs = zsync
+                .shared_member_devices
+                .get(&next_vault_id)
+                .map_or(&[][..], Vec::as_slice);
+            for dev in shared_devs.iter().chain(zsync.peer_devices.iter()) {
+                if Some(dev.cert.device_id) == own_dev
+                    || seen_devs.contains(&dev.cert.device_id)
+                    || zsync.identity.revocations().is_revoked(&dev.cert)
+                    || !remaining_members
+                        .iter()
+                        .any(|cid| secret::ct_eq(cid, &dev.cert.client_id))
+                {
+                    continue;
+                }
+                seen_devs.push(dev.cert.device_id);
+                if let Ok(grant) = seal_shared_rekey(
+                    &dev.publics,
+                    &dev.cert.device_id,
+                    &next_vault_id,
+                    &next.anchor,
+                    next_epoch,
+                    &next.seed,
+                ) {
+                    grants.push((u64::from(next_epoch), dev.cert.device_id, grant));
+                }
+            }
+            grants
+        } else {
+            Vec::new()
+        };
         let next = Arc::new(next);
         item.reference = Arc::clone(&next);
         item.people = people;
@@ -172,9 +218,12 @@ impl Unlocked {
         item.cache = cache;
         item.stale = false;
         if let Some(p2p) = self.p2p.as_deref() {
-            p2p.provider.serve(next);
+            p2p.provider.serve(Arc::clone(&next));
         }
-        if let Some(zsync) = self.zsync.as_deref() {
+        if let Some(zsync) = self.zsync.as_deref_mut() {
+            zsync.shared_epochs.remove(&next_vault_id);
+            zsync.shared_wraps.remove(&next_vault_id);
+            zsync.push_shared_rekey_notice(old_ref, next, member_entries, rekeys);
             zsync.update_watched(&self.shared);
         }
         self.sync_push_shared_full(&next_vault_id);

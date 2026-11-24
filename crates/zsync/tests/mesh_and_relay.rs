@@ -1,9 +1,7 @@
 //! Integration tests for `zsync`:
-//! 1. Git-like frontier delta-only sync across a 3-server mesh (`srv_0 <-> srv_1 <-> srv_2`),
-//!    refusing stale revisions and pushing only updated `RecordCommit`s.
+//! 1. Git-like frontier delta-only sync across an authenticated 3-server mesh.
 //! 2. Parallel bidirectional mesh convergence under concurrent opposite-direction writes.
-//! 3. Zero-storage live P2P relay over TLS 1.3 (`hold_relay_slot` + `connect_relay_slot`),
-//!    verifying the relay server persists zero files in `repos/`.
+//! 3. Zero-storage live P2P relay over TLS 1.3 (`hold_relay_slot` + `connect_relay_slot`).
 //! 4. Tamper and device revocation + rotated `VK` adoption regressions.
 
 #![allow(
@@ -22,11 +20,13 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kdf::zsync_relay_slot;
 use local::{
-    SyncIdentity, create_vault, encode_personal_head, open_personal_rekey, seal_personal_rekey,
+    SyncIdentity, create_vault, encode_personal_head, open_personal_rekey, seal_master_grant,
+    seal_personal_rekey,
 };
+use pq::{SYNC_VK_LEN, sync_verifying_key};
 use record::{Document, TAG_TITLE};
+use secret::Secret;
 use seed::SeedPhrase;
 use session::{
     BodyAlg, KdfProfile, RotateCreds, VaultFile, accept_peer_frame, open_record, rotate_vault_key,
@@ -35,8 +35,9 @@ use session::{
 use tokio::sync::watch;
 use tokio::time::{sleep, timeout};
 use zsync::{
-    PersonalStateInput, ZebraClient, ZebraServerConfig, ZebraServerHandle, connect_relay_slot,
-    hold_relay_slot, personal_storage_id, relay_sync_initiator, relay_sync_responder, start_server,
+    MeshAuthConfig, MeshPeer, PersonalStateInput, RelayCredentials, ZebraClient, ZebraServerConfig,
+    ZebraServerHandle, connect_relay_slot, hold_relay_slot, personal_storage_id,
+    relay_sync_initiator, relay_sync_responder, start_server,
 };
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -186,45 +187,80 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
         .block_on(fut)
 }
 
+fn mesh_vk(seed: &[u8; 32]) -> Box<[u8; SYNC_VK_LEN]> {
+    Box::new(sync_verifying_key(seed).unwrap().try_into().unwrap())
+}
+
 async fn start_mesh_cluster(
     root: &Path,
     ca_pem: &[u8],
     cert_pem: &[u8],
     key_pem: &[u8],
 ) -> Vec<ZebraServerHandle> {
+    let s0 = [0x90u8; 32];
+    let s1 = [0x91u8; 32];
+    let s2 = [0x92u8; 32];
+    let vk0 = mesh_vk(&s0);
+    let vk1 = mesh_vk(&s1);
+    let vk2 = mesh_vk(&s2);
+
     let srv_0 = start_server(ZebraServerConfig {
         listen: "127.0.0.1:0".parse().unwrap(),
         cert_pem: cert_pem.to_vec(),
-        key_pem: key_pem.to_vec(),
+        key_pem: Secret::new(key_pem.to_vec()),
         extra_ca_pem: Some(ca_pem.to_vec()),
         data_dir: root.join("srv0"),
-        peers: Vec::new(),
+        mesh: Some(MeshAuthConfig {
+            seed: Secret::new(s0),
+            peers: Vec::new(),
+            allowed_vks: vec![*vk1, *vk2],
+        }),
         mesh_interval: Duration::from_millis(120),
-        allow_loopback: true,
+        allow_private: true,
     })
     .await
     .unwrap();
     let srv_1 = start_server(ZebraServerConfig {
         listen: "127.0.0.1:0".parse().unwrap(),
         cert_pem: cert_pem.to_vec(),
-        key_pem: key_pem.to_vec(),
+        key_pem: Secret::new(key_pem.to_vec()),
         extra_ca_pem: Some(ca_pem.to_vec()),
         data_dir: root.join("srv1"),
-        peers: vec![srv_0.endpoint.clone()],
+        mesh: Some(MeshAuthConfig {
+            seed: Secret::new(s1),
+            peers: vec![MeshPeer {
+                endpoint: srv_0.endpoint.clone(),
+                peer_vk: vk0.clone(),
+            }],
+            allowed_vks: vec![*vk2],
+        }),
         mesh_interval: Duration::from_millis(120),
-        allow_loopback: true,
+        allow_private: true,
     })
     .await
     .unwrap();
     let srv_2 = start_server(ZebraServerConfig {
         listen: "127.0.0.1:0".parse().unwrap(),
         cert_pem: cert_pem.to_vec(),
-        key_pem: key_pem.to_vec(),
+        key_pem: Secret::new(key_pem.to_vec()),
         extra_ca_pem: Some(ca_pem.to_vec()),
         data_dir: root.join("srv2"),
-        peers: vec![srv_0.endpoint.clone(), srv_1.endpoint.clone()],
+        mesh: Some(MeshAuthConfig {
+            seed: Secret::new(s2),
+            peers: vec![
+                MeshPeer {
+                    endpoint: srv_0.endpoint.clone(),
+                    peer_vk: vk0,
+                },
+                MeshPeer {
+                    endpoint: srv_1.endpoint.clone(),
+                    peer_vk: vk1,
+                },
+            ],
+            allowed_vks: Vec::new(),
+        }),
         mesh_interval: Duration::from_millis(120),
-        allow_loopback: true,
+        allow_private: true,
     })
     .await
     .unwrap();
@@ -245,7 +281,7 @@ fn git_frontier_delta_only_and_three_server_mesh() {
         let id1 = SyncIdentity::enroll(phrase.seed(), &client_id, dev1, u64::MAX).unwrap();
         let id2 = SyncIdentity::enroll(phrase.seed(), &client_id, dev2, u64::MAX).unwrap();
 
-        let (paths1, mut sess1, mut file1, _) = create_vault(
+        let (_, mut sess1, mut file1, _) = create_vault(
             &dir.join("d1"),
             phrase.seed(),
             KdfProfile::Fast,
@@ -253,8 +289,10 @@ fn git_frontier_delta_only_and_three_server_mesh() {
         )
         .unwrap();
         sess1.set_origin_device(dev1).unwrap();
-        let _ = paths1;
         let rec1 = write_record(&mut sess1, &mut file1, None, &titled("Initial Key")).unwrap();
+        let vk1 = sess1.reopen_key();
+        let sid = personal_storage_id(&id1).unwrap();
+        let mgrant = seal_master_grant(phrase.seed(), &sid, sess1.vault_id(), &vk1).unwrap();
 
         let c0 = ZebraClient::new(&[cluster[0].endpoint.to_string()], Some(&ca_pem), true).unwrap();
         let c1 = ZebraClient::new(&[cluster[1].endpoint.to_string()], Some(&ca_pem), true).unwrap();
@@ -266,6 +304,9 @@ fn git_frontier_delta_only_and_three_server_mesh() {
             .reconcile_personal(
                 &id1,
                 PersonalStateInput {
+                    vk: Some(&vk1),
+                    master_seed: None,
+                    master_grant: Some(&mgrant),
                     vault_bytes: file1.as_bytes(),
                     head_meta_plain: &head1,
                     generation: sess1.generation(),
@@ -281,13 +322,15 @@ fn git_frontier_delta_only_and_three_server_mesh() {
         assert!(p0.pushed_head);
         assert_eq!(p0.pushed_records, 1);
 
-        // Wait for mesh replication to srv_2, then adopt on device_2 from srv_2 only.
         let mut p2_pull = None;
         for _ in 0..40 {
             let pull = c2
                 .reconcile_personal(
                     &id2,
                     PersonalStateInput {
+                        vk: None,
+                        master_seed: Some(phrase.seed()),
+                        master_grant: None,
                         vault_bytes: &[],
                         head_meta_plain: &[],
                         generation: 0,
@@ -308,8 +351,9 @@ fn git_frontier_delta_only_and_three_server_mesh() {
         }
         let p2_pull = p2_pull.expect("srv_2 never received replicated snapshot/frames");
         let (snap2, _, _) = p2_pull.snapshot.unwrap();
+        let (_, adopted_vk) = p2_pull.adopted_vk.unwrap();
         let mut file2 = VaultFile::new(snap2.to_vec());
-        let mut sess2 = unlock_with_key(&file2, &sess1.reopen_key(), dev2).unwrap();
+        let mut sess2 = unlock_with_key(&file2, &adopted_vk, dev2).unwrap();
         for f in &p2_pull.frames {
             let _ = accept_peer_frame(&mut sess2, &mut file2, f);
         }
@@ -318,7 +362,6 @@ fn git_frontier_delta_only_and_three_server_mesh() {
             Some("Initial Key")
         );
 
-        // Device 1 edits record 1 (rev 2) and creates record 2 (rev 1): must push deltas ONLY!
         write_record(&mut sess1, &mut file1, Some(rec1), &titled("Edited Key v2")).unwrap();
         let rec2 = write_record(&mut sess1, &mut file1, None, &titled("Second Record")).unwrap();
         let head1b = encode_personal_head(sess1.vault_id(), sess1.commit_tag(), sess1.generation());
@@ -327,6 +370,9 @@ fn git_frontier_delta_only_and_three_server_mesh() {
             .reconcile_personal(
                 &id1,
                 PersonalStateInput {
+                    vk: Some(&vk1),
+                    master_seed: None,
+                    master_grant: Some(&mgrant),
                     vault_bytes: file1.as_bytes(),
                     head_meta_plain: &head1b,
                     generation: sess1.generation(),
@@ -345,7 +391,7 @@ fn git_frontier_delta_only_and_three_server_mesh() {
         );
         assert_eq!(delta_push.pushed_records, 2);
 
-        // Device 2 offers its stale rev 1 for rec1 to srv_1: srv_1 keeps dev1's newer rev 2 and returns it.
+        let vk2 = sess2.reopen_key();
         let mut stale_accepted = false;
         for _ in 0..40 {
             let head2 =
@@ -355,6 +401,9 @@ fn git_frontier_delta_only_and_three_server_mesh() {
                 .reconcile_personal(
                     &id2,
                     PersonalStateInput {
+                        vk: Some(&vk2),
+                        master_seed: None,
+                        master_grant: Some(&mgrant),
                         vault_bytes: file2.as_bytes(),
                         head_meta_plain: &head2,
                         generation: sess2.generation(),
@@ -439,9 +488,9 @@ fn parallel_bidirectional_mesh_convergence() {
             let f_bytes = base_file.as_bytes().to_vec();
             let id_arc = Arc::clone(id);
             let dev = devs[idx];
-            let vk = SecretCopy(&base_vk);
             let mut file = VaultFile::new(f_bytes);
-            let mut sess = unlock_with_key(&file, vk.0, dev).unwrap();
+            let mut sess = unlock_with_key(&file, &base_vk, dev).unwrap();
+            let vk_task = sess.reopen_key();
             let rec_id = u32::try_from(idx + 1).unwrap();
             let raw = write_distinct_frame(&mut sess, &mut file, rec_id, title);
             let hdr = frame::parse(&raw).unwrap();
@@ -450,6 +499,9 @@ fn parallel_bidirectional_mesh_convergence() {
                 cli.reconcile_personal(
                     &id_arc,
                     PersonalStateInput {
+                        vk: Some(&vk_task),
+                        master_seed: None,
+                        master_grant: None,
                         vault_bytes: file.as_bytes(),
                         head_meta_plain: &head,
                         generation: sess.generation(),
@@ -468,7 +520,6 @@ fn parallel_bidirectional_mesh_convergence() {
             t.await.unwrap();
         }
 
-        // Wait until querying each of srv_0, srv_1, srv_2 returns all 3 records from all 3 directions.
         let check0 =
             ZebraClient::new(&[cluster[0].endpoint.to_string()], Some(&ca_pem), true).unwrap();
         let check1 =
@@ -478,7 +529,10 @@ fn parallel_bidirectional_mesh_convergence() {
 
         let mut converged = false;
         for _ in 0..50 {
-            let empty = |()| PersonalStateInput {
+            let empty = || PersonalStateInput {
+                vk: Some(&base_vk),
+                master_seed: None,
+                master_grant: None,
                 vault_bytes: &[],
                 head_meta_plain: &[],
                 generation: 0,
@@ -488,9 +542,9 @@ fn parallel_bidirectional_mesh_convergence() {
                 rekeys: &[],
                 push_head_always: false,
             };
-            let p0 = check0.reconcile_personal(&id0, empty(())).await.unwrap();
-            let p1 = check1.reconcile_personal(&id1, empty(())).await.unwrap();
-            let p2 = check2.reconcile_personal(&id2, empty(())).await.unwrap();
+            let p0 = check0.reconcile_personal(&id0, empty()).await.unwrap();
+            let p1 = check1.reconcile_personal(&id1, empty()).await.unwrap();
+            let p2 = check2.reconcile_personal(&id2, empty()).await.unwrap();
             if p0.frames.len() == 3 && p1.frames.len() == 3 && p2.frames.len() == 3 {
                 converged = true;
                 break;
@@ -509,8 +563,6 @@ fn parallel_bidirectional_mesh_convergence() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-struct SecretCopy<'a>(&'a secret::Secret<[u8; 32]>);
 
 fn write_distinct_frame(
     sess: &mut session::Session,
@@ -531,12 +583,12 @@ fn zero_storage_live_p2p_relay() {
         let srv = start_server(ZebraServerConfig {
             listen: "127.0.0.1:0".parse().unwrap(),
             cert_pem,
-            key_pem,
+            key_pem: Secret::new(key_pem),
             extra_ca_pem: Some(ca_pem.clone()),
             data_dir: dir.join("srv"),
-            peers: Vec::new(),
+            mesh: None,
             mesh_interval: Duration::from_secs(60),
-            allow_loopback: true,
+            allow_private: true,
         })
         .await
         .unwrap();
@@ -550,21 +602,6 @@ fn zero_storage_live_p2p_relay() {
         let id2 =
             Arc::new(SyncIdentity::enroll(phrase.seed(), &client_id, dev2, u64::MAX).unwrap());
 
-        let (_, mut sess1, mut file1, _) = create_vault(
-            &dir.join("v1"),
-            phrase.seed(),
-            KdfProfile::Fast,
-            BodyAlg::Frames,
-        )
-        .unwrap();
-        sess1.set_origin_device(dev1).unwrap();
-        let r1 = write_record(&mut sess1, &mut file1, None, &titled("Relay Secret A")).unwrap();
-        let r2 = write_record(&mut sess1, &mut file1, None, &titled("Relay Secret B")).unwrap();
-
-        let mut file2 = VaultFile::new(file1.as_bytes().to_vec());
-        // Clone base file with zero records by creating fresh empty from same seed and zero records, or adopt snapshot:
-        // Use a fresh empty vault with the same VK (unlock dev2 from initial pre-write snapshot? Easier: device 1 and 2 start at initial file):
-        drop(file2);
         let (_, mut sess_init, mut file_init, _) = create_vault(
             &dir.join("v1b"),
             phrase.seed(),
@@ -573,9 +610,7 @@ fn zero_storage_live_p2p_relay() {
         )
         .unwrap();
         sess_init.set_origin_device(dev1).unwrap();
-        let _ = r1;
-        let _ = r2;
-        file2 = VaultFile::new(file_init.as_bytes().to_vec());
+        let mut file2 = VaultFile::new(file_init.as_bytes().to_vec());
         let mut sess2 = unlock_with_key(&file2, &sess_init.reopen_key(), dev2).unwrap();
         let ra = write_record(
             &mut sess_init,
@@ -602,21 +637,30 @@ fn zero_storage_live_p2p_relay() {
         let ep = client.preferred_endpoint().unwrap().clone();
         let tls_cfg = Arc::clone(client.tls_config());
         let sid = personal_storage_id(&id1).unwrap();
-        let slot = zsync_relay_slot(id1.account_gate().unwrap().expose(), &sid).unwrap();
+        let creds =
+            Arc::new(RelayCredentials::derive(id1.account_gate().unwrap().expose(), &sid).unwrap());
+        let slot = creds.slot();
         let (stop_tx, stop_rx) = watch::channel(false);
 
         let holder_ep = ep.clone();
         let holder_tls = Arc::clone(&tls_cfg);
         let holder_id = Arc::clone(&id1);
+        let holder_creds = Arc::clone(&creds);
         let holder_task = tokio::spawn(async move {
-            hold_relay_slot(holder_ep, holder_tls, slot, stop_rx, move |stream| {
-                let id_h = Arc::clone(&holder_id);
-                let m = Arc::clone(&mine1);
-                let fr = Arc::clone(&frames1);
-                async move {
-                    let _ = relay_sync_responder(stream, &id_h, &m, &fr).await;
-                }
-            })
+            hold_relay_slot(
+                holder_ep,
+                holder_tls,
+                holder_creds,
+                stop_rx,
+                move |stream| {
+                    let id_h = Arc::clone(&holder_id);
+                    let m = Arc::clone(&mine1);
+                    let fr = Arc::clone(&frames1);
+                    async move {
+                        let _ = relay_sync_responder(stream, &id_h, &m, &fr).await;
+                    }
+                },
+            )
             .await;
         });
 
@@ -691,8 +735,8 @@ fn tamper_and_revocation_regressions() {
         .unwrap();
         sess1.set_origin_device(dev1).unwrap();
         let r1 = write_record(&mut sess1, &mut file1, None, &titled("Before Revoke")).unwrap();
+        let old_vk = sess1.reopen_key();
 
-        // Check 1-byte tamper rejection on raw record frame.
         let mut tampered_frame = session::latest_frame(&sess1, r1).unwrap();
         let last_idx = tampered_frame.len() - 1;
         tampered_frame[last_idx] ^= 0x01;
@@ -706,6 +750,9 @@ fn tamper_and_revocation_regressions() {
         c0.reconcile_personal(
             &id1,
             PersonalStateInput {
+                vk: Some(&old_vk),
+                master_seed: None,
+                master_grant: None,
                 vault_bytes: file1.as_bytes(),
                 head_meta_plain: &head1,
                 generation: sess1.generation(),
@@ -719,11 +766,13 @@ fn tamper_and_revocation_regressions() {
         .await
         .unwrap();
 
-        // Register dev2 & dev3 certs on cluster first.
         let _ = c1
             .reconcile_personal(
                 &id2,
                 PersonalStateInput {
+                    vk: None,
+                    master_seed: None,
+                    master_grant: None,
                     vault_bytes: &[],
                     head_meta_plain: &[],
                     generation: 0,
@@ -740,6 +789,9 @@ fn tamper_and_revocation_regressions() {
             .reconcile_personal(
                 &id3,
                 PersonalStateInput {
+                    vk: None,
+                    master_seed: None,
+                    master_grant: None,
                     vault_bytes: &[],
                     head_meta_plain: &[],
                     generation: 0,
@@ -753,7 +805,6 @@ fn tamper_and_revocation_regressions() {
             .await
             .unwrap();
 
-        // Device 1 revokes device 2, rotates VK, and seals SignedRekey ONLY for device 3.
         id1.revoke_device(&id2.devices()[0], 1_700_000_000_000)
             .unwrap();
         rotate_vault_key(
@@ -769,6 +820,8 @@ fn tamper_and_revocation_regressions() {
         write_record(&mut sess1, &mut file1, None, &titled("After Rotate")).unwrap();
         let new_vk = sess1.reopen_key();
         let new_gen = sess1.generation();
+        let sid = personal_storage_id(&id1).unwrap();
+        let mgrant = seal_master_grant(phrase.seed(), &sid, sess1.vault_id(), &new_vk).unwrap();
         let grant_3 = seal_personal_rekey(
             &id3.share_publics().unwrap(),
             &dev3,
@@ -781,6 +834,9 @@ fn tamper_and_revocation_regressions() {
         c0.reconcile_personal(
             &id1,
             PersonalStateInput {
+                vk: Some(&new_vk),
+                master_seed: None,
+                master_grant: Some(&mgrant),
                 vault_bytes: file1.as_bytes(),
                 head_meta_plain: &head1_rot,
                 generation: new_gen,
@@ -794,7 +850,6 @@ fn tamper_and_revocation_regressions() {
         .await
         .unwrap();
 
-        // Wait for mesh replication of revocation + rekey to srv_1 and srv_2.
         let mut dev2_blocked = false;
         let mut dev3_rekeyed = false;
         for _ in 0..45 {
@@ -803,6 +858,9 @@ fn tamper_and_revocation_regressions() {
                     .reconcile_personal(
                         &id2,
                         PersonalStateInput {
+                            vk: Some(&old_vk),
+                            master_seed: None,
+                            master_grant: None,
                             vault_bytes: &[],
                             head_meta_plain: &[],
                             generation: 0,
@@ -823,6 +881,9 @@ fn tamper_and_revocation_regressions() {
                     .reconcile_personal(
                         &id3,
                         PersonalStateInput {
+                            vk: Some(&old_vk),
+                            master_seed: None,
+                            master_grant: None,
                             vault_bytes: &[],
                             head_meta_plain: &[],
                             generation: 0,
@@ -916,24 +977,24 @@ fn self_signed_x509_pin_accepts_matching_san_and_rejects_mismatch_or_unpinned() 
         let srv_ok = start_server(ZebraServerConfig {
             listen: "127.0.0.1:0".parse().unwrap(),
             cert_pem: ok_cert.clone(),
-            key_pem: ok_key,
+            key_pem: Secret::new(ok_key),
             extra_ca_pem: Some(ok_cert.clone()),
             data_dir: dir.join("srv-ok"),
-            peers: Vec::new(),
+            mesh: None,
             mesh_interval: Duration::from_secs(60),
-            allow_loopback: true,
+            allow_private: true,
         })
         .await
         .unwrap();
         let srv_bad_san = start_server(ZebraServerConfig {
             listen: "127.0.0.1:0".parse().unwrap(),
             cert_pem: bad_san_cert.clone(),
-            key_pem: bad_san_key,
+            key_pem: Secret::new(bad_san_key),
             extra_ca_pem: Some(bad_san_cert.clone()),
             data_dir: dir.join("srv-bad"),
-            peers: Vec::new(),
+            mesh: None,
             mesh_interval: Duration::from_secs(60),
-            allow_loopback: true,
+            allow_private: true,
         })
         .await
         .unwrap();
@@ -942,6 +1003,9 @@ fn self_signed_x509_pin_accepts_matching_san_and_rejects_mismatch_or_unpinned() 
         let client_id = kdf::client_id(phrase.seed()).unwrap();
         let identity = SyncIdentity::enroll(phrase.seed(), &client_id, [11; 16], u64::MAX).unwrap();
         let empty = || PersonalStateInput {
+            vk: None,
+            master_seed: None,
+            master_grant: None,
             vault_bytes: &[],
             head_meta_plain: &[],
             generation: 0,

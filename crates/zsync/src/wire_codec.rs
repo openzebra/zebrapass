@@ -13,8 +13,8 @@ use crate::wire::{
     SignedRekey, SyncDelta, Wanted,
 };
 pub use crate::wire_aux::{
-    decode_digests, decode_relay, decode_repo_ids, decode_watch_event, decode_watch_sub,
-    encode_digests, encode_relay, encode_repo_ids, encode_watch_event, encode_watch_sub,
+    decode_digest_cursor, decode_digest_page, decode_relay, decode_watch_event, decode_watch_sub,
+    encode_digest_cursor, encode_digest_page, encode_relay, encode_watch_event, encode_watch_sub,
 };
 
 pub fn bad_wire() -> anyhow::Error {
@@ -48,7 +48,7 @@ pub fn read_u8(r: &mut Reader<'_>) -> anyhow::Result<u8> {
     r.array::<1>().map(|[b]| b)
 }
 
-pub fn push_opt<T>(
+pub fn push_opt<T: ?Sized>(
     out: &mut Vec<u8>,
     val: Option<&T>,
     f: impl FnOnce(&mut Vec<u8>, &T) -> anyhow::Result<()>,
@@ -117,15 +117,12 @@ pub fn encode_frontier(f: &RepoFrontier) -> anyhow::Result<Vec<u8>> {
     let mut out = Vec::with_capacity(256);
     out.push(f.kind as u8);
     out.extend_from_slice(&f.storage_id);
+    push_opt(&mut out, f.personal_anchor.as_deref(), push_bytes)?;
     push_opt(&mut out, f.root_vk.as_deref(), |o, vk| {
         o.extend_from_slice(vk);
         Ok(())
     })?;
-    push_opt(&mut out, f.shared_init.as_ref(), |o, (vid, anc)| {
-        o.extend_from_slice(vid);
-        o.extend_from_slice(anc);
-        Ok(())
-    })?;
+    push_opt(&mut out, f.shared_proof.as_deref(), push_bytes)?;
     push_opt(&mut out, f.auth.as_ref(), |o, a| {
         o.extend_from_slice(&a.timestamp_s.to_be_bytes());
         o.extend_from_slice(&a.nonce);
@@ -140,6 +137,7 @@ pub fn encode_frontier(f: &RepoFrontier) -> anyhow::Result<Vec<u8>> {
     }
     out.extend_from_slice(&f.rev_count.to_be_bytes());
     out.extend_from_slice(&f.member_count.to_be_bytes());
+    out.extend_from_slice(&f.dev_key_count.to_be_bytes());
     push_opt(&mut out, f.head.as_ref(), |o, h| {
         write_head_ver(o, h);
         Ok(())
@@ -161,8 +159,13 @@ pub fn decode_frontier(bytes: &[u8]) -> anyhow::Result<RepoFrontier> {
     let mut r = Reader::new(bytes);
     let kind = RepoKind::try_from(read_u8(&mut r)?)?;
     let storage_id = r.array::<64>()?;
+    let personal_anchor = read_opt(&mut r, |rd| {
+        read_bytes(rd, MAX_SMALL_FRAME).map(<[u8]>::to_vec)
+    })?;
     let root_vk = read_opt(&mut r, |rd| rd.array::<SYNC_VK_LEN>().map(Box::new))?;
-    let shared_init = read_opt(&mut r, |rd| Ok((rd.array::<16>()?, rd.array::<32>()?)))?;
+    let shared_proof = read_opt(&mut r, |rd| {
+        read_bytes(rd, MAX_SMALL_FRAME).map(<[u8]>::to_vec)
+    })?;
     let auth = read_opt(&mut r, |rd| {
         Ok(FrontierAuth {
             timestamp_s: rd.u64()?,
@@ -178,6 +181,7 @@ pub fn decode_frontier(bytes: &[u8]) -> anyhow::Result<RepoFrontier> {
     }
     let rev_count = r.u32()?;
     let member_count = r.u32()?;
+    let dev_key_count = r.u16()?;
     let head = read_opt(&mut r, read_head_ver)?;
     let r_count = read_u16_count(&mut r, MAX_RECORDS_PER_MSG)?;
     let mut records = Vec::with_capacity(r_count);
@@ -188,14 +192,16 @@ pub fn decode_frontier(bytes: &[u8]) -> anyhow::Result<RepoFrontier> {
     Ok(RepoFrontier {
         kind,
         storage_id,
+        personal_anchor,
         root_vk,
-        shared_init,
+        shared_proof,
         auth,
         certs,
-        rev_count,
-        member_count,
         head,
         records,
+        rev_count,
+        member_count,
+        dev_key_count,
     })
 }
 
@@ -206,9 +212,7 @@ pub fn decode_frontier(bytes: &[u8]) -> anyhow::Result<RepoFrontier> {
 /// Exceeded count/length limits.
 pub fn encode_diff(pull: &SyncDelta, wanted: &Wanted) -> anyhow::Result<Vec<u8>> {
     let mut out = encode_delta(pull)?;
-    out.push(u8::from(wanted.need_head));
-    out.push(u8::from(wanted.need_members));
-    out.push(u8::from(wanted.need_revs));
+    out.push(wanted.flags);
     let len = u16::try_from(wanted.record_ids.len()).map_err(|_| bad_wire())?;
     out.extend_from_slice(&len.to_be_bytes());
     for id in &wanted.record_ids {
@@ -225,36 +229,17 @@ pub fn encode_diff(pull: &SyncDelta, wanted: &Wanted) -> anyhow::Result<Vec<u8>>
 pub fn decode_diff(bytes: &[u8]) -> anyhow::Result<(SyncDelta, Wanted)> {
     let mut r = Reader::new(bytes);
     let delta = read_delta(&mut r)?;
-    let need_head = match read_u8(&mut r)? {
-        0 => false,
-        1 => true,
-        _ => return Err(bad_wire()),
-    };
-    let need_members = match read_u8(&mut r)? {
-        0 => false,
-        1 => true,
-        _ => return Err(bad_wire()),
-    };
-    let need_revs = match read_u8(&mut r)? {
-        0 => false,
-        1 => true,
-        _ => return Err(bad_wire()),
-    };
+    let flags = read_u8(&mut r)?;
+    if flags & !Wanted::ALL_FLAGS != 0 {
+        return Err(bad_wire());
+    }
     let count = read_u16_count(&mut r, MAX_RECORDS_PER_MSG)?;
     let mut record_ids = Vec::with_capacity(count);
     for _ in 0..count {
         record_ids.push(r.u32()?);
     }
     r.finish()?;
-    Ok((
-        delta,
-        Wanted {
-            need_head,
-            need_members,
-            need_revs,
-            record_ids,
-        },
-    ))
+    Ok((delta, Wanted { record_ids, flags }))
 }
 
 /// Encode [`SyncDelta`].
@@ -266,22 +251,21 @@ pub fn encode_delta(d: &SyncDelta) -> anyhow::Result<Vec<u8>> {
     let mut out = Vec::with_capacity(256);
     out.push(d.kind as u8);
     out.extend_from_slice(&d.storage_id);
+    push_opt(&mut out, d.personal_anchor.as_deref(), push_bytes)?;
     push_opt(&mut out, d.root_vk.as_deref(), |o, vk| {
         o.extend_from_slice(vk);
         Ok(())
     })?;
-    push_opt(&mut out, d.shared_init.as_ref(), |o, (vid, anc)| {
-        o.extend_from_slice(vid);
-        o.extend_from_slice(anc);
-        Ok(())
-    })?;
+    push_opt(&mut out, d.shared_proof.as_deref(), push_bytes)?;
     write_blob_vec(&mut out, &d.certs)?;
+    write_blob_vec(&mut out, &d.device_keys)?;
     write_blob_vec(&mut out, &d.revocations)?;
     write_blob_vec(&mut out, &d.member_entries)?;
     push_opt(&mut out, d.head.as_ref(), |o, h| {
         write_head_ver(o, &h.ver);
         push_bytes(o, &h.head_meta)?;
         push_bytes(o, &h.snapshot_env)?;
+        push_opt(o, h.master_grant.as_deref(), push_bytes)?;
         o.extend_from_slice(&*h.signature);
         Ok(())
     })?;
@@ -321,9 +305,11 @@ pub fn decode_delta(bytes: &[u8]) -> anyhow::Result<SyncDelta> {
 fn read_delta(r: &mut Reader<'_>) -> anyhow::Result<SyncDelta> {
     let kind = RepoKind::try_from(read_u8(r)?)?;
     let storage_id = r.array::<64>()?;
+    let personal_anchor = read_opt(r, |rd| read_bytes(rd, MAX_SMALL_FRAME).map(<[u8]>::to_vec))?;
     let root_vk = read_opt(r, |rd| rd.array::<SYNC_VK_LEN>().map(Box::new))?;
-    let shared_init = read_opt(r, |rd| Ok((rd.array::<16>()?, rd.array::<32>()?)))?;
+    let shared_proof = read_opt(r, |rd| read_bytes(rd, MAX_SMALL_FRAME).map(<[u8]>::to_vec))?;
     let certs = read_blob_vec(r, MAX_CERTS_PER_REPO, MAX_SMALL_FRAME)?;
+    let device_keys = read_blob_vec(r, MAX_CERTS_PER_REPO, MAX_SMALL_FRAME)?;
     let revocations = read_blob_vec(r, MAX_REVS_PER_REPO, MAX_SMALL_FRAME)?;
     let member_entries = read_blob_vec(r, MAX_MEMBERS_PER_REPO, MAX_SMALL_FRAME)?;
     let head = read_opt(r, |rd| {
@@ -331,6 +317,9 @@ fn read_delta(r: &mut Reader<'_>) -> anyhow::Result<SyncDelta> {
             ver: read_head_ver(rd)?,
             head_meta: read_bytes(rd, MAX_SMALL_FRAME)?.to_vec(),
             snapshot_env: read_bytes(rd, MAX_ENVELOPE_BYTES)?.to_vec(),
+            master_grant: read_opt(rd, |rd2| {
+                read_bytes(rd2, MAX_SMALL_FRAME).map(<[u8]>::to_vec)
+            })?,
             signature: Box::new(rd.array::<SYNC_SIG_LEN>()?),
         })
     })?;
@@ -359,9 +348,11 @@ fn read_delta(r: &mut Reader<'_>) -> anyhow::Result<SyncDelta> {
     Ok(SyncDelta {
         kind,
         storage_id,
+        personal_anchor,
         root_vk,
-        shared_init,
+        shared_proof,
         certs,
+        device_keys,
         revocations,
         member_entries,
         head,
@@ -370,7 +361,7 @@ fn read_delta(r: &mut Reader<'_>) -> anyhow::Result<SyncDelta> {
     })
 }
 
-fn write_blob_vec(out: &mut Vec<u8>, items: &[Vec<u8>]) -> anyhow::Result<()> {
+pub fn write_blob_vec(out: &mut Vec<u8>, items: &[Vec<u8>]) -> anyhow::Result<()> {
     let count = u16::try_from(items.len()).map_err(|_| bad_wire())?;
     out.extend_from_slice(&count.to_be_bytes());
     for item in items {
@@ -379,7 +370,7 @@ fn write_blob_vec(out: &mut Vec<u8>, items: &[Vec<u8>]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_blob_vec(
+pub fn read_blob_vec(
     r: &mut Reader<'_>,
     max_items: usize,
     max_item_len: usize,

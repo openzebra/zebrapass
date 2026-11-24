@@ -321,3 +321,26 @@ fn the_invitation_keys_survive_a_reload_and_differ_per_device() {
     );
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn personal_anchor_is_self_certifying_and_unlinked_from_client_id() {
+    let dir = temp_dir();
+    let path = dir.join("sync.id");
+    let key = sync_identity_key(&[9; 32], &[7; 16]).unwrap();
+    let id = enrolled();
+    let sid = id.personal_storage_id().unwrap();
+    assert_ne!(sid, CLIENT);
+    assert_ne!(sid, kdf::client_id(&MASTER).unwrap());
+    let anchor = id.personal_anchor().unwrap();
+    anchor.verify(&sid, &CLIENT, id.root_vk()).unwrap();
+    assert!(anchor.verify(&CLIENT, &CLIENT, id.root_vk()).is_err());
+
+    id.save(&path, &key).unwrap();
+    let mut loaded = SyncIdentity::load(&path, &key).unwrap();
+    assert_eq!(loaded.personal_storage_id(), Some(sid));
+    let expected = kdf::account_gate_secret(&MASTER).unwrap();
+    assert_eq!(loaded.account_gate().unwrap().expose(), expected.expose());
+    assert!(!loaded.upgrade(&MASTER).unwrap());
+    assert!(loaded.upgrade(&[0x99; 64]).is_err());
+    fs::remove_dir_all(&dir).unwrap();
+}

@@ -111,9 +111,8 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
     // Kuznyechik cascade, and there is no cipher choice to get wrong.
     let (paths, mut session, mut file, mut meta) =
         local::create_vault(&base, phrase.seed(), profile, BodyAlg::Frames)?;
-    local::SyncIdentity::enroll(phrase.seed(), &meta.client_id, meta.device_id, u64::MAX)?
-        .save(&paths.sync_identity(), &session.sync_identity_key()?)?;
-    drop(phrase);
+    let mut sync_id =
+        local::SyncIdentity::enroll(phrase.seed(), &meta.client_id, meta.device_id, u64::MAX)?;
     meta.name = name;
     if !server_sync || !sync_servers.is_empty() {
         meta.prefs = Some(local::Prefs {
@@ -125,6 +124,23 @@ pub fn create(request: NewVault) -> anyhow::Result<Box<Vault>> {
     enroll(&mut session, &mut file, &paths, profile, factor)?;
     write_records_batch(&mut session, &mut file, &records)?;
     drop(records);
+    for entry in session::frontier(&session).unwrap_or_default() {
+        let _ = sync_id
+            .last_seen_mut()
+            .note(entry.record_id, entry.revision);
+    }
+    sync_id.save(&paths.sync_identity(), &session.sync_identity_key()?)?;
+    if let Some(sid) = sync_id.personal_storage_id()
+        && let Ok(grant) = local::seal_master_grant(
+            phrase.seed(),
+            &sid,
+            session.vault_id(),
+            &session.reopen_key(),
+        )
+    {
+        let _ = local::save_master_grant(&paths, &grant);
+    }
+    drop(phrase);
     let directory = wrap_directory(&file)?;
     let mut vault = Box::new(Vault {
         session,
@@ -208,16 +224,20 @@ fn restore_file(request: RestoreVault, source: &Path) -> Result<Box<Vault>, Unlo
     };
     let client_id = kdf::client_id(phrase.seed()).map_err(|_| UnlockError::Io)?;
     let paths = paths_for(&base, session.vault_id());
-    let identity =
+    let mut identity =
         local::SyncIdentity::enroll(phrase.seed(), &client_id, session.origin_device(), u64::MAX)
             .map_err(|_| UnlockError::Io)?;
+    for entry in session::frontier(&session).unwrap_or_default() {
+        let _ = identity
+            .last_seen_mut()
+            .note(entry.record_id, entry.revision);
+    }
     identity
         .save(
             &paths.sync_identity(),
             &session.sync_identity_key().map_err(|_| UnlockError::Io)?,
         )
         .map_err(|_| UnlockError::Io)?;
-    drop(phrase);
     let factor = match factor {
         Enrollment::Password(pw)
             if wrap_directory(&file)
@@ -228,6 +248,18 @@ fn restore_file(request: RestoreVault, source: &Path) -> Result<Box<Vault>, Unlo
         other => other,
     };
     let vault = land((session, file, paths), (client_id, name), profile, factor)?;
+    if crate::vault::factors::presence(&vault.directory, None).recovery
+        && let Some(sid) = identity.personal_storage_id()
+        && let Ok(grant) = local::seal_master_grant(
+            phrase.seed(),
+            &sid,
+            vault.session.vault_id(),
+            &vault.session.reopen_key(),
+        )
+    {
+        let _ = local::save_master_grant(&vault.paths, &grant);
+    }
+    drop(phrase);
     if !shared.is_empty() {
         restore_shared_entries(&base, &identity, &vault.session, &shared, true)
             .map_err(|_| UnlockError::Io)?;

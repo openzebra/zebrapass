@@ -1,4 +1,4 @@
-//! PQ TLS 1.3 `ZebraPass` sync, live P2P relay, and parallel mesh server.
+//! PQ TLS 1.3 `ZebraPass` sync, live P2P relay, and authenticated parallel mesh server.
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use secret::Secret;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, broadcast, oneshot, watch};
@@ -15,10 +16,12 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
 
 use crate::limits::{IO_TIMEOUT, MAX_CONNS, MAX_SMALL_FRAME, MAX_WIRE_FRAME};
-use crate::mesh::{MeshPeers, fanout_accepted, serve_peer_mesh, spawn_mesh_loops};
+use crate::mesh::{fanout_accepted, serve_peer_mesh, spawn_mesh_loops};
+use crate::mesh_auth::{MeshAuthConfig, MeshRuntime};
 use crate::relay::{RelayHub, serve_relay};
+use crate::replay::IpLimiter;
 use crate::repo_disk::RepoStore;
-use crate::tls::{Endpoint, client_config, server_config_pem};
+use crate::tls::{client_config, server_config_pem};
 use crate::wire::{
     RepoKind, StorageId, StreamRole, TAG_ACK, TAG_DELTA, TAG_DIFF, TAG_FRONTIER, TAG_WATCH_EVENT,
     TAG_WATCH_SUB, WatchEvent, read_wire, write_wire,
@@ -28,24 +31,35 @@ use crate::wire_codec::{
 };
 
 /// Configuration for running [`start_server`].
-#[derive(Clone, Debug)]
 pub struct ZebraServerConfig {
     /// TCP bind socket (port `0` allowed for ephemeral tests).
     pub listen: SocketAddr,
     /// PEM-encoded leaf/chain certificate.
     pub cert_pem: Vec<u8>,
-    /// PEM-encoded TLS private key.
-    pub key_pem: Vec<u8>,
+    /// Zeroizing PEM-encoded TLS private key.
+    pub key_pem: Secret<Vec<u8>>,
     /// Optional extra trusted CA PEM for dialing peer mesh servers.
     pub extra_ca_pem: Option<Vec<u8>>,
     /// Persistent repository storage directory.
     pub data_dir: PathBuf,
-    /// Peer Zebra servers (`host[:port]`) to synchronize with in parallel.
-    pub peers: Vec<Box<str>>,
+    /// Optional mutual `ML-DSA-65` mesh authentication & peer list. When `None`,
+    /// `StreamRole::PeerMesh` is completely disabled.
+    pub mesh: Option<MeshAuthConfig>,
     /// Anti-entropy bidirectional mesh sync interval.
     pub mesh_interval: Duration,
-    /// Allow loopback peer addresses (for local cluster tests).
-    pub allow_loopback: bool,
+    /// Allow loopback and private/RFC1918 peer addresses (for local cluster tests).
+    pub allow_private: bool,
+}
+
+impl std::fmt::Debug for ZebraServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZebraServerConfig")
+            .field("listen", &self.listen)
+            .field("data_dir", &self.data_dir)
+            .field("has_mesh", &self.mesh.is_some())
+            .field("allow_private", &self.allow_private)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Running `ZebraPass` sync/relay server handle.
@@ -79,34 +93,32 @@ impl Drop for ZebraServerHandle {
 struct ServerCtx {
     store: Arc<RepoStore>,
     relay: Arc<RelayHub>,
-    mesh: MeshPeers,
+    limiter: Arc<IpLimiter>,
+    mesh: Option<Arc<MeshRuntime>>,
     watch_tx: broadcast::Sender<WatchEvent>,
     acceptor: TlsAcceptor,
 }
 
-/// Start the unified PQ TLS 1.3 sync, live relay, and parallel mesh server.
+/// Start the unified PQ TLS 1.3 sync, live relay, and authenticated parallel mesh server.
 ///
 /// # Errors
 ///
-/// Invalid TLS certs/keys, peer URL parse error, storage open error, or bind failure.
+/// Invalid TLS certs/keys, peer URL/key parse error, storage open error, or bind failure.
 pub async fn start_server(cfg: ZebraServerConfig) -> anyhow::Result<ZebraServerHandle> {
     let tls_srv = server_config_pem(&cfg.cert_pem, &cfg.key_pem)?;
     let tls_cli = client_config(cfg.extra_ca_pem.as_deref())?;
-    let mut endpoints = Vec::with_capacity(cfg.peers.len());
-    for raw in &cfg.peers {
-        endpoints.push(Endpoint::parse(raw, cfg.allow_loopback)?);
-    }
-    let mesh = MeshPeers {
-        endpoints,
-        tls_cfg: tls_cli,
-    };
+    let mesh = cfg
+        .mesh
+        .map(|m| MeshRuntime::from_config(m, tls_cli, cfg.allow_private))
+        .transpose()?;
     let store = Arc::new(RepoStore::open(&cfg.data_dir)?);
     let relay = Arc::new(RelayHub::default());
+    let limiter = Arc::new(IpLimiter::default());
     let (watch_tx, _) = broadcast::channel(512);
     let (shutdown, shutdown_rx) = watch::channel(false);
 
     spawn_mesh_loops(
-        mesh.clone(),
+        mesh.as_ref(),
         &store,
         &watch_tx,
         cfg.mesh_interval,
@@ -119,6 +131,7 @@ pub async fn start_server(cfg: ZebraServerConfig) -> anyhow::Result<ZebraServerH
     let ctx = Arc::new(ServerCtx {
         store,
         relay,
+        limiter,
         mesh,
         watch_tx,
         acceptor: TlsAcceptor::from(tls_srv),
@@ -126,18 +139,24 @@ pub async fn start_server(cfg: ZebraServerConfig) -> anyhow::Result<ZebraServerH
     let sem = Arc::new(Semaphore::new(MAX_CONNS));
 
     let join = tokio::spawn(async move {
+        let step = Duration::from_millis(100);
         while !*shutdown_rx.borrow() {
-            if let Ok(Ok((tcp, peer_addr))) =
-                timeout(Duration::from_millis(100), listener.accept()).await
-                && let Ok(permit) = Arc::clone(&sem).try_acquire_owned()
-            {
-                let c = Arc::clone(&ctx);
-                let s = shutdown_rx.clone();
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    let _ = handle_conn(tcp, peer_addr, c, s).await;
-                });
-            }
+            let Ok(Ok(permit)) = timeout(step, Arc::clone(&sem).acquire_owned()).await else {
+                continue;
+            };
+            let Ok(Ok((tcp, peer_addr))) = timeout(step, listener.accept()).await else {
+                continue;
+            };
+            let Some(ip_guard) = ctx.limiter.try_acquire_conn(peer_addr.ip()) else {
+                continue;
+            };
+            let c = Arc::clone(&ctx);
+            let s = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                let _ip_guard = ip_guard;
+                let _ = handle_conn(tcp, peer_addr, c, s).await;
+            });
         }
     });
 
@@ -163,9 +182,20 @@ async fn handle_conn(
     match StreamRole::try_from(role)? {
         StreamRole::ClientRpc => serve_client_rpc(ctx, tls).await,
         StreamRole::ClientWatch => serve_client_watch(ctx, tls, shutdown).await,
-        StreamRole::Relay => serve_relay(Arc::clone(&ctx.relay), tls, peer_addr).await,
+        StreamRole::Relay => {
+            serve_relay(
+                Arc::clone(&ctx.relay),
+                Arc::clone(&ctx.limiter),
+                tls,
+                peer_addr,
+            )
+            .await
+        }
         StreamRole::PeerMesh => {
-            serve_peer_mesh(Arc::clone(&ctx.store), ctx.watch_tx.clone(), tls).await
+            let Some(mesh) = ctx.mesh.clone() else {
+                anyhow::bail!("peer mesh disabled");
+            };
+            serve_peer_mesh(mesh, Arc::clone(&ctx.store), ctx.watch_tx.clone(), tls).await
         }
     }
 }
@@ -194,6 +224,9 @@ async fn serve_client_rpc(
         return Ok(());
     }
     let delta = decode_delta(&dbody)?;
+    if delta.kind != frontier.kind || !secret::ct_eq(&delta.storage_id, &frontier.storage_id) {
+        anyhow::bail!("delta repository mismatch");
+    }
     if !delta.is_empty() {
         let (accepted, changed) = ctx.store.apply_and_save(&delta).await?;
         if changed {
@@ -201,7 +234,7 @@ async fn serve_client_rpc(
                 kind: delta.kind,
                 storage_id: delta.storage_id,
             });
-            fanout_accepted(&ctx.mesh, &accepted);
+            fanout_accepted(ctx.mesh.as_ref(), &accepted);
         }
     }
     let _ = timeout(IO_TIMEOUT, write_wire(&mut tls, TAG_ACK, &[])).await;

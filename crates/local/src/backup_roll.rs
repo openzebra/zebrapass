@@ -7,7 +7,7 @@ use session::{Session, VaultFile};
 
 use crate::backup::build_backup_bundle;
 use crate::limits::BACKUP_KEEP_MAX;
-use crate::{now_ms, write_atomic};
+use crate::{ensure_private_dir, now_ms, write_atomic};
 
 const ROLLING_EXT: &str = ".zpbackup";
 
@@ -47,7 +47,7 @@ pub fn write_rolling_backup(
     if keep == 0 || keep > BACKUP_KEEP_MAX {
         anyhow::bail!("rolling backup retention out of range");
     }
-    std::fs::create_dir_all(dir)?;
+    ensure_private_dir(dir)?;
     let bundle = build_backup_bundle(base, session, file, name)?;
     let prefix = vault_prefix(session.vault_id());
     let stamp = now_ms();

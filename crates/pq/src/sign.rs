@@ -36,6 +36,12 @@ pub const INVITE_CTX: &[u8] = b"zebrapass/invitation/v1";
 pub const P2P_AUTH_CTX: &[u8] = b"zebrapass/p2p-auth/v1";
 /// Signing context of a device's signed list of addresses it can be reached at.
 pub const PEER_CTX: &[u8] = b"zebrapass/peer-record/v1";
+/// Signing context for mutual server-to-server mesh channel authentication.
+pub const MESH_AUTH_CTX: &[u8] = b"zebrapass/zsync-mesh-auth/v1";
+/// Signing context for self-certifying personal sync repository anchors.
+pub const PERSONAL_REPO_CTX: &[u8] = b"zebrapass/zsync-personal-repo/v1";
+/// Signing context for self-certifying shared sync repository proofs.
+pub const SHARED_REPO_CTX: &[u8] = b"zebrapass/zsync-shared-repo/v1";
 /// ML-DSA-65 seed length.
 pub const SYNC_SEED_LEN: usize = 32;
 /// ML-DSA-65 verifying key length.

@@ -153,17 +153,22 @@ pub enum Outcome {
 pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
     let outcome = match op {
         Op::Write { id, doc } => {
-            Outcome::Saved(write_record(&mut vault.session, &mut vault.file, id, &doc)?)
+            let saved = write_record(&mut vault.session, &mut vault.file, id, &doc)?;
+            record_local_revisions(vault);
+            Outcome::Saved(saved)
         }
         Op::Delete(id) => {
             delete_record(&mut vault.session, &mut vault.file, id)?;
+            record_local_revisions(vault);
             Outcome::Deleted(id)
         }
         Op::RestoreRevision(id, revision) => {
             let new = restore_revision(&mut vault.session, &mut vault.file, id, revision)?;
+            record_local_revisions(vault);
             Outcome::Restored(id, new)
         }
         Op::ClearHistory => {
+            record_local_revisions(vault);
             clear_history(&mut vault.session, &mut vault.file)?;
             Outcome::HistoryCleared
         }
@@ -214,29 +219,19 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
             )?;
             Outcome::PinChanged
         }
-        Op::RemoveWrap(factor) => {
-            match factor {
-                FactorRef::Device(id) => {
-                    remove_chip_unlock(&mut vault.session, &mut vault.file, &id)?;
-                    device::forget(&vault.paths, &id);
-                }
-                FactorRef::HwKey(id) => {
-                    remove_prf_unlock(&mut vault.session, &mut vault.file, &id)?;
-                }
-            }
-            Outcome::FactorRemoved
-        }
+        Op::RemoveWrap(factor) => remove_wrap(vault, factor)?,
         Op::Rotate(rotation) => rotate(vault, &rotation)?,
         Op::DropRecovery => {
             drop_recovery_wrap(&mut vault.session, &mut vault.file)?;
+            local::clear_master_grant(&vault.paths);
             Outcome::RecoveryDropped
         }
         Op::Health => return Ok(Outcome::Health(Box::new(health(vault)?))),
-        Op::Import(records) => Outcome::Imported(import::into_session(
-            &mut vault.session,
-            &mut vault.file,
-            records,
-        )?),
+        Op::Import(records) => {
+            let merged = import::into_session(&mut vault.session, &mut vault.file, records)?;
+            record_local_revisions(vault);
+            Outcome::Imported(merged)
+        }
         Op::ExportBackup(dest) => {
             export_backup_file(
                 &dest,
@@ -250,6 +245,19 @@ pub fn apply(vault: &mut Vault, op: Op) -> anyhow::Result<Outcome> {
     };
     vault.persist()?;
     Ok(outcome)
+}
+
+fn remove_wrap(vault: &mut Vault, factor: FactorRef) -> anyhow::Result<Outcome> {
+    match factor {
+        FactorRef::Device(id) => {
+            remove_chip_unlock(&mut vault.session, &mut vault.file, &id)?;
+            device::forget(&vault.paths, &id);
+        }
+        FactorRef::HwKey(id) => {
+            remove_prf_unlock(&mut vault.session, &mut vault.file, &id)?;
+        }
+    }
+    Ok(Outcome::FactorRemoved)
 }
 
 /// Replace the password wrap after checking the current password; the
@@ -320,7 +328,18 @@ fn rotate(vault: &mut Vault, rotation: &Rotation) -> anyhow::Result<Outcome> {
         )?,
         None => rotate_vault_key(&mut vault.session, &mut vault.file, &creds)?,
     }
-    if let Some(identity) = old_identity {
+    if let Some(mut identity) = old_identity {
+        let _ = identity.upgrade(rotation.phrase.seed());
+        if let Some(sid) = identity.personal_storage_id()
+            && let Ok(grant) = local::seal_master_grant(
+                rotation.phrase.seed(),
+                &sid,
+                vault.session.vault_id(),
+                &vault.session.reopen_key(),
+            )
+        {
+            let _ = local::save_master_grant(&vault.paths, &grant);
+        }
         identity.save(
             &vault.paths.sync_identity(),
             &vault.session.sync_identity_key()?,
@@ -334,6 +353,32 @@ fn rotate(vault: &mut Vault, rotation: &Rotation) -> anyhow::Result<Outcome> {
         )?;
     }
     Ok(Outcome::Rotated(rotation.revoke.is_some()))
+}
+
+fn record_local_revisions(vault: &Vault) {
+    let Ok(key) = vault.session.sync_identity_key() else {
+        return;
+    };
+    let Ok(mut identity) = local::SyncIdentity::load(&vault.paths.sync_identity(), &key) else {
+        return;
+    };
+    let mut changed = false;
+    for entry in session::frontier(&vault.session).unwrap_or_default() {
+        if identity
+            .last_seen()
+            .get(entry.record_id)
+            .is_none_or(|r| entry.revision > r)
+            && identity
+                .last_seen_mut()
+                .note(entry.record_id, entry.revision)
+                .is_ok()
+        {
+            changed = true;
+        }
+    }
+    if changed {
+        let _ = identity.save(&vault.paths.sync_identity(), &key);
+    }
 }
 
 /// A wrong current password would otherwise be re-sealed or replaced.

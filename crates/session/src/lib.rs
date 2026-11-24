@@ -26,9 +26,9 @@ mod wraps_rot;
 
 pub use aead::BodyAlg;
 pub use attest::{
-    Attestation, FrontierEntry, MAX_ATTESTED_FRAME, Reconcile, Trust, TrustedAccount,
-    accept_revision, attest_latest, frontier, latest_frame, plain_digest, reconcile,
-    verify_snapshot,
+    Attestation, FrontierEntry, MAX_ATTESTED_FRAME, MAX_PEER_REVISION_JUMP, MAX_SAFE_REVISION,
+    Reconcile, Trust, TrustedAccount, accept_revision, attest_latest, frontier, latest_frame,
+    plain_digest, reconcile, verify_snapshot,
 };
 pub use container::VaultFile;
 pub use create::{Session, create, fresh_device_id};
@@ -39,7 +39,7 @@ pub use devices::{
 pub use directory::{ChipFactor, Factor, WrapDirectory, wrap_directory};
 pub use error::{Seen, SessionError};
 pub use kdf::KdfProfile;
-pub use peer_frame::accept_peer_frame;
+pub use peer_frame::{accept_peer_frame, accept_peer_frame_seen};
 pub use peers::{MAX_HINT_LEN, MAX_HINTS, PEER_MAX_AGE_MS, PeerRecord};
 pub use pq::{
     DEVICE_CERT_CTX, PEER_CTX, REVISION_CTX, REVOKE_CTX, SYNC_CTX, SYNC_SEED_LEN, SYNC_SIG_LEN,

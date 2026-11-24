@@ -26,7 +26,12 @@ pub use p2p::{
 };
 pub use profile::KdfProfile;
 pub use zsync::{
-    INFO_BACKUP_COMMIT, INFO_BACKUP_SEAL, INFO_PERSONAL_REKEY, INFO_SHARED_STORAGE,
-    INFO_ZSYNC_ENVELOPE, INFO_ZSYNC_RELAY_SLOT, backup_keys, personal_envelope_key,
-    personal_rekey_key, shared_envelope_key, shared_storage_id, storage_id, zsync_relay_slot,
+    INFO_BACKUP_COMMIT, INFO_BACKUP_SEAL, INFO_PERSONAL_REKEY, INFO_PERSONAL_STORAGE,
+    INFO_SHARED_REKEY, INFO_SHARED_STORAGE, INFO_ZSYNC_ENVELOPE, INFO_ZSYNC_MASTER_GRANT,
+    INFO_ZSYNC_PERSONAL_ROOT, INFO_ZSYNC_PERSONAL_SID, INFO_ZSYNC_RELAY_AUTH,
+    INFO_ZSYNC_RELAY_SLOT, INFO_ZSYNC_SHARED_REPO_SIGN, INFO_ZSYNC_SHARED_SID,
+    INFO_ZSYNC_VK_ENVELOPE, backup_keys, personal_envelope_key, personal_rekey_key,
+    personal_storage_id_from_vk, shared_envelope_key, shared_rekey_key, shared_repo_sign_seed,
+    shared_storage_id, shared_storage_id_from_vk, storage_id, zsync_master_grant_key,
+    zsync_personal_root_seed, zsync_relay_auth_key, zsync_relay_slot, zsync_vk_envelope_key,
 };

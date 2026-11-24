@@ -5,22 +5,21 @@ use std::path::Path;
 use std::sync::Arc;
 
 use local::{
-    PERSONAL_DEVICE_MAGIC, PersonalDeviceEntry, SyncIdentity, decode_personal_head,
-    load_personal_entries, open_personal_rekey, save_personal_entries, seal_personal_rekey,
-    write_rolling_backup,
+    PERSONAL_DEVICE_MAGIC, PersonalDeviceEntry, SyncIdentity, save_master_grant,
+    seal_personal_rekey, write_rolling_backup,
 };
-use session::{VaultFile, check_seen, unlock_with_key};
-use subtle::ConstantTimeEq;
+use secret::Secret;
 use zeroize::Zeroizing;
-use zsync::{PulledPersonal, RepoKind, WorkerEvent};
+use zsync::{PulledPersonal, RepoKind, WorkerEvent, wraps_tag};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::info::VaultInfo;
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::zsync::{PersonalQueue, ZSyncMsg, ZebraSync};
-use crate::app::zsync_shared::{merge_local_records_into, preserve_local_chip_wrap};
+use crate::app::zsync_merge::{SnapshotOutcome, try_apply_snapshot_to_vault};
 use crate::ui::widgets::toast::Tone;
 use crate::vault::create::unix_ms;
+use crate::vault::factors::presence;
 use crate::vault::ops::FactorRef;
 
 impl Unlocked {
@@ -156,6 +155,11 @@ impl Unlocked {
                     pulled,
                     initial_check,
                 } => self.apply_zsync_personal(pulled, initial_check, ctx),
+                ZSyncMsg::PersonalFailed {
+                    err,
+                    rekeys,
+                    force_head,
+                } => self.record_personal_failure(err, rekeys, force_head),
                 ZSyncMsg::SharedReconciled { vault_id, pulled } => {
                     self.apply_zsync_shared(vault_id, pulled, ctx);
                 }
@@ -172,6 +176,39 @@ impl Unlocked {
         }
     }
 
+    fn record_personal_failure(
+        &mut self,
+        err: String,
+        rekeys: Vec<(u64, [u8; 16], Vec<u8>)>,
+        force_head: bool,
+    ) {
+        if let Some(zsync) = self.zsync.as_deref_mut()
+            && !rekeys.is_empty()
+        {
+            zsync.pending_rekeys.extend(rekeys);
+        }
+        let rerun_force = self
+            .zsync
+            .as_ref()
+            .and_then(|zsync| match zsync.personal_queue {
+                PersonalQueue::Running {
+                    dirty: true,
+                    force_head: qf,
+                } => Some(qf || force_head),
+                _ if force_head => Some(true),
+                _ => None,
+            });
+        self.record_zsync_error(err);
+        if let (Some(fh), Some(vault), Some(zsync)) = (
+            rerun_force,
+            self.vault.as_deref(),
+            self.zsync.as_deref_mut(),
+        ) && zsync.personal_queue == PersonalQueue::Idle
+        {
+            zsync.trigger_reconcile_personal(vault, fh, false);
+        }
+    }
+
     fn record_zsync_error(&mut self, err: String) {
         if let Some(p2p) = self.p2p.as_deref_mut() {
             p2p.log.push_line(format!("zsync // {err}"));
@@ -180,14 +217,20 @@ impl Unlocked {
             zsync.last_error = Some(err);
             let prev = zsync.personal_queue;
             zsync.personal_queue = PersonalQueue::Idle;
-            matches!(prev, PersonalQueue::Running { dirty: true, .. })
+            match prev {
+                PersonalQueue::Running {
+                    dirty: true,
+                    force_head,
+                } => Some(force_head),
+                _ => None,
+            }
         } else {
-            false
+            None
         };
-        if rerun
-            && let (Some(vault), Some(zsync)) = (self.vault.as_deref(), self.zsync.as_deref_mut())
+        if let (Some(fh), Some(vault), Some(zsync)) =
+            (rerun, self.vault.as_deref(), self.zsync.as_deref_mut())
         {
-            zsync.trigger_reconcile_personal(vault, false, false);
+            zsync.trigger_reconcile_personal(vault, fh, false);
         }
     }
 
@@ -220,37 +263,63 @@ impl Unlocked {
         ctx: &mut Ctx,
     ) {
         let (prev_head_epoch, queue_after) = if let Some(zsync) = self.zsync.as_deref_mut() {
-            let prev_epoch = zsync.head_epoch;
-            zsync.head_epoch = zsync.head_epoch.max(pulled.head_epoch);
+            let prev_ep = zsync.head_epoch;
             zsync.last_sync_ms = Some(unix_ms());
             zsync.last_error = None;
-            let prev = zsync.personal_queue;
+            let prev_q = zsync.personal_queue;
             zsync.personal_queue = PersonalQueue::Idle;
-            (prev_epoch, prev)
+            (prev_ep, prev_q)
         } else {
             (0, PersonalQueue::Idle)
         };
 
         let new_peers = self.ingest_personal_control(&pulled, ctx);
-        let rec_frames: Vec<Vec<u8>> = pulled
-            .frames
+        let PulledPersonal {
+            snapshot,
+            master_grant,
+            adopted_vk,
+            head_epoch: pulled_epoch,
+            frames,
+            rekeys,
+            ..
+        } = pulled;
+        let rec_frames: Vec<Vec<u8>> = frames
             .into_iter()
             .filter(|raw| !raw.starts_with(&PERSONAL_DEVICE_MAGIC))
             .map(|raw| raw.to_vec())
             .collect();
 
+        let had_no_snapshot = snapshot.is_none();
+        let mut same_head = false;
         let mut need_push_back = false;
-        let upgraded = match pulled.snapshot {
-            Some(snap) => self.maybe_adopt_personal_snapshot(
+        let upgraded = snapshot.is_some_and(|snap| {
+            self.maybe_adopt_personal_snapshot(
                 snap,
                 prev_head_epoch,
-                &pulled.rekeys,
+                adopted_vk.as_ref().map(|(_, vk)| vk),
+                &rekeys,
                 &rec_frames,
-                &mut need_push_back,
-            ),
-            None => false,
-        };
+                (&mut same_head, &mut need_push_back),
+            )
+        });
+        if (upgraded || same_head || had_no_snapshot)
+            && let Some(zsync) = self.zsync.as_deref_mut()
+        {
+            zsync.head_epoch = zsync.head_epoch.max(pulled_epoch);
+        }
         if upgraded {
+            if let Some(vault) = self.vault.as_deref() {
+                if let Some(grant) = master_grant.as_deref()
+                    && presence(&vault.directory, None).recovery
+                {
+                    let _ = save_master_grant(&vault.paths, grant);
+                }
+                if let Some(zsync) = self.zsync.as_deref_mut()
+                    && let Ok(wtag) = wraps_tag(vault.file.as_bytes())
+                {
+                    zsync.last_wraps_tag = wtag;
+                }
+            }
             self.refresh();
             ctx.toast(Tone::Info, "Synced updated vault from another device.");
             ctx.redraw();
@@ -350,89 +419,46 @@ impl Unlocked {
 
     fn maybe_adopt_personal_snapshot(
         &mut self,
-        (snap_bytes, head_bytes, head_epoch): zsync::DecryptedSnapshot,
+        snap: zsync::DecryptedSnapshot,
         prev_head_epoch: u64,
+        adopted_vk: Option<&Secret<[u8; 32]>>,
         rekeys: &[(u64, Zeroizing<Vec<u8>>)],
         rec_frames: &[Vec<u8>],
-        need_push_back: &mut bool,
+        (same_head, need_push_back): (&mut bool, &mut bool),
     ) -> bool {
         let (Some(vault), Some(identity)) = (self.vault.as_deref_mut(), self.identity.clone())
         else {
             return false;
         };
-        let Ok((head_vid, head_commit, head_vault_gen)) = decode_personal_head(&head_bytes) else {
-            return false;
-        };
-        if !bool::from(head_vid.ct_eq(vault.session.vault_id())) {
-            return false;
-        }
-        let mut file = VaultFile::new(snap_bytes.to_vec());
-        let Ok(parsed) = file.parse() else {
-            return false;
-        };
-        if !bool::from(parsed.commit.ct_eq(&head_commit)) || parsed.generation != head_vault_gen {
-            return false;
-        }
-        if bool::from(vault.session.commit_tag().ct_eq(&parsed.commit)) {
-            return false;
-        }
-        let Some(dev_id) = identity.device_id() else {
-            return false;
-        };
-        let mut unlocked_via_rekey = false;
-        let mut candidate = unlock_with_key(&file, &vault.session.reopen_key(), dev_id).ok();
-        if candidate.is_none() {
-            for (rgen, blob) in rekeys {
-                if let Ok(vk_new) =
-                    open_personal_rekey(identity.share_keys(), &dev_id, &head_vid, *rgen, blob)
-                    && let Ok(sess) = unlock_with_key(&file, &vk_new, dev_id)
-                {
-                    candidate = Some(sess);
-                    unlocked_via_rekey = true;
-                    break;
+        let outcome = try_apply_snapshot_to_vault(
+            vault,
+            &identity,
+            snap,
+            prev_head_epoch,
+            adopted_vk,
+            rekeys,
+            rec_frames,
+        );
+        match outcome {
+            SnapshotOutcome::Rejected => false,
+            SnapshotOutcome::SameHead => {
+                *same_head = true;
+                false
+            }
+            SnapshotOutcome::Adopted {
+                updated_id,
+                need_push_back: push_back,
+            } => {
+                *need_push_back = push_back;
+                if let Some(arc) = updated_id {
+                    self.identity = Some(Arc::clone(&arc));
+                    if let Some(zsync) = self.zsync.as_deref_mut() {
+                        zsync.identity = arc;
+                    }
                 }
+                self.info = VaultInfo::from(&*vault);
+                true
             }
         }
-        let Some(mut new_session) = candidate else {
-            return false;
-        };
-        if !unlocked_via_rekey {
-            let seen = vault.meta.seen.map(|c| session::Seen {
-                generation: c.generation,
-                commit_tag: c.commit_tag,
-            });
-            if head_epoch <= prev_head_epoch && check_seen(&new_session, seen).is_err() {
-                return false;
-            }
-        }
-        let preserved = merge_local_records_into(&vault.session, &mut new_session, &mut file);
-        for frame in rec_frames {
-            let _ = session::accept_peer_frame(&mut new_session, &mut file, frame);
-        }
-        let readded_chip = preserve_local_chip_wrap(vault, &identity, &mut new_session, &mut file);
-        *need_push_back = preserved || readded_chip;
-        let old_id = vault
-            .session
-            .sync_identity_key()
-            .ok()
-            .and_then(|k| SyncIdentity::load(&vault.paths.sync_identity(), &k).ok());
-        let old_peers = vault
-            .session
-            .personal_peers_key()
-            .ok()
-            .and_then(|k| load_personal_entries(&vault.paths.peers_store(), &k, true).ok());
-        vault.session = new_session;
-        vault.file = file;
-        if vault.persist().is_err() {
-            return false;
-        }
-        if let (Some(id), Ok(key)) = (old_id, vault.session.sync_identity_key()) {
-            let _ = id.save(&vault.paths.sync_identity(), &key);
-        }
-        if let (Some(peers), Ok(key)) = (old_peers, vault.session.personal_peers_key()) {
-            let _ = save_personal_entries(&vault.paths.peers_store(), &key, &peers);
-        }
-        self.info = VaultInfo::from(&*vault);
-        true
     }
 }

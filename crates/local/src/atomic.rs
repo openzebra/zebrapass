@@ -8,6 +8,32 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+/// Ensure `dir` exists, setting mode `0700` on any newly created directory
+/// components on Unix without altering pre-existing system directories.
+///
+/// # Errors
+///
+/// `write failed` when creating a missing directory or setting its mode fails.
+pub fn ensure_private_dir(dir: &Path) -> anyhow::Result<()> {
+    let mut missing = Vec::new();
+    let mut cur = Some(dir);
+    while let Some(path) = cur {
+        if path.as_os_str().is_empty() || path.exists() {
+            break;
+        }
+        missing.push(path);
+        cur = path.parent();
+    }
+    for path in missing.into_iter().rev() {
+        match fs::create_dir(path) {
+            Ok(()) => set_private_dir_mode(path)?,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => anyhow::bail!("write failed"),
+        }
+    }
+    Ok(())
+}
+
 /// Replace `path` with `bytes` atomically.
 ///
 /// The file mode is `0600` on Unix. A best-effort `fsync` on the
@@ -24,7 +50,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .ok_or_else(|| anyhow::anyhow!("write failed"))?;
-    fs::create_dir_all(dir).map_err(|_| anyhow::anyhow!("write failed"))?;
+    ensure_private_dir(dir)?;
     let temp = dir.join(temp_name(path)?);
     let write = || -> anyhow::Result<()> {
         let mut file = fs::File::create(&temp).map_err(|_| anyhow::anyhow!("write failed"))?;
@@ -79,6 +105,18 @@ fn set_private_mode(file: &fs::File) -> anyhow::Result<()> {
 
 #[cfg(not(unix))]
 fn set_private_mode(_file: &fs::File) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_dir_mode(dir: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+        .map_err(|_| anyhow::anyhow!("write failed"))
+}
+
+#[cfg(not(unix))]
+fn set_private_dir_mode(_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 

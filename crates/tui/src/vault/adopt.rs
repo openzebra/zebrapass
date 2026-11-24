@@ -122,6 +122,8 @@ pub struct AdoptRequest {
     pub manual: Vec<String>,
     /// Addresses on this machine may be dialed.
     pub loopback: bool,
+    /// Loopback or private-network `zsync` endpoints are permitted.
+    pub allow_private: bool,
     /// `zsync` server endpoints (`host[:port]`) configured on CLI or settings.
     pub sync_servers: Vec<String>,
     /// Optional additional CA certificate PEM bytes.
@@ -161,9 +163,11 @@ pub fn adopt(request: &AdoptRequest) -> Result<Box<Vault>, UnlockError> {
 }
 
 fn adopt_from_zsync(request: &AdoptRequest) -> Result<Option<Box<Vault>>, UnlockError> {
-    let Ok(client) =
-        zsync::ZebraClient::new(&request.sync_servers, request.extra_ca_pem.as_deref(), true)
-    else {
+    let Ok(client) = zsync::ZebraClient::new(
+        &request.sync_servers,
+        request.extra_ca_pem.as_deref(),
+        request.allow_private,
+    ) else {
         return Ok(None);
     };
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -171,6 +175,9 @@ fn adopt_from_zsync(request: &AdoptRequest) -> Result<Option<Box<Vault>>, Unlock
         .build()
         .map_err(|_| UnlockError::Io)?;
     let input = zsync::PersonalStateInput {
+        vk: None,
+        master_seed: request.held.seed.as_ref().map(Secret::expose),
+        master_grant: None,
         vault_bytes: &[],
         head_meta_plain: &[],
         generation: 0,
@@ -208,6 +215,7 @@ fn adopt_from_zsync(request: &AdoptRequest) -> Result<Option<Box<Vault>>, Unlock
             &pulled.revocations,
             None,
         )?;
+        persist_adopted_grant(&vault, request, pulled.master_grant.as_deref());
         apply_sync_prefs(&mut vault, request)?;
         return Ok(Some(vault));
     }
@@ -257,8 +265,28 @@ pub fn adopt_fetched(
     address: &str,
 ) -> Result<Box<Vault>, UnlockError> {
     let mut vault = adopt_fetched_with_frames(request, fetched, &[], &[], &[], Some(address))?;
+    persist_adopted_grant(&vault, request, None);
     apply_sync_prefs(&mut vault, request)?;
     Ok(vault)
+}
+
+fn persist_adopted_grant(vault: &Vault, request: &AdoptRequest, pulled_grant: Option<&[u8]>) {
+    if !presence(&vault.directory, None).recovery {
+        return;
+    }
+    if let (Some(seed), Some(sid)) = (
+        request.held.seed.as_ref(),
+        request.identity.personal_storage_id(),
+    ) && let Ok(grant) = local::seal_master_grant(
+        seed.expose(),
+        &sid,
+        vault.session.vault_id(),
+        &vault.session.reopen_key(),
+    ) {
+        let _ = local::save_master_grant(&vault.paths, &grant);
+    } else if let Some(grant) = pulled_grant {
+        let _ = local::save_master_grant(&vault.paths, grant);
+    }
 }
 
 fn adopt_fetched_with_frames(
@@ -317,6 +345,11 @@ fn adopt_fetched_with_frames(
         } else {
             let _ = session::accept_peer_frame(&mut session, &mut file, raw);
         }
+    }
+    for entry in session::frontier(&session).unwrap_or_default() {
+        let _ = next_identity
+            .last_seen_mut()
+            .note(entry.record_id, entry.revision);
     }
     session
         .set_origin_device(device_id)

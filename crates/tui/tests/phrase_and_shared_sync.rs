@@ -27,15 +27,18 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use record::{Document, TAG_TITLE};
+use secret::Secret;
+use session::{SYNC_VK_LEN, sync_verifying_key};
 use tui::App;
 use tui::app::ctx::Task;
 use tui::app::flows::home::Filter;
 use tui::app::flows::share::{ShareState, Step};
 use tui::app::flows::unlocked::View;
 use tui::app::screen::Screen;
+use tui::cli::Flags;
 use tui::vault::ops::{Op, Rotation};
 use zeroize::Zeroizing;
-use zsync::{ZebraServerConfig, ZebraServerHandle, start_server};
+use zsync::{MeshAuthConfig, MeshPeer, ZebraServerConfig, ZebraServerHandle, start_server};
 
 const PIN_B: &str = "482916";
 
@@ -53,7 +56,9 @@ impl TestServer {
         ca_pem: &[u8],
         cert_pem: &[u8],
         key_pem: &[u8],
-        peers: Vec<Box<str>>,
+        mesh_seed: [u8; 32],
+        allowed_vks: Vec<[u8; SYNC_VK_LEN]>,
+        peers: Vec<MeshPeer>,
     ) -> Self {
         let dir = common::temp_dir(&format!("srv-{tag}"));
         let ca_path = dir.join("ca.crt");
@@ -64,16 +69,21 @@ impl TestServer {
             .enable_all()
             .build()
             .unwrap();
+        let mesh = MeshAuthConfig {
+            seed: Secret::new(mesh_seed),
+            peers,
+            allowed_vks,
+        };
         let handle = rt
             .block_on(start_server(ZebraServerConfig {
                 listen: "127.0.0.1:0".parse().unwrap(),
                 cert_pem: cert_pem.to_vec(),
-                key_pem: key_pem.to_vec(),
+                key_pem: Secret::new(key_pem.to_vec()),
                 extra_ca_pem: Some(ca_pem.to_vec()),
                 data_dir: dir.join("data"),
-                peers,
+                mesh: Some(mesh),
                 mesh_interval: Duration::from_millis(120),
-                allow_loopback: true,
+                allow_private: true,
             }))
             .unwrap();
         let endpoint = handle.endpoint.to_string();
@@ -107,23 +117,50 @@ impl TestCluster {
     fn start(tag: &str) -> Self {
         let pki_dir = common::temp_dir(&format!("pki-{tag}"));
         let (ca_pem, cert_pem, key_pem) = generate_test_pki(&pki_dir, "DNS:localhost,IP:127.0.0.1");
-        let ru_hub = TestServer::start("ru", &ca_pem, &cert_pem, &key_pem, Vec::new());
+        let seed_alpha = [0x11u8; 32];
+        let seed_bravo = [0x22u8; 32];
+        let seed_delta = [0x33u8; 32];
+        let vk_alpha: [u8; SYNC_VK_LEN] =
+            sync_verifying_key(&seed_alpha).unwrap().try_into().unwrap();
+        let vk_bravo: [u8; SYNC_VK_LEN] =
+            sync_verifying_key(&seed_bravo).unwrap().try_into().unwrap();
+        let vk_delta: [u8; SYNC_VK_LEN] =
+            sync_verifying_key(&seed_delta).unwrap().try_into().unwrap();
+
+        let ru_hub = TestServer::start(
+            "ru",
+            &ca_pem,
+            &cert_pem,
+            &key_pem,
+            seed_alpha,
+            vec![vk_bravo, vk_delta],
+            Vec::new(),
+        );
+        let peer_alpha = MeshPeer {
+            endpoint: ru_hub.endpoint.clone().into_boxed_str(),
+            peer_vk: Box::new(vk_alpha),
+        };
         let eu_mirror = TestServer::start(
             "eu",
             &ca_pem,
             &cert_pem,
             &key_pem,
-            vec![ru_hub.endpoint.as_str().into()],
+            seed_bravo,
+            vec![vk_alpha, vk_delta],
+            vec![peer_alpha.clone()],
         );
+        let peer_bravo = MeshPeer {
+            endpoint: eu_mirror.endpoint.clone().into_boxed_str(),
+            peer_vk: Box::new(vk_bravo),
+        };
         let zh_node = TestServer::start(
             "zh",
             &ca_pem,
             &cert_pem,
             &key_pem,
-            vec![
-                ru_hub.endpoint.as_str().into(),
-                eu_mirror.endpoint.as_str().into(),
-            ],
+            seed_delta,
+            vec![vk_alpha, vk_bravo],
+            vec![peer_alpha, peer_bravo],
         );
         Self {
             srv_ru: ru_hub,
@@ -252,6 +289,7 @@ fn generate_test_pki(dir: &Path, san: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 
 fn app_with_server(base: &Path, srv: &TestServer) -> App {
     let mut cfg = common::config(base);
+    cfg.flags = cfg.flags.with(Flags::ALLOW_PRIVATE_SYNC, true);
     cfg.sync_servers = vec![srv.endpoint.clone().into_boxed_str()];
     cfg.extra_ca = Some(srv.ca_path.clone());
     common::app_with(&cfg, base, common::CAPS)

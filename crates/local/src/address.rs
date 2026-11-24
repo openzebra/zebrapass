@@ -32,6 +32,19 @@ pub const fn never_dialable(ip: IpAddr) -> bool {
     }
 }
 
+/// Whether `ip` is loopback, RFC 1918 private, RFC 6598 CGNAT (`100.64.0.0/10`),
+/// or IPv6 unique-local (`fc00::/7`). Pass an address in canonical form.
+#[must_use]
+pub const fn is_private_or_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [first, second, ..] = v4.octets();
+            v4.is_loopback() || v4.is_private() || (first == 100 && (second & 0xC0) == 64)
+        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local(),
+    }
+}
+
 /// Validate the address this device advertises: a socket address (`ip:port`,
 /// `[ipv6]:port`) with a port, that is an address another device could be
 /// asked to dial. Returns it in canonical form.

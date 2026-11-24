@@ -14,7 +14,10 @@
 use std::path::Path;
 
 use frame::{ALG_CASCADE, FrameMeta, KIND_REVISION, seal};
-use record::{Document, TAG_SYNC_OWN_CERT, TAG_SYNC_PEER_MIN, TAG_SYNC_ROOT_VK, ValueType};
+use record::{
+    Document, TAG_SYNC_OWN_CERT, TAG_SYNC_PEER_MIN, TAG_SYNC_PERSONAL_ANCHOR, TAG_SYNC_ROOT_VK,
+    ValueType,
+};
 use secret::Secret;
 use session::{
     DeviceCert, DeviceSignKey, Revocation, SYNC_SEED_LEN, SYNC_VK_LEN, issue_device_cert,
@@ -26,12 +29,14 @@ use crate::last_seen::LastSeen;
 use crate::limits::PEERS_MAX;
 use crate::revocations::Revocations;
 use crate::share_keys::{SHARE_KEYS_LEN, ShareKeys, SharePublics};
+use crate::zsync_crypto::PersonalRepoAnchor;
 
 /// Signing identity of this device for one vault.
 #[derive(Debug)]
 pub struct SyncIdentity {
     sign_seed: Secret<[u8; SYNC_SEED_LEN]>,
     account_gate: Option<Secret<[u8; GATE_LEN]>>,
+    personal_anchor: Option<Box<PersonalRepoAnchor>>,
     share: ShareKeys,
     root_vk: Box<[u8; SYNC_VK_LEN]>,
     devices: Vec<DeviceCert>,
@@ -39,10 +44,11 @@ pub struct SyncIdentity {
     last_seen: LastSeen,
 }
 
-/// The secret parts of an identity: signing seed, account gate, invitation keys.
+/// The secret parts of an identity: signing seed, account gate, personal anchor, invitation keys.
 type SecretParts = (
     Secret<[u8; SYNC_SEED_LEN]>,
     Option<Secret<[u8; GATE_LEN]>>,
+    Option<Box<PersonalRepoAnchor>>,
     ShareKeys,
 );
 
@@ -90,10 +96,12 @@ impl SyncIdentity {
             not_after_ms,
             u64::from_le_bytes(serial),
         )?;
+        let anchor = PersonalRepoAnchor::issue(master_seed, client_id, &root_vk)?;
         Self::from_parts(
             (
                 sign_seed,
                 Some(kdf::account_gate_secret(master_seed)?),
+                Some(Box::new(anchor)),
                 ShareKeys::generate()?,
             ),
             root_vk,
@@ -104,7 +112,7 @@ impl SyncIdentity {
     }
 
     fn from_parts(
-        (sign_seed, account_gate, share): SecretParts,
+        (sign_seed, account_gate, personal_anchor, share): SecretParts,
         root_vk: Box<[u8; SYNC_VK_LEN]>,
         devices: Vec<DeviceCert>,
         revocations: Revocations,
@@ -115,9 +123,14 @@ impl SyncIdentity {
         if own.device_vk != own_vk || own.verify(&root_vk, 0).is_err() {
             anyhow::bail!("sync identity does not match its certificate");
         }
+        if let Some(anchor) = personal_anchor.as_deref() {
+            let sid = anchor.storage_id()?;
+            anchor.verify(&sid, &own.client_id, &root_vk)?;
+        }
         Ok(Self {
             sign_seed,
             account_gate,
+            personal_anchor,
             share,
             root_vk,
             devices,
@@ -133,11 +146,24 @@ impl SyncIdentity {
         self.account_gate.as_ref()
     }
 
-    /// Give an identity written before the gate secret existed its gate
-    /// secret, in place: the same signing key, certificates and invitation
-    /// keys. Only the account's phrase can do it, and it is checked first:
-    /// the root key derived from `master_seed` must be the one this identity
-    /// chains to. Returns `false` when there was nothing to add.
+    /// Self-certifying personal sync repository anchor, if enrolled/upgraded.
+    #[must_use]
+    pub fn personal_anchor(&self) -> Option<&PersonalRepoAnchor> {
+        self.personal_anchor.as_deref()
+    }
+
+    /// Self-certifying 512-bit personal sync repository `storage_id`, unlinked
+    /// from the public `ContactCard` `client_id`.
+    #[must_use]
+    pub fn personal_storage_id(&self) -> Option<[u8; 64]> {
+        self.personal_anchor
+            .as_deref()
+            .and_then(|anchor| anchor.storage_id().ok())
+    }
+
+    /// Give an identity written before the gate secret or personal anchor
+    /// existed its missing material in place: the same signing key,
+    /// certificates and invitation keys. Only the account's phrase can do it.
     ///
     /// # Errors
     ///
@@ -149,10 +175,17 @@ impl SyncIdentity {
         if !secret::ct_eq(&root_vk, &*self.root_vk) {
             anyhow::bail!("sync identity rejected");
         }
-        if self.account_gate.is_some() {
+        if self.account_gate.is_some() && self.personal_anchor.is_some() {
             return Ok(false);
         }
-        self.account_gate = Some(kdf::account_gate_secret(master_seed)?);
+        if self.account_gate.is_none() {
+            self.account_gate = Some(kdf::account_gate_secret(master_seed)?);
+        }
+        if self.personal_anchor.is_none() {
+            let own = self.devices.first().ok_or_else(corrupted)?;
+            let anchor = PersonalRepoAnchor::issue(master_seed, &own.client_id, &self.root_vk)?;
+            self.personal_anchor = Some(Box::new(anchor));
+        }
         Ok(true)
     }
 
@@ -290,6 +323,15 @@ impl SyncIdentity {
         let mut doc = Document::new();
         doc.set_data(TAG_SYNC_ROOT_VK, ValueType::Bytes, &*self.root_vk);
         doc.set_data(TAG_SYNC_OWN_CERT, ValueType::Bytes, &encode_cert(own_cert)?);
+        if self.account_gate.is_some()
+            && let Some(anchor) = self.personal_anchor.as_deref()
+        {
+            doc.set_data(
+                TAG_SYNC_PERSONAL_ANCHOR,
+                ValueType::Bytes,
+                &anchor.encode()?,
+            );
+        }
         for (cert, tag) in self.devices.iter().skip(1).zip(TAG_SYNC_PEER_MIN..) {
             doc.set_data(tag, ValueType::Bytes, &encode_cert(cert)?);
         }
@@ -359,6 +401,10 @@ impl SyncIdentity {
                 .ok_or_else(corrupted)?,
         );
         let own_cert = decode_cert(doc.data(TAG_SYNC_OWN_CERT)?.ok_or_else(corrupted)?)?;
+        let personal_anchor = doc
+            .data(TAG_SYNC_PERSONAL_ANCHOR)?
+            .map(|raw| PersonalRepoAnchor::decode(raw).map(Box::new))
+            .transpose()?;
         let mut devices = vec![own_cert];
         for tag in (TAG_SYNC_PEER_MIN..).take(PEERS_MAX) {
             let Some(bytes) = doc.data(tag)? else {
@@ -374,7 +420,7 @@ impl SyncIdentity {
             return Err(corrupted());
         }
         Self::from_parts(
-            (sign_seed, account_gate, share),
+            (sign_seed, account_gate, personal_anchor, share),
             root_vk,
             devices,
             Revocations::read(&doc)?,
@@ -402,63 +448,4 @@ pub fn upgrade_sync_identity(
         identity.save(path, key)?;
     }
     Ok(changed)
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
-
-    use super::SyncIdentity;
-
-    fn key() -> secret::Secret<[u8; 32]> {
-        secret::Secret::new([5; 32])
-    }
-
-    #[test]
-    fn the_gate_secret_is_kept_and_follows_the_seed() {
-        let dir = std::env::temp_dir().join(format!("zp-sid-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("sync.id");
-        let identity = SyncIdentity::enroll(&[7; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
-        identity.save(&path, &key()).unwrap();
-        let loaded = SyncIdentity::load(&path, &key()).unwrap();
-        let expected = kdf::account_gate_secret(&[7; 64]).unwrap();
-        assert_eq!(loaded.account_gate().unwrap().expose(), expected.expose());
-        let other = SyncIdentity::enroll(&[8; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
-        assert_ne!(
-            other.account_gate().unwrap().expose(),
-            expected.expose(),
-            "another phrase has another gate"
-        );
-    }
-
-    #[test]
-    fn upgrading_adds_the_gate_only_for_the_accounts_own_phrase() {
-        let mut identity = SyncIdentity::enroll(&[7; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
-        identity.account_gate = None;
-        let before = identity.devices().to_vec();
-        let vk = identity.sign_key().verifying_key().unwrap();
-        assert!(identity.upgrade(&[8; 64]).is_err(), "another phrase");
-        assert!(identity.account_gate().is_none());
-        assert!(identity.upgrade(&[7; 64]).unwrap());
-        let expected = kdf::account_gate_secret(&[7; 64]).unwrap();
-        assert_eq!(identity.account_gate().unwrap().expose(), expected.expose());
-        assert_eq!(identity.devices(), before.as_slice());
-        assert_eq!(identity.sign_key().verifying_key().unwrap(), vk);
-        assert!(!identity.upgrade(&[7; 64]).unwrap(), "nothing left to add");
-        assert!(identity.upgrade(&[8; 64]).is_err(), "still checked");
-    }
-
-    #[test]
-    fn an_identity_written_before_the_gate_existed_still_loads_without_one() {
-        let dir = std::env::temp_dir().join(format!("zp-sid-legacy-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("sync.id");
-        let mut identity = SyncIdentity::enroll(&[7; 64], &[1; 64], [2; 16], u64::MAX).unwrap();
-        identity.account_gate = None;
-        identity.save(&path, &key()).unwrap();
-        let loaded = SyncIdentity::load(&path, &key()).unwrap();
-        assert!(loaded.account_gate().is_none());
-        assert_eq!(loaded.devices().len(), 1);
-    }
 }

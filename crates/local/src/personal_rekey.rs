@@ -19,7 +19,7 @@ pub const PERSONAL_HEAD_LEN: usize = 56;
 pub const PERSONAL_DEVICE_MAGIC: [u8; 6] = *b"ZPDV\x00\x01";
 
 /// Magic header for hybrid P-256 + ML-KEM-768 personal vault-key rekey grants.
-const REKEY_MAGIC: [u8; 6] = *b"ZPRK\x00\x01";
+const REKEY_MAGIC: [u8; 6] = *b"ZPRK\x00\x02";
 
 const DOMAIN_DEVICE_ENTRY: &[u8] = b"brby/v1/personal-device-entry";
 const DOMAIN_REKEY: &[u8] = b"brby/v1/personal-rekey";
@@ -233,8 +233,9 @@ pub fn seal_personal_rekey(
     };
     let sealed = seal(&key, &meta, vk.expose())?;
     let sealed_len = u16::try_from(sealed.len())?;
-    let mut out = Vec::with_capacity(REKEY_MAGIC.len() + 65 + KEM_CT_LEN + 2 + sealed.len());
+    let mut out = Vec::with_capacity(REKEY_MAGIC.len() + 16 + 65 + KEM_CT_LEN + 2 + sealed.len());
     out.extend_from_slice(&REKEY_MAGIC);
+    out.extend_from_slice(vault_id);
     out.extend_from_slice(&eph_ec);
     out.extend_from_slice(&kem_ct);
     out.extend_from_slice(&sealed_len.to_be_bytes());
@@ -243,23 +244,24 @@ pub fn seal_personal_rekey(
 }
 
 /// Decapsulate a hybrid P-256 + ML-KEM-768 personal vault-key rekey grant for
-/// this device (`my_device`) at `generation`.
+/// `my_device` at `generation` without knowing `vault_id` ahead of time,
+/// returning `(vault_id, vk)`.
 ///
 /// # Errors
 ///
 /// Malformed grant, invalid key material, or AEAD authentication failure.
-pub fn open_personal_rekey(
+pub fn open_personal_rekey_any(
     keys: &ShareKeys,
     my_device: &[u8; 16],
-    vault_id: &[u8; 16],
     generation: u64,
     blob: &[u8],
-) -> anyhow::Result<Secret<[u8; 32]>> {
+) -> anyhow::Result<([u8; 16], Secret<[u8; 32]>)> {
     let mut reader = Reader::new(blob);
     let magic = reader.array::<6>()?;
     if !ct_eq(&magic, &REKEY_MAGIC) {
         return Err(corrupted());
     }
+    let vault_id = reader.array::<16>()?;
     let eph_ec = reader.array::<65>()?;
     let kem_ct = reader.array::<KEM_CT_LEN>()?;
     let sealed = reader.bytes_u16(MAX_REKEY_SEALED)?;
@@ -269,8 +271,8 @@ pub fn open_personal_rekey(
     let peer_ec = ec::decode_pub(&eph_ec)?;
     let ss_ec = Secret::new(ec::shared(&ec_sk, &peer_ec));
     let ss_kem = pq::decrypt_shared(keys.kem_seed().expose(), &kem_ct)?;
-    let transcript = rekey_transcript(vault_id, my_device, generation, &eph_ec, &kem_ct);
-    let key = kdf::personal_rekey_key(&ss_kem, &ss_ec, vault_id, &transcript)?;
+    let transcript = rekey_transcript(&vault_id, my_device, generation, &eph_ec, &kem_ct);
+    let key = kdf::personal_rekey_key(&ss_kem, &ss_ec, &vault_id, &transcript)?;
     let meta = frame::parse(sealed)?;
     if meta.alg != ALG_CASCADE
         || meta.record_id != REKEY_RECORD_ID
@@ -285,6 +287,26 @@ pub fn open_personal_rekey(
     }
     let mut vk = Secret::new([0u8; 32]);
     vk.expose_mut().copy_from_slice(plain.expose());
+    Ok((vault_id, vk))
+}
+
+/// Decapsulate a hybrid P-256 + ML-KEM-768 personal vault-key rekey grant for
+/// this device (`my_device`) at `generation`, verifying `vault_id`.
+///
+/// # Errors
+///
+/// Malformed grant, vault mismatch, invalid key material, or AEAD authentication failure.
+pub fn open_personal_rekey(
+    keys: &ShareKeys,
+    my_device: &[u8; 16],
+    vault_id: &[u8; 16],
+    generation: u64,
+    blob: &[u8],
+) -> anyhow::Result<Secret<[u8; 32]>> {
+    let (grant_vault_id, vk) = open_personal_rekey_any(keys, my_device, generation, blob)?;
+    if !ct_eq(&grant_vault_id, vault_id) {
+        anyhow::bail!("rekey grant rejected");
+    }
     Ok(vk)
 }
 

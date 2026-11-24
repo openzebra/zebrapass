@@ -15,10 +15,10 @@ use crate::wire::{
 };
 
 const DOMAIN_ENVELOPE_AD: &[u8] = b"brby/v3/zsync-ad";
-const DOMAIN_HEAD: &[u8] = b"brby/v3/zsync-head";
+const DOMAIN_HEAD: &[u8] = b"brby/v3/zsync-head-v2";
 const DOMAIN_RECORD: &[u8] = b"brby/v3/zsync-record";
 const DOMAIN_REKEY: &[u8] = b"brby/v3/zsync-rekey";
-const DOMAIN_WATCH: &[u8] = b"brby/v3/zsync-watch";
+const DOMAIN_WATCH: &[u8] = b"brby/v3/zsync-watch-v2";
 const DOMAIN_FRONTIER: &[u8] = b"brby/v3/zsync-frontier";
 
 /// Outer-envelope payload purpose byte bound into the Cascade AD.
@@ -28,11 +28,9 @@ pub enum EnvelopePurpose {
     PersonalHead = 1,
     PersonalSnapshot = 2,
     PersonalFrame = 3,
-    PersonalRekey = 4,
     SharedHead = 5,
     SharedSnapshot = 6,
     SharedFrame = 7,
-    SharedRekey = 8,
 }
 
 fn ad_origin(storage_id: &StorageId, purpose: EnvelopePurpose) -> [u8; 16] {
@@ -49,12 +47,7 @@ fn ad_origin(storage_id: &StorageId, purpose: EnvelopePurpose) -> [u8; 16] {
     origin
 }
 
-/// Seal `plaintext` into a PQ Cascade (`0xA005`) outer envelope bound to
-/// `(storage_id, purpose, seq)`.
-///
-/// # Errors
-///
-/// Entropy failure or frame sealing failure.
+/// Seal `plaintext` into a PQ Cascade (`0xA005`) outer envelope bound to `(storage_id, purpose, seq)`.
 pub fn seal_blob(
     key: &Secret<[u8; 32]>,
     storage_id: &StorageId,
@@ -74,10 +67,6 @@ pub fn seal_blob(
 }
 
 /// Verify AD metadata and open an outer Cascade (`0xA005`) envelope.
-///
-/// # Errors
-///
-/// Algorithm/purpose mismatch or AEAD authentication failure.
 pub fn open_blob(
     key: &Secret<[u8; 32]>,
     storage_id: &StorageId,
@@ -102,12 +91,25 @@ fn fixed_sig(sig: Vec<u8>) -> anyhow::Result<Box<[u8; SYNC_SIG_LEN]>> {
         .map_err(|_| anyhow!("unexpected signature length"))
 }
 
+fn master_grant_digest(grant: Option<&[u8]>) -> [u8; 33] {
+    let mut out = [0u8; 33];
+    if let Some(bytes) = grant {
+        out[0] = 1;
+        let digest: [u8; 32] = Sha256::digest(bytes).into();
+        if let Some((_, rest)) = out.split_at_mut_checked(1) {
+            rest.copy_from_slice(&digest);
+        }
+    }
+    out
+}
+
 fn head_msg(
     kind: RepoKind,
     storage_id: &StorageId,
     ver: &HeadVer,
     head_hash: &[u8; 32],
     snap_hash: &[u8; 32],
+    grant_digest: &[u8; 33],
 ) -> anyhow::Result<Vec<u8>> {
     frame_parts(&[
         DOMAIN_HEAD,
@@ -118,10 +120,11 @@ fn head_msg(
         &ver.origin_device,
         head_hash,
         snap_hash,
+        grant_digest,
     ])
 }
 
-/// Sign a [`SignedHead`] using `key`.
+/// Sign a [`SignedHead`] using `key`, binding `master_grant` into the signed digest.
 ///
 /// # Errors
 ///
@@ -133,15 +136,25 @@ pub fn sign_head(
     ver: HeadVer,
     head_meta: Vec<u8>,
     snapshot_env: Vec<u8>,
+    master_grant: Option<Vec<u8>>,
 ) -> anyhow::Result<SignedHead> {
     let head_hash: [u8; 32] = Sha256::digest(&head_meta).into();
     let snap_hash: [u8; 32] = Sha256::digest(&snapshot_env).into();
-    let msg = head_msg(kind, storage_id, &ver, &head_hash, &snap_hash)?;
+    let grant_digest = master_grant_digest(master_grant.as_deref());
+    let msg = head_msg(
+        kind,
+        storage_id,
+        &ver,
+        &head_hash,
+        &snap_hash,
+        &grant_digest,
+    )?;
     let sig = fixed_sig(sync_sign(key.seed(), SYNC_CTX, &msg)?)?;
     Ok(SignedHead {
         ver,
         head_meta,
         snapshot_env,
+        master_grant,
         signature: sig,
     })
 }
@@ -159,7 +172,15 @@ pub fn verify_head(
 ) -> anyhow::Result<()> {
     let head_hash: [u8; 32] = Sha256::digest(&head.head_meta).into();
     let snap_hash: [u8; 32] = Sha256::digest(&head.snapshot_env).into();
-    let msg = head_msg(kind, storage_id, &head.ver, &head_hash, &snap_hash)?;
+    let grant_digest = master_grant_digest(head.master_grant.as_deref());
+    let msg = head_msg(
+        kind,
+        storage_id,
+        &head.ver,
+        &head_hash,
+        &snap_hash,
+        &grant_digest,
+    )?;
     sync_verify(device_vk, SYNC_CTX, &msg, &*head.signature)
 }
 
@@ -355,17 +376,21 @@ pub fn sign_watch(
     device_id: [u8; 16],
     repos: Vec<(RepoKind, StorageId)>,
     cert_wire: Vec<u8>,
+    personal_anchor: Option<Vec<u8>>,
     root_vk: Option<Box<[u8; SYNC_VK_LEN]>>,
+    shared_proofs: Vec<Vec<u8>>,
 ) -> anyhow::Result<WatchSub> {
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| anyhow!("os entropy failed"))?;
     let mut sub = WatchSub {
-        device_id,
         timestamp_s: now_unix_secs(),
+        device_id,
         nonce,
         repos,
         cert_wire,
+        personal_anchor,
         root_vk,
+        shared_proofs,
         signature: Box::new([0u8; SYNC_SIG_LEN]),
     };
     let msg = watch_msg(&sub)?;
@@ -374,10 +399,6 @@ pub fn sign_watch(
 }
 
 /// Verify a [`WatchSub`] signature against `device_vk`.
-///
-/// # Errors
-///
-/// Bad signature.
 pub fn verify_watch(device_vk: &[u8; SYNC_VK_LEN], sub: &WatchSub) -> anyhow::Result<()> {
     let msg = watch_msg(sub)?;
     sync_verify(device_vk, SYNC_CTX, &msg, &*sub.signature)
@@ -416,10 +437,6 @@ fn frontier_msg(
 }
 
 /// Sign a [`RepoFrontier`] request for authenticated server queries.
-///
-/// # Errors
-///
-/// Entropy or signing failure.
 pub fn sign_frontier(
     key: &DeviceSignKey,
     f: &mut RepoFrontier,
@@ -440,10 +457,6 @@ pub fn sign_frontier(
 }
 
 /// Verify a signed [`RepoFrontier`] against `device_vk`.
-///
-/// # Errors
-///
-/// Missing auth, clock skew, or bad signature.
 pub fn verify_frontier(device_vk: &[u8; SYNC_VK_LEN], f: &RepoFrontier) -> anyhow::Result<()> {
     let auth = f
         .auth

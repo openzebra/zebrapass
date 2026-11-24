@@ -12,7 +12,7 @@ use container::VaultFile;
 use frame::{ALG_AEGIS256, ALG_CASCADE, KIND_REVISION, KIND_TOMBSTONE};
 use kdf::frame_key;
 
-use crate::attest::MAX_ATTESTED_FRAME;
+use crate::attest::{MAX_ATTESTED_FRAME, MAX_PEER_REVISION_JUMP, MAX_SAFE_REVISION};
 use crate::create::Session;
 use crate::error::SessionError;
 use crate::rotate::write_records;
@@ -33,13 +33,28 @@ use crate::sync_import::Accepted;
 /// # Errors
 ///
 /// [`SessionError`]: `ZeroOrigin`, `HeaderMismatch` (record 0, an unknown
-/// kind or algorithm, an oversized frame), `StaleRevision`; frame-opening
-/// failure when the frame was not sealed under this vault's key; publish
-/// errors.
+/// kind or algorithm, an oversized frame, or an out-of-bounds revision),
+/// `StaleRevision`; frame-opening failure when the frame was not sealed under
+/// this vault's key; publish errors.
 pub fn accept_peer_frame(
     session: &mut Session,
     file: &mut VaultFile,
     frame_bytes: &[u8],
+) -> anyhow::Result<Accepted> {
+    accept_peer_frame_seen(session, file, frame_bytes, |_| None)
+}
+
+/// As [`accept_peer_frame`], additionally consulting `last_seen` so deleted
+/// and history-compacted records cannot be replayed by an untrusted transport.
+///
+/// # Errors
+///
+/// As [`accept_peer_frame`].
+pub fn accept_peer_frame_seen(
+    session: &mut Session,
+    file: &mut VaultFile,
+    frame_bytes: &[u8],
+    last_seen: impl Fn(u32) -> Option<u64>,
 ) -> anyhow::Result<Accepted> {
     if frame_bytes.len() > MAX_ATTESTED_FRAME {
         return Err(SessionError::HeaderMismatch.into());
@@ -49,6 +64,8 @@ pub fn accept_peer_frame(
         return Err(SessionError::ZeroOrigin.into());
     }
     let shape = header.record_id != 0
+        && header.revision > 0
+        && header.revision <= MAX_SAFE_REVISION
         && matches!(header.kind, KIND_REVISION | KIND_TOMBSTONE)
         && matches!(header.alg, ALG_CASCADE | ALG_AEGIS256);
     if !shape {
@@ -57,7 +74,14 @@ pub fn accept_peer_frame(
     let refs = frame::parse_index(session.records.expose())?;
     let local = frame::latest(&refs, header.record_id)
         .map(|winner| (winner.revision, winner.origin_device));
-    if local.is_some_and(|winner| (header.revision, header.origin_device) <= winner) {
+    let seen_rev = last_seen(header.record_id);
+    let base_rev = local.map_or(0, |(r, _)| r).max(seen_rev.unwrap_or(0));
+    if header.revision > base_rev.saturating_add(MAX_PEER_REVISION_JUMP) {
+        return Err(SessionError::HeaderMismatch.into());
+    }
+    let behind_seen = seen_rev.is_some_and(|seen| header.revision < seen);
+    if behind_seen || local.is_some_and(|winner| (header.revision, header.origin_device) <= winner)
+    {
         return Err(SessionError::StaleRevision.into());
     }
     frame::open(

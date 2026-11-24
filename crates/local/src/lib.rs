@@ -30,6 +30,7 @@ mod shared_sync;
 mod sync_identity;
 mod sync_url;
 mod usage;
+mod zsync_crypto;
 
 use std::path::{Path, PathBuf};
 
@@ -38,10 +39,10 @@ use kdf::KdfProfile;
 use session::{Session, VaultFile, create};
 
 pub use address::{
-    Offer, never_dialable, offer_observed, parse_advertise, parse_peer_address,
-    parse_personal_target, parse_relay_hint,
+    Offer, is_private_or_local_ip, never_dialable, offer_observed, parse_advertise,
+    parse_peer_address, parse_personal_target, parse_relay_hint,
 };
-pub use atomic::write_atomic;
+pub use atomic::{ensure_private_dir, write_atomic};
 pub use attest_store::AttestStore;
 pub use backup::{
     BACKUP_COMMIT_LEN, BACKUP_HEADER_LEN, BACKUP_MAGIC, BACKUP_VERSION, BackupContents,
@@ -69,7 +70,7 @@ pub use personal_peers::{
 };
 pub use personal_rekey::{
     PERSONAL_DEVICE_MAGIC, PERSONAL_HEAD_LEN, PersonalDeviceEntry, decode_personal_head,
-    encode_personal_head, open_personal_rekey, seal_personal_rekey,
+    encode_personal_head, open_personal_rekey, open_personal_rekey_any, seal_personal_rekey,
 };
 pub use prefs::Prefs;
 pub use revocations::Revocations;
@@ -91,6 +92,11 @@ pub use sync_url::{
     parse_sync_server_list, parse_sync_server_url,
 };
 pub use usage::{Usage, UsageEntry};
+pub use zsync_crypto::{
+    PERSONAL_ANCHOR_LEN, PersonalRepoAnchor, SHARED_PROOF_LEN, SharedRepoProof, clear_master_grant,
+    load_master_grant, open_master_grant, open_shared_rekey, save_master_grant, seal_master_grant,
+    seal_shared_rekey, shared_zsync_storage_id,
+};
 
 /// Locations of one vault on this device.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,6 +146,12 @@ impl Paths {
     #[must_use]
     pub fn sync_identity(&self) -> PathBuf {
         self.vault_dir().join("sync.id")
+    }
+
+    /// The recovery-phrase sealed vault-key grant for `zsync`: `vaults/<vault_id_hex>/zsync.grant`.
+    #[must_use]
+    pub fn zsync_grant(&self) -> PathBuf {
+        self.vault_dir().join("zsync.grant")
     }
 }
 

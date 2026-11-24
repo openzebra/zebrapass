@@ -261,7 +261,11 @@ pub fn submit(state: &mut Unlocked, ctx: &mut Ctx) -> Nav {
         state.dialog = Some(dialog);
         return Nav::Stay;
     };
-    if let Some(outcome) = submit_settings_form(state, &form) {
+    if let Some(outcome) = submit_settings_form(
+        state,
+        &form,
+        ctx.flags.has(crate::cli::Flags::ALLOW_PRIVATE_SYNC),
+    ) {
         match outcome {
             Ok(msg) => {
                 ctx.redraw();
@@ -295,12 +299,13 @@ pub fn submit(state: &mut Unlocked, ctx: &mut Ctx) -> Nav {
 fn submit_settings_form(
     state: &mut Unlocked,
     form: &Form,
+    allow_private: bool,
 ) -> Option<Result<&'static str, &'static str>> {
     let raw = form.text.as_ref().map_or("", |t| t.value().trim());
     match form.kind {
         FormKind::SyncServers => {
             let normalized = raw.replace(',', "\n");
-            let list = match local::parse_sync_server_list(&normalized, true) {
+            let list = match local::parse_sync_server_list(&normalized, allow_private) {
                 Ok(list) => list,
                 Err(err) => return Some(Err(err)),
             };

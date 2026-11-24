@@ -114,6 +114,9 @@ pub const TAG_SYNC_ROOT_VK: u16 = 0x0231;
 /// This device's root-signed certificate, as encoded by `syncwire` (`Bytes`).
 pub const TAG_SYNC_OWN_CERT: u16 = 0x0232;
 
+/// Self-certifying personal sync repository anchor (`anchor_vk ‖ sig`), 5261 bytes (`Bytes`).
+pub const TAG_SYNC_PERSONAL_ANCHOR: u16 = 0x0233;
+
 /// First of the peer certificate tags: each field is one encoded
 /// certificate (`Bytes`), contiguous from here.
 pub const TAG_SYNC_PEER_MIN: u16 = 0x0240;

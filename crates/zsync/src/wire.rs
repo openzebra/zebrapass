@@ -18,7 +18,7 @@ pub enum StreamRole {
     ClientWatch = 2,
     /// Zero-storage live P2P stream relay (`Reserve` / `Connect` / `Accept`).
     Relay = 3,
-    /// Parallel server-to-server mesh replication & anti-entropy.
+    /// Authenticated server-to-server mesh replication & anti-entropy.
     PeerMesh = 4,
 }
 
@@ -70,6 +70,7 @@ pub struct SignedHead {
     pub ver: HeadVer,
     pub head_meta: Vec<u8>,
     pub snapshot_env: Vec<u8>,
+    pub master_grant: Option<Vec<u8>>,
     pub signature: Box<[u8; SYNC_SIG_LEN]>,
 }
 
@@ -101,7 +102,7 @@ pub struct RecordCommit {
     pub signer_device: [u8; 16],
 }
 
-/// Signed hybrid-PQ `VK` rekey grant targeted at `target_device`.
+/// Signed hybrid-PQ `VK` or shared-seed rekey grant targeted at `target_device`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignedRekey {
     pub generation: u64,
@@ -125,30 +126,62 @@ pub struct FrontierAuth {
 pub struct RepoFrontier {
     pub kind: RepoKind,
     pub storage_id: StorageId,
+    pub personal_anchor: Option<Vec<u8>>,
     pub root_vk: Option<Box<[u8; SYNC_VK_LEN]>>,
-    pub shared_init: Option<([u8; 16], [u8; 32])>,
+    pub shared_proof: Option<Vec<u8>>,
     pub auth: Option<FrontierAuth>,
     pub certs: Vec<[u8; 16]>,
-    pub rev_count: u32,
-    pub member_count: u32,
     pub head: Option<HeadVer>,
     pub records: Vec<RecordVer>,
+    pub rev_count: u32,
+    pub member_count: u32,
+    pub dev_key_count: u16,
 }
 
 /// Missing objects the receiver asks the sender to push after comparing frontiers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Wanted {
-    pub need_head: bool,
-    pub need_members: bool,
-    pub need_revs: bool,
     pub record_ids: Vec<u32>,
+    pub flags: u8,
 }
 
 impl Wanted {
+    pub const NEED_HEAD: u8 = 1;
+    pub const NEED_MEMBERS: u8 = 1 << 1;
+    pub const NEED_REVS: u8 = 1 << 2;
+    pub const NEED_DEVICE_KEYS: u8 = 1 << 3;
+    pub const ALL_FLAGS: u8 =
+        Self::NEED_HEAD | Self::NEED_MEMBERS | Self::NEED_REVS | Self::NEED_DEVICE_KEYS;
+
+    #[must_use]
+    pub const fn bit(mask: u8, cond: bool) -> u8 {
+        if cond { mask } else { 0 }
+    }
+
+    #[must_use]
+    pub const fn need_head(&self) -> bool {
+        self.flags & Self::NEED_HEAD != 0
+    }
+
+    #[must_use]
+    pub const fn need_members(&self) -> bool {
+        self.flags & Self::NEED_MEMBERS != 0
+    }
+
+    #[must_use]
+    pub const fn need_revs(&self) -> bool {
+        self.flags & Self::NEED_REVS != 0
+    }
+
+    #[must_use]
+    pub const fn need_device_keys(&self) -> bool {
+        self.flags & Self::NEED_DEVICE_KEYS != 0
+    }
+
     /// Whether the sender has nothing left to upload.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        !self.need_head && !self.need_members && !self.need_revs && self.record_ids.is_empty()
+        self.flags == 0 && self.record_ids.is_empty()
     }
 }
 
@@ -157,9 +190,11 @@ impl Wanted {
 pub struct SyncDelta {
     pub kind: RepoKind,
     pub storage_id: StorageId,
+    pub personal_anchor: Option<Vec<u8>>,
     pub root_vk: Option<Box<[u8; SYNC_VK_LEN]>>,
-    pub shared_init: Option<([u8; 16], [u8; 32])>,
+    pub shared_proof: Option<Vec<u8>>,
     pub certs: Vec<Vec<u8>>,
+    pub device_keys: Vec<Vec<u8>>,
     pub revocations: Vec<Vec<u8>>,
     pub member_entries: Vec<Vec<u8>>,
     pub head: Option<SignedHead>,
@@ -174,9 +209,11 @@ impl SyncDelta {
         Self {
             kind,
             storage_id,
+            personal_anchor: None,
             root_vk: None,
-            shared_init: None,
+            shared_proof: None,
             certs: Vec::new(),
+            device_keys: Vec::new(),
             revocations: Vec::new(),
             member_entries: Vec::new(),
             head: None,
@@ -189,6 +226,7 @@ impl SyncDelta {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.certs.is_empty()
+            && self.device_keys.is_empty()
             && self.revocations.is_empty()
             && self.member_entries.is_empty()
             && self.head.is_none()
@@ -200,12 +238,14 @@ impl SyncDelta {
 /// Authenticated subscription to push notifications on [`StreamRole::ClientWatch`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WatchSub {
-    pub device_id: [u8; 16],
     pub timestamp_s: u64,
+    pub device_id: [u8; 16],
     pub nonce: [u8; 16],
     pub repos: Vec<(RepoKind, StorageId)>,
     pub cert_wire: Vec<u8>,
+    pub personal_anchor: Option<Vec<u8>>,
     pub root_vk: Option<Box<[u8; SYNC_VK_LEN]>>,
+    pub shared_proofs: Vec<Vec<u8>>,
     pub signature: Box<[u8; SYNC_SIG_LEN]>,
 }
 
@@ -219,12 +259,27 @@ pub struct WatchEvent {
 /// Relay control messages on [`StreamRole::Relay`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayMsg {
-    Reserve { slot: [u8; 16] },
-    Connect { slot: [u8; 16] },
-    Accept { conn_id: [u8; 16] },
+    Reserve {
+        timestamp_s: u64,
+        slot: [u8; 16],
+        nonce: [u8; 16],
+        slot_vk: Box<[u8; SYNC_VK_LEN]>,
+        signature: Box<[u8; SYNC_SIG_LEN]>,
+    },
+    Connect {
+        slot: [u8; 16],
+    },
+    Accept {
+        conn_id: [u8; 16],
+    },
     Ping(u64),
-    Reserved { ttl_s: u16, observed: String },
-    Incoming { conn_id: [u8; 16] },
+    Reserved {
+        observed: String,
+        ttl_s: u16,
+    },
+    Incoming {
+        conn_id: [u8; 16],
+    },
     SpliceOk,
     Offline,
     Pong(u64),
@@ -247,9 +302,10 @@ pub const TAG_WATCH_SUB: u8 = 5;
 pub const TAG_WATCH_EVENT: u8 = 6;
 pub const TAG_RELAY: u8 = 7;
 pub const TAG_MESH_DIGESTS: u8 = 8;
-pub const TAG_MESH_NEED: u8 = 9;
 pub const TAG_MESH_FRONTIER: u8 = 10;
 pub const TAG_MESH_DELTA: u8 = 11;
+pub const TAG_MESH_HELLO: u8 = 12;
+pub const TAG_MESH_AUTH: u8 = 13;
 
 /// Write one length-prefixed wire frame (`ZBS3 || ver || tag || len_be || body`).
 ///

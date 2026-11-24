@@ -407,10 +407,11 @@ impl CreateState {
 
     fn finish(&mut self, ctx: &mut Ctx) -> Nav {
         let raw_servers = self.sync.servers.value().trim();
+        let allow_private = ctx.flags.has(crate::cli::Flags::ALLOW_PRIVATE_SYNC);
         let sync_servers = if raw_servers.is_empty() {
             Vec::new()
         } else {
-            match local::parse_sync_server_list(&raw_servers.replace(',', "\n"), true) {
+            match local::parse_sync_server_list(&raw_servers.replace(',', "\n"), allow_private) {
                 Ok(list) => list,
                 Err(err) => {
                     ctx.toast(Tone::Warn, err);

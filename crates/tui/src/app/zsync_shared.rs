@@ -1,55 +1,80 @@
-//! Shared vault `zsync` reconciliation and auto-discovery of newly synced
-//! [`local::SharedRef`] entries from the personal vault.
+//! Shared vault `zsync` reconciliation, hybrid PQ member-removal rekeying,
+//! and auto-discovery of newly synced [`local::SharedRef`] entries.
 
 use std::sync::Arc;
 
-use local::{SharedRef, SharedVault, SyncIdentity};
-use session::{Session, VaultFile};
-use syncwire::encode_snapshot;
+use local::{Attested, SharedRef, SharedVault, prepare_rekey};
+use memberlog::Entry;
+use session::VaultFile;
+use syncwire::{decode_snapshot, encode_snapshot};
 use zsync::{PulledShared, SharedStateInput, shared_wraps_tag};
 
 use crate::app::ctx::Ctx;
 use crate::app::flows::unlocked::Unlocked;
 use crate::app::zsync::{ZSyncMsg, ZebraSync};
+use crate::app::zsync_merge::{SeedAdvance, SharedRekeySlice, evaluate_shared_seed_advance};
 use crate::ui::widgets::toast::Tone;
-use crate::vault::Vault;
 use crate::vault::create::unix_ms;
-use crate::vault::device;
 use crate::vault::shared::{SharedItem, references};
 
 struct OwnedSharedInput {
     reference: Arc<SharedRef>,
+    rotate_to: Option<Arc<SharedRef>>,
     member_entries: Vec<Vec<u8>>,
     snapshot_bytes: Option<Vec<u8>>,
     generation: u64,
     head_epoch: u64,
     bundles: Vec<(u32, u64, [u8; 16], Vec<u8>)>,
-    rekeys: Vec<(u64, Vec<u8>)>,
+    rekeys: Vec<(u64, [u8; 16], Vec<u8>)>,
 }
 
 impl ZebraSync {
-    /// Reconcile a single [`SharedItem`] (pending or ready) with the cluster.
+    /// Reconcile a single [`SharedItem`] (pending, stale, or ready) with the cluster.
     pub fn trigger_reconcile_shared(&self, item: &mut SharedItem) {
+        if item.my_role.is_none() && item.ready() {
+            return;
+        }
         let vault_id = item.reference.vault_id;
         let known_epoch = self.shared_epochs.get(&vault_id).copied().unwrap_or(0);
         let reference = Arc::clone(&item.reference);
-        let owned = match &mut item.status {
-            crate::vault::shared::Status::Ready(sv) => {
+        let owned = match (&mut item.status, item.stale) {
+            (crate::vault::shared::Status::Ready(sv), false) => {
                 build_owned_shared(&reference, sv, &self.identity, known_epoch)
             }
-            crate::vault::shared::Status::Pending | crate::vault::shared::Status::Unavailable => {
-                OwnedSharedInput {
-                    reference,
-                    member_entries: Vec::new(),
-                    snapshot_bytes: None,
-                    generation: 0,
-                    head_epoch: known_epoch,
-                    bundles: Vec::new(),
-                    rekeys: Vec::new(),
-                }
-            }
+            _ => OwnedSharedInput {
+                reference,
+                rotate_to: None,
+                member_entries: Vec::new(),
+                snapshot_bytes: None,
+                generation: 0,
+                head_epoch: known_epoch,
+                bundles: Vec::new(),
+                rekeys: Vec::new(),
+            },
         };
         self.spawn_shared_reconcile(owned);
+    }
+
+    /// Publish an updated `MemberLog` (removal/rotation) and per-device hybrid
+    /// PQ `SignedRekey` grants to the retired `sid_0` repository so remaining
+    /// members receive the new seed and removed members are immediately cut off.
+    pub fn push_shared_rekey_notice(
+        &self,
+        old_ref: Arc<SharedRef>,
+        new_ref: Arc<SharedRef>,
+        member_entries: Vec<Vec<u8>>,
+        rekeys: Vec<(u64, [u8; 16], Vec<u8>)>,
+    ) {
+        self.spawn_shared_reconcile(OwnedSharedInput {
+            reference: old_ref,
+            rotate_to: Some(new_ref),
+            member_entries,
+            snapshot_bytes: None,
+            generation: 0,
+            head_epoch: 0,
+            bundles: Vec::new(),
+            rekeys,
+        });
     }
 
     fn spawn_shared_reconcile(&self, owned: OwnedSharedInput) {
@@ -68,6 +93,7 @@ impl ZebraSync {
                 head_epoch: owned.head_epoch,
                 bundles: &owned.bundles,
                 rekeys: &owned.rekeys,
+                rotate_to: owned.rotate_to.as_ref().map(|r| (&r.seed, r.epoch)),
             };
             match client.reconcile_shared(&identity, input).await {
                 Ok(pulled) => {
@@ -78,6 +104,27 @@ impl ZebraSync {
                 }
             }
         });
+    }
+
+    fn ingest_pulled_shared(&mut self, vault_id: [u8; 16], pulled: &mut PulledShared) -> u64 {
+        let prev = self.shared_epochs.get(&vault_id).copied().unwrap_or(0);
+        self.shared_epochs
+            .insert(vault_id, prev.max(pulled.head_epoch));
+        if let Some((snap_bytes, _)) = &pulled.snapshot
+            && let Ok(wtag) = shared_wraps_tag(snap_bytes)
+        {
+            self.shared_wraps.insert(vault_id, wtag);
+        }
+        let own_dev = self.identity.device_id();
+        let slot = self.shared_member_devices.entry(vault_id).or_default();
+        for dev in std::mem::take(&mut pulled.member_devices) {
+            if Some(dev.cert.device_id) != own_dev {
+                slot.retain(|d| d.cert.device_id != dev.cert.device_id);
+                slot.push(dev);
+            }
+        }
+        self.last_sync_ms = Some(unix_ms());
+        prev
     }
 }
 
@@ -104,17 +151,15 @@ fn build_owned_shared(
         None
     };
     let mut bundles = Vec::new();
-    for row in session::list_records(&sv.session).unwrap_or_default() {
-        if let Ok(Some(bundle)) = sv.bundle(reference, identity, row.id)
-            && let Ok(raw) = session::latest_frame(&sv.session, row.id)
-            && let Ok(hdr) = frame::parse(&raw)
-        {
-            bundles.push((row.id, hdr.revision, hdr.origin_device, bundle));
+    for entry in session::frontier(&sv.session).unwrap_or_default() {
+        if let Ok(Some(bundle)) = sv.bundle(reference, identity, entry.record_id) {
+            bundles.push((entry.record_id, entry.revision, entry.origin_device, bundle));
         }
     }
     let generation = sv.session.generation();
     OwnedSharedInput {
         reference: Arc::clone(reference),
+        rotate_to: None,
         member_entries,
         snapshot_bytes,
         generation,
@@ -157,7 +202,7 @@ impl Unlocked {
             return;
         };
         let reference = Arc::clone(&item.reference);
-        if let crate::vault::shared::Status::Ready(sv) = &mut item.status {
+        if let (crate::vault::shared::Status::Ready(sv), false) = (&mut item.status, item.stale) {
             let prev = zsync.shared_epochs.get(vault_id).copied().unwrap_or(0);
             let known_wrap = zsync.shared_wraps.get(vault_id).copied();
             let mut owned = build_owned_shared(&reference, sv, &zsync.identity, prev);
@@ -190,6 +235,9 @@ impl Unlocked {
         else {
             return;
         };
+        if item.stale {
+            return;
+        }
         let reference = Arc::clone(&item.reference);
         if let crate::vault::shared::Status::Ready(sv) = &mut item.status {
             let known_epoch = zsync.shared_epochs.get(vault_id).copied().unwrap_or(0);
@@ -254,21 +302,18 @@ impl Unlocked {
     pub(crate) fn apply_zsync_shared(
         &mut self,
         vault_id: [u8; 16],
-        pulled: PulledShared,
+        mut pulled: PulledShared,
         ctx: &mut Ctx,
     ) {
-        if let Some(zsync) = self.zsync.as_deref_mut() {
-            let prev = zsync.shared_epochs.get(&vault_id).copied().unwrap_or(0);
-            zsync
-                .shared_epochs
-                .insert(vault_id, prev.max(pulled.head_epoch));
-            if let Some((snap_bytes, _)) = &pulled.snapshot
-                && let Ok(wtag) = shared_wraps_tag(snap_bytes)
-            {
-                zsync.shared_wraps.insert(vault_id, wtag);
-            }
-            zsync.last_sync_ms = Some(unix_ms());
+        let prev_epoch = self
+            .zsync
+            .as_deref_mut()
+            .map_or(0, |zs| zs.ingest_pulled_shared(vault_id, &mut pulled));
+
+        if self.try_advance_shared_seed(vault_id, &pulled.member_entries, &pulled.rekeys, ctx) {
+            return;
         }
+
         let Some(index) = self
             .shared
             .iter()
@@ -276,28 +321,49 @@ impl Unlocked {
         else {
             return;
         };
-        let mut log_wire =
-            Vec::with_capacity(pulled.member_entries.len() * memberlog::ENTRY_WIRE_LEN);
-        for entry in &pulled.member_entries {
-            if let Ok(enc) = entry.encode() {
-                log_wire.extend_from_slice(&enc);
-            }
-        }
-        let was_ready = self.shared.get(index).is_some_and(SharedItem::ready);
+        let (was_ready, is_stale) = self
+            .shared
+            .get(index)
+            .map_or((false, false), |item| (item.ready(), item.stale));
+
         if let Some((snap_bytes, snap_epoch)) = pulled.snapshot {
-            let known = self
-                .zsync
-                .as_deref()
-                .and_then(|z| z.shared_epochs.get(&vault_id).copied())
-                .unwrap_or(0);
-            if !was_ready || snap_epoch >= known {
+            if is_stale {
+                if let (Some(identity), Some(reference)) = (
+                    self.identity.clone(),
+                    self.shared.get(index).map(|i| Arc::clone(&i.reference)),
+                ) && let Ok((file, attestations)) = decode_snapshot(snap_bytes.to_vec())
+                    && let Ok(plan) = prepare_rekey(
+                        &self.base,
+                        &reference,
+                        reference.duplicate(),
+                        Attested {
+                            file: VaultFile::new(file),
+                            attestations: &attestations,
+                        },
+                        &identity,
+                        &pulled.member_entries,
+                        None,
+                    )
+                {
+                    self.take_new_key(index, plan, ctx);
+                }
+            } else if !was_ready || snap_epoch > prev_epoch {
+                let mut log_wire =
+                    Vec::with_capacity(pulled.member_entries.len() * memberlog::ENTRY_WIRE_LEN);
+                for entry in &pulled.member_entries {
+                    if let Ok(enc) = entry.encode() {
+                        log_wire.extend_from_slice(&enc);
+                    }
+                }
                 self.arrived(&vault_id, &log_wire, snap_bytes.to_vec(), None, ctx);
             }
         }
 
         let mut applied = 0usize;
         let mut members_changed = false;
-        if let Some(item) = self.shared.get_mut(index) {
+        if let Some(item) = self.shared.get_mut(index)
+            && !item.stale
+        {
             let reference = Arc::clone(&item.reference);
             if let Some(sv) = item.vault_mut() {
                 let before = sv.log.entries().len();
@@ -314,81 +380,91 @@ impl Unlocked {
         }
         if applied > 0 || members_changed {
             self.reload_shared(&vault_id);
+            if let Some(zsync) = self.zsync.as_deref() {
+                zsync.update_watched(&self.shared);
+            }
             if applied > 0 {
                 ctx.toast(Tone::Info, format!("{applied} updated in shared vault."));
             }
             ctx.redraw();
         }
     }
-}
 
-pub(super) fn merge_local_records_into(
-    old_sess: &Session,
-    new_sess: &mut Session,
-    new_file: &mut VaultFile,
-) -> bool {
-    let mut merged = false;
-    let remote_rows = session::list_records(new_sess).unwrap_or_default();
-    for local_row in session::list_records(old_sess).unwrap_or_default() {
-        let local_key = session::latest_frame(old_sess, local_row.id)
-            .ok()
-            .and_then(|raw| frame::parse(&raw).ok())
-            .map(|h| (h.revision, h.origin_device));
-        let remote_key = remote_rows
-            .iter()
-            .find(|r| r.id == local_row.id)
-            .and_then(|r| session::latest_frame(new_sess, r.id).ok())
-            .and_then(|raw| frame::parse(&raw).ok())
-            .map(|h| (h.revision, h.origin_device));
-        let keep_local = match (local_key, remote_key) {
-            (Some(lk), Some(rk)) => lk > rk,
-            (Some(_), None) => true,
-            _ => false,
+    fn try_advance_shared_seed(
+        &mut self,
+        vault_id: [u8; 16],
+        entries: &[Entry],
+        rekeys: SharedRekeySlice<'_>,
+        ctx: &mut Ctx,
+    ) -> bool {
+        let Some(identity) = self.identity.clone() else {
+            return false;
         };
-        if keep_local
-            && let Ok(doc) = session::open_record(old_sess, local_row.id)
-            && session::write_record(new_sess, new_file, Some(local_row.id), &doc).is_ok()
-        {
-            merged = true;
+        let Some(index) = self
+            .shared
+            .iter()
+            .position(|item| item.reference.vault_id == vault_id)
+        else {
+            return false;
+        };
+        let advance = match self.shared.get(index) {
+            Some(item) => {
+                evaluate_shared_seed_advance(&self.base, item, &identity, entries, rekeys)
+            }
+            None => return false,
+        };
+        match advance {
+            SeedAdvance::None => false,
+            SeedAdvance::Removed => {
+                if let Some(item) = self.shared.get_mut(index) {
+                    let reference = Arc::clone(&item.reference);
+                    if let Some(sv) = item.vault_mut()
+                        && sv.log.merge(entries).is_ok()
+                    {
+                        let _ = sv.save_log(&reference.seed);
+                    }
+                }
+                self.reload_shared(&vault_id);
+                if let Some(zsync) = self.zsync.as_deref() {
+                    zsync.update_watched(&self.shared);
+                }
+                ctx.redraw();
+                true
+            }
+            SeedAdvance::Rotated(seed, target_epoch) => {
+                let Some(next_ref) = self
+                    .shared
+                    .get(index)
+                    .map(|item| Arc::new(item.reference.rotated(seed, target_epoch)))
+                else {
+                    return false;
+                };
+                if !self.save_reference(&next_ref) {
+                    return false;
+                }
+                if let Some(item) = self.shared.get_mut(index) {
+                    if item.ready() {
+                        item.stale = true;
+                        if let Some(sv) = item.vault_mut() {
+                            sv.stale = true;
+                        }
+                    }
+                    item.reference = Arc::clone(&next_ref);
+                }
+                if let Some(p2p) = self.p2p.as_deref() {
+                    p2p.provider.serve(Arc::clone(&next_ref));
+                }
+                if let Some(zsync) = self.zsync.as_deref_mut() {
+                    zsync.shared_epochs.remove(&vault_id);
+                    zsync.shared_wraps.remove(&vault_id);
+                    zsync.update_watched(&self.shared);
+                    if let Some(item) = self.shared.get_mut(index) {
+                        zsync.trigger_reconcile_shared(item);
+                    }
+                }
+                self.sync_push_personal(None);
+                true
+            }
         }
     }
-    merged
-}
-
-pub(super) fn preserve_local_chip_wrap(
-    old_vault: &Vault,
-    identity: &SyncIdentity,
-    new_session: &mut Session,
-    new_file: &mut VaultFile,
-) -> bool {
-    let Some(owned) = device::owned_id(&old_vault.paths) else {
-        return false;
-    };
-    if identity
-        .devices()
-        .first()
-        .is_some_and(|own| identity.revocations().is_revoked(own))
-    {
-        return false;
-    }
-    let already_present = session::wrap_directory(new_file).is_ok_and(|dir| {
-        dir.factors
-            .iter()
-            .any(|f| matches!(f, session::Factor::Chip(c) if c.publics.id == owned))
-    });
-    if already_present {
-        return false;
-    }
-    let local_publics = session::wrap_directory(&old_vault.file)
-        .ok()
-        .and_then(|dir| {
-            dir.factors.into_iter().find_map(|f| match f {
-                session::Factor::Chip(c) if c.publics.id == owned => Some(c.publics),
-                session::Factor::Chip(_)
-                | session::Factor::Recovery
-                | session::Factor::Password { .. }
-                | session::Factor::Prf { .. } => None,
-            })
-        });
-    local_publics.is_some_and(|pubs| session::add_chip_unlock(new_session, new_file, &pubs).is_ok())
 }

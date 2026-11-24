@@ -8,7 +8,7 @@ use secret::Secret;
 use sha2::Sha512;
 use zeroize::Zeroizing;
 
-use crate::derive::{client_id, framed_info};
+use crate::derive::framed_info;
 use crate::hkdf::hkdf_sha512;
 use crate::p2p::p2p_key;
 
@@ -21,6 +21,30 @@ pub const INFO_BACKUP_COMMIT: &[u8] = b"brby/v2/backup-commit";
 /// HKDF info for sealing a rotated personal vault key to a peer device.
 pub const INFO_PERSONAL_REKEY: &[u8] = b"brby/v2/personal-rekey";
 
+/// HKDF info for sealing a rotated shared vault seed to a remaining member device.
+pub const INFO_SHARED_REKEY: &[u8] = b"brby/v3/shared-rekey";
+
+/// HKDF info for deriving a canonical 512-bit personal storage identifier.
+pub const INFO_PERSONAL_STORAGE: &[u8] = b"brby/v3/personal-storage";
+
+/// HKDF info for deriving the dedicated personal sync anchor ML-DSA seed.
+pub const INFO_ZSYNC_PERSONAL_ROOT: &[u8] = b"brby/v3/zsync-personal-root";
+
+/// HKDF info for deriving a self-certifying personal storage identifier from its anchor VK.
+pub const INFO_ZSYNC_PERSONAL_SID: &[u8] = b"brby/v3/zsync-personal-sid";
+
+/// HKDF info for outer-sealing personal sync payloads under the active vault key.
+pub const INFO_ZSYNC_VK_ENVELOPE: &[u8] = b"brby/v3/zsync-vk-envelope";
+
+/// HKDF info for sealing the active vault key to the account's recovery seed.
+pub const INFO_ZSYNC_MASTER_GRANT: &[u8] = b"brby/v3/zsync-master-grant";
+
+/// HKDF info for deriving a shared repository's self-certifying ML-DSA seed.
+pub const INFO_ZSYNC_SHARED_REPO_SIGN: &[u8] = b"brby/v3/zsync-shared-repo-sign";
+
+/// HKDF info for deriving a self-certifying shared storage identifier from its repo VK.
+pub const INFO_ZSYNC_SHARED_SID: &[u8] = b"brby/v3/zsync-shared-sid";
+
 /// HKDF info for deriving a canonical 512-bit shared storage identifier.
 pub const INFO_SHARED_STORAGE: &[u8] = b"brby/v3/shared-storage";
 
@@ -29,6 +53,9 @@ pub const INFO_ZSYNC_ENVELOPE: &[u8] = b"brby/v3/zsync-envelope";
 
 /// HKDF info for deterministic zero-storage live P2P relay slots.
 pub const INFO_ZSYNC_RELAY_SLOT: &[u8] = b"brby/v3/zsync-relay-slot";
+
+/// HKDF info for authenticating live relay slot reservations.
+pub const INFO_ZSYNC_RELAY_AUTH: &[u8] = b"brby/v3/zsync-relay-auth";
 
 /// Pair of `(k_seal, k_commit)` keys derived for a `.zpbackup` bundle.
 pub type BackupKeys = (Secret<[u8; 32]>, Secret<[u8; 32]>);
@@ -64,7 +91,97 @@ pub fn backup_keys(
 ///
 /// `kdf parameters rejected` when HKDF-Expand rejects the output length.
 pub fn storage_id(seed: &[u8; 64]) -> anyhow::Result<[u8; 64]> {
-    client_id(seed)
+    let hk = Hkdf::<Sha512>::new(None, seed);
+    let mut okm = Zeroizing::new([0u8; 64]);
+    hk.expand(INFO_PERSONAL_STORAGE, okm.as_mut())
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(*okm)
+}
+
+/// Derive the dedicated 32-byte ML-DSA signing seed for anchoring a personal
+/// sync repository, separated from the public contact-card root key.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn zsync_personal_root_seed(master_seed: &[u8; 64]) -> anyhow::Result<Secret<[u8; 32]>> {
+    hkdf_sha512(master_seed, &[0u8; 16], INFO_ZSYNC_PERSONAL_ROOT)
+}
+
+/// Derive the self-certifying 512-bit personal storage identifier directly
+/// from the personal repository anchor's ML-DSA verifying key.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when `anchor_vk` is empty or HKDF-Expand fails.
+pub fn personal_storage_id_from_vk(anchor_vk: &[u8]) -> anyhow::Result<[u8; 64]> {
+    if anchor_vk.is_empty() {
+        anyhow::bail!("kdf parameters rejected");
+    }
+    let hk = Hkdf::<Sha512>::new(None, anchor_vk);
+    let mut okm = Zeroizing::new([0u8; 64]);
+    hk.expand(INFO_ZSYNC_PERSONAL_SID, okm.as_mut())
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(*okm)
+}
+
+/// Derive the outer-envelope cascade key for personal sync payloads from the
+/// active vault key `vk` and `storage_id` so revoked devices cannot open
+/// post-rotation heads or frames.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn zsync_vk_envelope_key(
+    vk: &[u8; 32],
+    storage_id: &[u8; 64],
+) -> anyhow::Result<Secret<[u8; 32]>> {
+    let info = framed_info(INFO_ZSYNC_VK_ENVELOPE, &[storage_id])?;
+    hkdf_sha512(vk, &[0u8; 16], &info)
+}
+
+/// Derive the recovery-phrase key that seals the current personal vault key
+/// inside `SignedHead` so BIP39 phrase restores can recover without any peer.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn zsync_master_grant_key(
+    master_seed: &[u8; 64],
+    storage_id: &[u8; 64],
+) -> anyhow::Result<Secret<[u8; 32]>> {
+    let info = framed_info(INFO_ZSYNC_MASTER_GRANT, &[storage_id])?;
+    hkdf_sha512(master_seed, &[0u8; 16], &info)
+}
+
+/// Derive the 32-byte ML-DSA signing seed proving possession of `shared_seed`
+/// when initializing a shared sync repository for `vault_id`.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_repo_sign_seed(
+    shared_seed: &[u8; 64],
+    vault_id: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; 32]>> {
+    hkdf_sha512(shared_seed, vault_id, INFO_ZSYNC_SHARED_REPO_SIGN)
+}
+
+/// Derive the self-certifying 512-bit shared storage identifier from its
+/// ML-DSA verifying key `repo_vk` and `vault_id`.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when `repo_vk` is empty or HKDF-Expand fails.
+pub fn shared_storage_id_from_vk(repo_vk: &[u8], vault_id: &[u8; 16]) -> anyhow::Result<[u8; 64]> {
+    if repo_vk.is_empty() {
+        anyhow::bail!("kdf parameters rejected");
+    }
+    let hk = Hkdf::<Sha512>::new(Some(vault_id.as_slice()), repo_vk);
+    let mut okm = Zeroizing::new([0u8; 64]);
+    hk.expand(INFO_ZSYNC_SHARED_SID, okm.as_mut())
+        .map_err(|_| anyhow::anyhow!("kdf parameters rejected"))?;
+    Ok(*okm)
 }
 
 /// Derive the canonical server-independent 512-bit (`[u8; 64]`) shared
@@ -125,6 +242,20 @@ pub fn zsync_relay_slot(secret_ikm: &[u8], storage_id: &[u8; 64]) -> anyhow::Res
     Ok(*slot)
 }
 
+/// Derive the 32-byte HMAC key proving authorization to reserve `slot` on a
+/// live relay hub.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn zsync_relay_auth_key(
+    secret_ikm: &[u8],
+    slot: &[u8; 16],
+) -> anyhow::Result<Secret<[u8; 32]>> {
+    let info = framed_info(INFO_ZSYNC_RELAY_AUTH, &[slot])?;
+    hkdf_sha512(secret_ikm, &[0u8; 16], &info)
+}
+
 /// Derive the hybrid P-256 + ML-KEM-768 key that seals a rotated personal vault
 /// key to one non-revoked peer device.
 ///
@@ -140,6 +271,21 @@ pub fn personal_rekey_key(
     p2p_key(INFO_PERSONAL_REKEY, ss_kem, ss_ec, vault_id, transcript)
 }
 
+/// Derive the hybrid P-256 + ML-KEM-768 key that seals a rotated shared vault
+/// seed to one remaining member device.
+///
+/// # Errors
+///
+/// `kdf parameters rejected` when HKDF-Expand rejects the output length.
+pub fn shared_rekey_key(
+    ss_kem: &Secret<[u8; 32]>,
+    ss_ec: &Secret<[u8; 32]>,
+    vault_id: &[u8; 16],
+    transcript: &[u8; 32],
+) -> anyhow::Result<Secret<[u8; 32]>> {
+    p2p_key(INFO_SHARED_REKEY, ss_kem, ss_ec, vault_id, transcript)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests may unwrap")]
@@ -147,8 +293,10 @@ mod tests {
     use secret::Secret;
 
     use super::{
-        backup_keys, personal_envelope_key, personal_rekey_key, shared_envelope_key,
-        shared_storage_id, storage_id, zsync_relay_slot,
+        backup_keys, personal_envelope_key, personal_rekey_key, personal_storage_id_from_vk,
+        shared_envelope_key, shared_rekey_key, shared_repo_sign_seed, shared_storage_id,
+        shared_storage_id_from_vk, storage_id, zsync_master_grant_key, zsync_personal_root_seed,
+        zsync_relay_auth_key, zsync_relay_slot, zsync_vk_envelope_key,
     };
 
     #[test]
@@ -179,21 +327,42 @@ mod tests {
         let p_id = storage_id(&root_seed).unwrap();
         assert_eq!(p_id, storage_id(&root_seed).unwrap());
         assert_ne!(p_id, storage_id(&[0x18; 64]).unwrap());
+        assert_ne!(p_id, crate::client_id(&root_seed).unwrap());
 
         let s_id = shared_storage_id(&shared_seed, &vault).unwrap();
         assert_eq!(s_id, shared_storage_id(&shared_seed, &vault).unwrap());
         assert_ne!(s_id, shared_storage_id(&shared_seed, &[0x56; 16]).unwrap());
         assert_ne!(s_id, p_id);
 
+        let anchor_seed = zsync_personal_root_seed(&root_seed).unwrap();
+        assert_ne!(
+            anchor_seed.expose(),
+            crate::sync_seed(&root_seed).unwrap().expose()
+        );
+        let p_vk_sid = personal_storage_id_from_vk(&[0xAB; 1952]).unwrap();
+        let s_vk_sid = shared_storage_id_from_vk(&[0xAB; 1952], &vault).unwrap();
+        assert_ne!(p_vk_sid, s_vk_sid);
+        assert!(personal_storage_id_from_vk(&[]).is_err());
+        assert!(shared_storage_id_from_vk(&[], &vault).is_err());
+
         let env_p = personal_envelope_key(&gate, &p_id).unwrap();
+        let env_vk = zsync_vk_envelope_key(&gate, &p_id).unwrap();
+        let mg = zsync_master_grant_key(&root_seed, &p_id).unwrap();
         let env_s = shared_envelope_key(&shared_seed, &s_id).unwrap();
         assert_ne!(env_p.expose(), env_s.expose());
+        assert_ne!(env_p.expose(), env_vk.expose());
+        assert_ne!(env_vk.expose(), mg.expose());
         assert_ne!(env_p.expose(), &p_id[..32]);
+
+        let repo_sign = shared_repo_sign_seed(&shared_seed, &vault).unwrap();
+        assert_ne!(repo_sign.expose(), env_s.expose());
 
         let slot_p = zsync_relay_slot(&gate, &p_id).unwrap();
         let slot_s = zsync_relay_slot(&shared_seed, &s_id).unwrap();
         assert_ne!(slot_p, slot_s);
         assert_eq!(slot_p, zsync_relay_slot(&gate, &p_id).unwrap());
+        let auth_p = zsync_relay_auth_key(&gate, &slot_p).unwrap();
+        assert_ne!(&auth_p.expose()[..16], &slot_p);
     }
 
     #[test]
@@ -205,8 +374,10 @@ mod tests {
         let k1 = personal_rekey_key(&kem, &ec, &vault, &th).unwrap();
         let k2 = crate::share_grant_key(&kem, &ec, &vault, &th).unwrap();
         let k3 = crate::p2p_key(crate::INFO_P2P_APP_I2R, &kem, &ec, &vault, &th).unwrap();
+        let k4 = shared_rekey_key(&kem, &ec, &vault, &th).unwrap();
         assert_ne!(k1.expose(), k2.expose());
         assert_ne!(k1.expose(), k3.expose());
+        assert_ne!(k1.expose(), k4.expose());
         assert_eq!(
             k1.expose(),
             personal_rekey_key(&kem, &ec, &vault, &th).unwrap().expose()

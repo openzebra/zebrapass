@@ -17,6 +17,7 @@ pub mod screen;
 pub mod worker;
 pub mod zsync;
 pub mod zsync_apply;
+mod zsync_merge;
 pub mod zsync_shared;
 
 use std::path::PathBuf;

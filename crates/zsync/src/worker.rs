@@ -21,11 +21,12 @@ use crate::wire::{
 use crate::wire_codec::{decode_watch_event, encode_watch_sub};
 
 /// Monitored repository entry mapped back to the UI's `vault_id`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WatchedRepo {
-    pub kind: RepoKind,
+    pub shared_proof: Option<Vec<u8>>,
     pub storage_id: StorageId,
     pub vault_id: [u8; 16],
+    pub kind: RepoKind,
 }
 
 /// Active transport mode of [`ZebraWorker`].
@@ -221,7 +222,7 @@ impl WorkerState {
             match timeout(Duration::from_millis(150), in_rx.recv()).await {
                 Ok(Some(we)) => {
                     for r in repos {
-                        if r.kind == we.kind && r.storage_id == we.storage_id {
+                        if r.kind == we.kind && secret::ct_eq(&r.storage_id, &we.storage_id) {
                             let _ = self.ev_tx.send(WorkerEvent::RepoChanged {
                                 kind: r.kind,
                                 storage_id: r.storage_id,
@@ -248,13 +249,20 @@ impl WorkerState {
 fn build_watch_sub(identity: &SyncIdentity, repos: &[WatchedRepo]) -> Option<Vec<u8>> {
     let cert = identity.devices().first()?;
     let cert_wire = encode_cert(cert).ok()?;
+    let anchor_wire = identity.personal_anchor().and_then(|a| a.encode().ok());
+    let shared_proofs: Vec<Vec<u8>> = repos
+        .iter()
+        .filter_map(|r| r.shared_proof.clone())
+        .collect();
     let pairs: Vec<(RepoKind, StorageId)> = repos.iter().map(|r| (r.kind, r.storage_id)).collect();
     let sub = sign_watch(
         &identity.sign_key(),
         cert.device_id,
         pairs,
         cert_wire,
+        anchor_wire,
         Some(Box::new(*identity.root_vk())),
+        shared_proofs,
     )
     .ok()?;
     encode_watch_sub(&sub).ok()

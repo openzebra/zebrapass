@@ -6,17 +6,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock, mpsc};
 use std::time::Duration;
 
-use kdf::{shared_storage_id, zsync_relay_slot};
 use local::{
-    DEFAULT_SYNC_SERVERS, PersonalDeviceEntry, Prefs, SyncIdentity, encode_personal_head,
-    parse_sync_server_url,
+    DEFAULT_SYNC_SERVERS, PersonalDeviceEntry, Prefs, SharedRepoProof, SyncIdentity,
+    encode_personal_head, load_master_grant, parse_sync_server_url,
 };
+use secret::Secret;
 use session::{FrontierEntry, Revocation};
 use tokio::sync::watch;
 use zeroize::Zeroizing;
 use zsync::{
-    PersonalStateInput, PulledPersonal, PulledShared, RepoKind, WatchedRepo, WorkerEvent,
-    WorkerMode, ZebraClient, ZebraWorker, device_announce_record_id, hold_relay_slot,
+    PersonalStateInput, PulledPersonal, PulledShared, RelayCredentials, RepoKind, WatchedRepo,
+    WorkerEvent, WorkerMode, ZebraClient, ZebraWorker, device_announce_record_id, hold_relay_slot,
     personal_storage_id, relay_sync_responder, wraps_tag,
 };
 
@@ -31,6 +31,8 @@ pub(super) type RelayPersonalSnapshot = (Vec<FrontierEntry>, Vec<(u32, Vec<u8>)>
 
 /// Owned personal vault state passed safely into background Tokio tasks.
 pub struct OwnedPersonalInput {
+    pub vk: Secret<[u8; 32]>,
+    pub master_grant: Option<Vec<u8>>,
     pub vault_bytes: Zeroizing<Vec<u8>>,
     pub head_meta_plain: Vec<u8>,
     pub generation: u64,
@@ -58,6 +60,11 @@ pub enum ZSyncMsg {
         pulled: PulledPersonal,
         initial_check: bool,
     },
+    PersonalFailed {
+        err: String,
+        rekeys: Vec<(u64, [u8; 16], Vec<u8>)>,
+        force_head: bool,
+    },
     SharedReconciled {
         vault_id: [u8; 16],
         pulled: PulledShared,
@@ -70,6 +77,10 @@ impl std::fmt::Debug for ZSyncMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PersonalReconciled { .. } => f.write_str("ZSyncMsg::PersonalReconciled"),
+            Self::PersonalFailed { err, .. } => f
+                .debug_tuple("ZSyncMsg::PersonalFailed")
+                .field(err)
+                .finish(),
             Self::SharedReconciled { vault_id, .. } => f
                 .debug_struct("ZSyncMsg::SharedReconciled")
                 .field("vault_id", vault_id)
@@ -98,6 +109,7 @@ pub struct ZebraSync {
     pub last_wraps_tag: [u8; 32],
     pub shared_epochs: BTreeMap<[u8; 16], u64>,
     pub shared_wraps: BTreeMap<[u8; 16], [u8; 32]>,
+    pub shared_member_devices: BTreeMap<[u8; 16], Vec<PersonalDeviceEntry>>,
     pub peer_devices: Vec<PersonalDeviceEntry>,
     pub pending_rekeys: Vec<(u64, [u8; 16], Vec<u8>)>,
     pub personal_queue: PersonalQueue,
@@ -126,11 +138,11 @@ impl std::fmt::Debug for ZebraSync {
     }
 }
 
-fn push_sync_server(out: &mut Vec<String>, raw: &str) {
+fn push_sync_server(out: &mut Vec<String>, raw: &str, allow_private: bool) {
     if out.len() >= local::SYNC_SERVERS_MAX {
         return;
     }
-    if let Ok(norm) = parse_sync_server_url(raw, true) {
+    if let Ok(norm) = parse_sync_server_url(raw, allow_private) {
         let owned = norm.into_string();
         if !out.contains(&owned) {
             out.push(owned);
@@ -138,39 +150,30 @@ fn push_sync_server(out: &mut Vec<String>, raw: &str) {
     }
 }
 
-/// Resolve the active sync endpoints from prefs, CLI flags, default Zebra mesh,
-/// or URL shared hints.
+/// Resolve the active sync endpoints strictly from local prefs, CLI flags, or
+/// the default Zebra mesh (never from untrusted external shared-vault hints).
 #[must_use]
 pub fn resolve_sync_servers(
     prefs: Option<&Prefs>,
     ctx: &Ctx,
-    shared: &[SharedItem],
+    _shared: &[SharedItem],
 ) -> Vec<String> {
     if prefs.is_some_and(|p| !p.server_sync) {
         return Vec::new();
     }
+    let allow_private = ctx.flags.has(Flags::ALLOW_PRIVATE_SYNC);
     let mut out = Vec::new();
     if let Some(urls) = prefs.filter(|p| !p.sync_servers.is_empty()) {
         for u in &urls.sync_servers {
-            push_sync_server(&mut out, u);
+            push_sync_server(&mut out, u, allow_private);
         }
     } else if !ctx.sync_servers.is_empty() {
         for u in &ctx.sync_servers {
-            push_sync_server(&mut out, u);
+            push_sync_server(&mut out, u, allow_private);
         }
     } else if ctx.flags.has(Flags::NET_SYNC) {
         for u in DEFAULT_SYNC_SERVERS {
-            push_sync_server(&mut out, u);
-        }
-    }
-
-    if out.is_empty() {
-        for item in shared {
-            for hint in &item.reference.hints {
-                if hint.starts_with("https://") || hint.starts_with("tls://") {
-                    push_sync_server(&mut out, hint);
-                }
-            }
+            push_sync_server(&mut out, u, false);
         }
     }
     out
@@ -192,16 +195,25 @@ pub fn build_watched_repos(
             kind: RepoKind::Personal,
             storage_id: sid,
             vault_id,
+            shared_proof: None,
         });
     }
     for item in shared {
-        if let Ok(sid) = shared_storage_id(item.reference.seed.expose(), &item.reference.vault_id)
+        if item.my_role.is_none() && item.ready() {
+            continue;
+        }
+        if let Ok((proof, sid)) = SharedRepoProof::issue(
+            item.reference.seed.expose(),
+            item.reference.vault_id,
+            item.reference.anchor,
+        ) && let Ok(proof_wire) = proof.encode()
             && seen.insert((RepoKind::Shared as u8, sid))
         {
             repos.push(WatchedRepo {
                 kind: RepoKind::Shared,
                 storage_id: sid,
                 vault_id: item.reference.vault_id,
+                shared_proof: Some(proof_wire),
             });
         }
     }
@@ -216,14 +228,9 @@ pub fn collect_personal_records(
     wrap_id: Option<[u8; 16]>,
 ) -> Vec<(u32, u64, [u8; 16], Vec<u8>)> {
     let mut out = Vec::new();
-    if let Ok(rows) = session::list_records(&vault.session) {
-        out.reserve(rows.len().saturating_add(1));
-        for row in rows {
-            if let Ok(raw) = session::latest_frame(&vault.session, row.id)
-                && let Ok(hdr) = frame::parse(&raw)
-            {
-                out.push((row.id, hdr.revision, hdr.origin_device, raw));
-            }
+    for entry in session::frontier(&vault.session).unwrap_or_default() {
+        if let Ok(raw) = session::latest_frame(&vault.session, entry.record_id) {
+            out.push((entry.record_id, entry.revision, entry.origin_device, raw));
         }
     }
     if let Some(dev_id) = identity.device_id()
@@ -254,8 +261,10 @@ impl ZebraSync {
         if endpoints.is_empty() {
             return None;
         }
-        let client =
-            Arc::new(ZebraClient::new(&endpoints, ctx.extra_ca_pem.as_deref(), true).ok()?);
+        let allow_private = ctx.flags.has(Flags::ALLOW_PRIVATE_SYNC);
+        let client = Arc::new(
+            ZebraClient::new(&endpoints, ctx.extra_ca_pem.as_deref(), allow_private).ok()?,
+        );
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -281,14 +290,15 @@ impl ZebraSync {
             client.preferred_endpoint().cloned(),
             identity.account_gate(),
             personal_storage_id(&identity),
-        ) && let Ok(slot) = zsync_relay_slot(gate.expose(), &sid)
+        ) && let Ok(creds) = RelayCredentials::derive(gate.expose(), &sid)
         {
             let tls_cfg = Arc::clone(client.tls_config());
+            let creds = Arc::new(creds);
             let r_id = Arc::clone(&identity);
             let r_snap = Arc::clone(&relay_snap);
             let r_tx = msg_tx.clone();
             rt.spawn(async move {
-                hold_relay_slot(ep, tls_cfg, slot, relay_stop_rx, move |stream| {
+                hold_relay_slot(ep, tls_cfg, creds, relay_stop_rx, move |stream| {
                     let id2 = Arc::clone(&r_id);
                     let snap2 = Arc::clone(&r_snap);
                     let tx2 = r_tx.clone();
@@ -322,6 +332,7 @@ impl ZebraSync {
             last_wraps_tag,
             shared_epochs: BTreeMap::new(),
             shared_wraps: BTreeMap::new(),
+            shared_member_devices: BTreeMap::new(),
             peer_devices: Vec::new(),
             pending_rekeys: Vec::new(),
             personal_queue: PersonalQueue::Idle,
@@ -390,6 +401,8 @@ impl ZebraSync {
                 .saturating_add(1);
         }
         let owned = OwnedPersonalInput {
+            vk: vault.session.reopen_key(),
+            master_grant: load_master_grant(&vault.paths),
             vault_bytes: Zeroizing::new(vault.file.as_bytes().to_vec()),
             head_meta_plain: encode_personal_head(
                 vault.session.vault_id(),
@@ -409,6 +422,9 @@ impl ZebraSync {
         let tx = self.msg_tx.clone();
         self.rt.spawn(async move {
             let input = PersonalStateInput {
+                vk: Some(&owned.vk),
+                master_seed: None,
+                master_grant: owned.master_grant.as_deref(),
                 vault_bytes: &owned.vault_bytes,
                 head_meta_plain: &owned.head_meta_plain,
                 generation: owned.generation,
@@ -426,7 +442,11 @@ impl ZebraSync {
                     });
                 }
                 Err(err) => {
-                    let _ = tx.send(ZSyncMsg::Error(err.to_string()));
+                    let _ = tx.send(ZSyncMsg::PersonalFailed {
+                        err: err.to_string(),
+                        rekeys: owned.rekeys,
+                        force_head: owned.push_head_always,
+                    });
                 }
             }
         });
@@ -434,13 +454,13 @@ impl ZebraSync {
 }
 
 fn raw_record_pairs(session: &session::Session) -> Vec<(u32, Vec<u8>)> {
-    session::list_records(session)
+    session::frontier(session)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|row| {
-            session::latest_frame(session, row.id)
+        .filter_map(|entry| {
+            session::latest_frame(session, entry.record_id)
                 .ok()
-                .map(|raw| (row.id, raw))
+                .map(|raw| (entry.record_id, raw))
         })
         .collect()
 }

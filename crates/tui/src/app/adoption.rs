@@ -154,6 +154,7 @@ impl Unlocked {
             addresses,
             manual,
             loopback: self.beacon.is_some_and(|config| config.loopback),
+            allow_private: ctx.flags.has(crate::cli::Flags::ALLOW_PRIVATE_SYNC),
             sync_servers,
             extra_ca_pem: ctx.extra_ca_pem.clone(),
         };

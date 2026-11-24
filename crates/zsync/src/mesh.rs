@@ -1,56 +1,55 @@
-//! Parallel non-blocking server-to-server mesh replication and independent
+//! Authenticated parallel server-to-server mesh replication and paginated
 //! bidirectional anti-entropy loops.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use pq::SYNC_VK_LEN;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, watch};
 use tokio::time::timeout;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
 
-use crate::limits::{IO_TIMEOUT, MAX_SMALL_FRAME, MAX_WIRE_FRAME};
+use crate::limits::{IO_TIMEOUT, MAX_MESH_PAGE, MAX_MESH_REPOS, MAX_SMALL_FRAME, MAX_WIRE_FRAME};
+use crate::mesh_auth::MeshRuntime;
 use crate::repo::RepoState;
 use crate::repo_disk::RepoStore;
 use crate::tls::{Endpoint, connect_tls};
 use crate::wire::{
     RepoDigest, RepoFrontier, RepoKind, StorageId, StreamRole, SyncDelta, TAG_ACK, TAG_DELTA,
-    TAG_DIFF, TAG_MESH_DELTA, TAG_MESH_DIGESTS, TAG_MESH_FRONTIER, TAG_MESH_NEED, Wanted,
-    WatchEvent, read_wire, write_wire,
+    TAG_DIFF, TAG_MESH_DELTA, TAG_MESH_DIGESTS, TAG_MESH_FRONTIER, Wanted, WatchEvent, read_wire,
+    write_wire,
 };
 use crate::wire_codec::{
-    decode_delta, decode_diff, decode_digests, decode_frontier, decode_repo_ids, encode_delta,
-    encode_diff, encode_digests, encode_frontier, encode_repo_ids,
+    decode_delta, decode_diff, decode_digest_cursor, decode_digest_page, decode_frontier,
+    encode_delta, encode_diff, encode_digest_cursor, encode_digest_page, encode_frontier,
 };
 
-/// Peer servers configured for parallel mesh replication.
-#[derive(Clone, Debug)]
-pub struct MeshPeers {
-    pub endpoints: Vec<Endpoint>,
-    pub tls_cfg: Arc<rustls::ClientConfig>,
-}
-
-/// Immediately replicate `delta` to every peer server in parallel without
-/// blocking the client or letting one slow/offline server stall the others.
-pub fn fanout_accepted(peers: &MeshPeers, delta: &SyncDelta) {
-    if peers.endpoints.is_empty() || delta.is_empty() {
+/// Immediately replicate `delta` to every authenticated peer server in parallel.
+pub fn fanout_accepted(mesh: Option<&Arc<MeshRuntime>>, delta: &SyncDelta) {
+    let Some(runtime) = mesh else {
+        return;
+    };
+    if runtime.peers.is_empty() || delta.is_empty() {
         return;
     }
     let Ok(encoded) = encode_delta(delta) else {
         return;
     };
     let shared_bytes = Arc::new(encoded);
-    for ep in &peers.endpoints {
+    for (ep, peer_vk) in &runtime.peers {
+        let rt = Arc::clone(runtime);
         let ep = ep.clone();
-        let cfg = Arc::clone(&peers.tls_cfg);
+        let peer_vk = peer_vk.clone();
         let bytes = Arc::clone(&shared_bytes);
         tokio::spawn(async move {
-            if let Ok((mut tls, _)) = connect_tls(&ep, &cfg).await
+            if let Ok((mut tls, _)) = connect_tls(&ep, &rt.tls_cfg).await
                 && timeout(IO_TIMEOUT, tls.write_all(&[StreamRole::PeerMesh as u8]))
                     .await
                     .is_ok_and(|res| res.is_ok())
+                && rt.handshake_initiator(&mut tls, &peer_vk).await.is_ok()
                 && timeout(IO_TIMEOUT, write_wire(&mut tls, TAG_MESH_DELTA, &bytes))
                     .await
                     .is_ok_and(|res| res.is_ok())
@@ -61,24 +60,28 @@ pub fn fanout_accepted(peers: &MeshPeers, delta: &SyncDelta) {
     }
 }
 
-/// Spawn one independent bidirectional anti-entropy task per peer server so
-/// servers converge in both directions concurrently without interfering.
+/// Spawn one independent bidirectional anti-entropy task per authenticated peer server.
 pub fn spawn_mesh_loops(
-    peers: MeshPeers,
+    mesh: Option<&Arc<MeshRuntime>>,
     store: &Arc<RepoStore>,
     watch_tx: &broadcast::Sender<WatchEvent>,
     interval: Duration,
     shutdown: &watch::Receiver<bool>,
 ) {
+    let Some(runtime) = mesh else {
+        return;
+    };
     let period = interval.max(Duration::from_millis(100));
-    for ep in peers.endpoints {
-        let cfg = Arc::clone(&peers.tls_cfg);
+    for (ep, peer_vk) in &runtime.peers {
+        let rt = Arc::clone(runtime);
+        let ep = ep.clone();
+        let peer_vk = peer_vk.clone();
         let st = Arc::clone(store);
         let wtx = watch_tx.clone();
         let mut halt = shutdown.clone();
         tokio::spawn(async move {
             while !*halt.borrow() {
-                let _ = sync_with_peer(&ep, &cfg, &st, &wtx).await;
+                let _ = sync_with_peer(&rt, &ep, &peer_vk, &st, &wtx).await;
                 if timeout(period, halt.changed()).await.is_ok() && *halt.borrow() {
                     break;
                 }
@@ -88,26 +91,37 @@ pub fn spawn_mesh_loops(
 }
 
 async fn sync_with_peer(
+    runtime: &MeshRuntime,
     ep: &Endpoint,
-    tls_cfg: &Arc<rustls::ClientConfig>,
+    peer_vk: &[u8; SYNC_VK_LEN],
     store: &Arc<RepoStore>,
     watch_tx: &broadcast::Sender<WatchEvent>,
 ) -> anyhow::Result<()> {
-    let (mut tls, _) = connect_tls(ep, tls_cfg).await?;
+    let (mut tls, _) = connect_tls(ep, &runtime.tls_cfg).await?;
     timeout(IO_TIMEOUT, tls.write_all(&[StreamRole::PeerMesh as u8])).await??;
+    runtime.handshake_initiator(&mut tls, peer_vk).await?;
+
+    let mut remote_digests = Vec::new();
+    let mut cursor: Option<(RepoKind, StorageId)> = None;
+    loop {
+        let req = encode_digest_cursor(cursor);
+        timeout(IO_TIMEOUT, write_wire(&mut tls, TAG_MESH_DIGESTS, &req)).await??;
+        let (tag, body) = timeout(IO_TIMEOUT, read_wire(&mut tls, MAX_WIRE_FRAME)).await??;
+        if tag != TAG_MESH_DIGESTS {
+            anyhow::bail!("unexpected mesh digest page tag");
+        }
+        let (page, next) = decode_digest_page(&body)?;
+        remote_digests.extend(page);
+        match next {
+            Some(c) if remote_digests.len() < MAX_MESH_REPOS.saturating_mul(64) => {
+                cursor = Some(c);
+            }
+            _ => break,
+        }
+    }
 
     let local_digests = store.all_digests().await;
-    timeout(
-        IO_TIMEOUT,
-        write_wire(&mut tls, TAG_MESH_DIGESTS, &encode_digests(&local_digests)?),
-    )
-    .await??;
-
-    let (tag, body) = timeout(IO_TIMEOUT, read_wire(&mut tls, MAX_WIRE_FRAME)).await??;
-    if tag != TAG_MESH_NEED {
-        anyhow::bail!("unexpected mesh digest reply");
-    }
-    let differing = decode_repo_ids(&body)?;
+    let differing = differing_repos(&local_digests, &remote_digests);
     for (kind, sid) in differing {
         reconcile_one_repo(&mut tls, store, watch_tx, kind, sid).await?;
     }
@@ -148,7 +162,7 @@ where
             });
         }
     }
-    let push = if wanted.is_empty() {
+    let push = if wanted.is_empty() && !pull.is_empty() {
         SyncDelta::empty(kind, sid)
     } else if let Some(handle) = store.get(kind, sid) {
         let repo = handle.read().await;
@@ -165,12 +179,14 @@ where
     Ok(())
 }
 
-/// Serve incoming `StreamRole::PeerMesh` connections from peer Zebra servers.
+/// Authenticate and serve incoming `StreamRole::PeerMesh` connections.
 pub async fn serve_peer_mesh(
+    runtime: Arc<MeshRuntime>,
     store: Arc<RepoStore>,
     watch_tx: broadcast::Sender<WatchEvent>,
     mut tls: ServerTlsStream<TcpStream>,
 ) -> anyhow::Result<()> {
+    runtime.handshake_responder(&mut tls).await?;
     loop {
         let Ok((tag, body)) = timeout(IO_TIMEOUT, read_wire(&mut tls, MAX_WIRE_FRAME)).await?
         else {
@@ -189,14 +205,10 @@ pub async fn serve_peer_mesh(
                 timeout(IO_TIMEOUT, write_wire(&mut tls, TAG_ACK, &[])).await??;
             }
             TAG_MESH_DIGESTS => {
-                let remote = decode_digests(&body)?;
-                let local = store.all_digests().await;
-                let diff = differing_repos(&local, &remote);
-                timeout(
-                    IO_TIMEOUT,
-                    write_wire(&mut tls, TAG_MESH_NEED, &encode_repo_ids(&diff)?),
-                )
-                .await??;
+                let cursor = decode_digest_cursor(&body)?;
+                let (page, next) = store.digests_page(cursor, MAX_MESH_PAGE).await;
+                let encoded = encode_digest_page(&page, next)?;
+                timeout(IO_TIMEOUT, write_wire(&mut tls, TAG_MESH_DIGESTS, &encoded)).await??;
             }
             TAG_MESH_FRONTIER => {
                 let peer_f = decode_frontier(&body)?;
@@ -205,11 +217,14 @@ pub async fn serve_peer_mesh(
                     None => (
                         SyncDelta::empty(peer_f.kind, peer_f.storage_id),
                         Wanted {
-                            need_head: peer_f.head.is_some(),
-                            need_members: peer_f.kind == RepoKind::Shared
-                                && peer_f.member_count > 0,
-                            need_revs: peer_f.rev_count > 0,
                             record_ids: peer_f.records.iter().map(|r| r.record_id).collect(),
+                            flags: Wanted::bit(Wanted::NEED_HEAD, peer_f.head.is_some())
+                                | Wanted::bit(
+                                    Wanted::NEED_MEMBERS,
+                                    peer_f.kind == RepoKind::Shared && peer_f.member_count > 0,
+                                )
+                                | Wanted::bit(Wanted::NEED_REVS, peer_f.rev_count > 0)
+                                | Wanted::bit(Wanted::NEED_DEVICE_KEYS, peer_f.dev_key_count > 0),
                         },
                     ),
                 };
@@ -224,6 +239,10 @@ pub async fn serve_peer_mesh(
                     anyhow::bail!("expected mesh delta");
                 }
                 let push = decode_delta(&dbody)?;
+                if push.kind != peer_f.kind || !secret::ct_eq(&push.storage_id, &peer_f.storage_id)
+                {
+                    anyhow::bail!("mesh delta repository mismatch");
+                }
                 if !push.is_empty() {
                     let (_, changed) = store.apply_and_save(&push).await?;
                     if changed {
@@ -248,7 +267,7 @@ fn differing_repos(local: &[RepoDigest], remote: &[RepoDigest]) -> Vec<(RepoKind
     let mut out = Vec::new();
     for r in remote {
         match map.remove(&(r.kind, r.storage_id)) {
-            Some(ld) if ld == r.digest => {}
+            Some(ld) if secret::ct_eq_32(&ld, &r.digest) => {}
             _ => out.push((r.kind, r.storage_id)),
         }
     }
@@ -262,12 +281,14 @@ const fn empty_frontier(kind: RepoKind, storage_id: StorageId) -> RepoFrontier {
     RepoFrontier {
         kind,
         storage_id,
+        personal_anchor: None,
         root_vk: None,
-        shared_init: None,
+        shared_proof: None,
         auth: None,
         certs: Vec::new(),
         rev_count: 0,
         member_count: 0,
+        dev_key_count: 0,
         head: None,
         records: Vec::new(),
     }
@@ -275,28 +296,33 @@ const fn empty_frontier(kind: RepoKind, storage_id: StorageId) -> RepoFrontier {
 
 fn build_wanted_delta(repo: &RepoState, wanted: &Wanted) -> SyncDelta {
     let mut out = SyncDelta::empty(repo.kind, repo.storage_id);
+    out.personal_anchor = repo.personal_anchor.as_ref().and_then(|a| a.encode().ok());
     out.root_vk.clone_from(&repo.root_vk);
-    out.shared_init = repo.shared_init;
+    out.shared_proof = repo.shared_proof.as_ref().and_then(|p| p.encode().ok());
     for cert in repo.devices.values() {
         if let Ok(enc) = syncwire::encode_cert(cert) {
             out.certs.push(enc);
         }
     }
-    if wanted.need_revs {
+    if wanted.need_device_keys() {
+        out.device_keys
+            .extend(repo.device_keys_wire.values().cloned());
+    }
+    if wanted.need_revs() {
         for rev in &repo.revocations {
             if let Ok(enc) = syncwire::encode_revocation(rev) {
                 out.revocations.push(enc);
             }
         }
     }
-    if wanted.need_members {
+    if wanted.need_members() {
         for entry in &repo.member_entries {
             if let Ok(enc) = entry.encode() {
                 out.member_entries.push(enc);
             }
         }
     }
-    if wanted.need_head {
+    if wanted.need_head() {
         out.head.clone_from(&repo.head);
     }
     for rk in repo.rekeys.values() {

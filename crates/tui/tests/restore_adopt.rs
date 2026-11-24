@@ -88,6 +88,7 @@ fn request(words: &str, base: &Path, password: &str) -> AdoptRequest {
         held: Held::password_only(password.as_bytes()),
         addresses: Vec::new(),
         loopback: true,
+        allow_private: true,
         sync_servers: Vec::new(),
         extra_ca_pem: None,
     }

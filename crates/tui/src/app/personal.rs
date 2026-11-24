@@ -100,18 +100,43 @@ impl Unlocked {
         let Some(vault) = self.vault.as_deref_mut() else {
             return;
         };
-        let applied = frames
-            .iter()
-            .filter(|frame| {
-                session::accept_peer_frame(&mut vault.session, &mut vault.file, frame).is_ok()
-            })
-            .count();
+        let id_key = vault.session.sync_identity_key().ok();
+        let mut stored_id = id_key
+            .as_ref()
+            .and_then(|k| local::SyncIdentity::load(&vault.paths.sync_identity(), k).ok());
+        let fallback_id = self.identity.clone();
+        let mut accepted_revs = Vec::new();
+        for frame in frames {
+            let ok =
+                session::accept_peer_frame_seen(&mut vault.session, &mut vault.file, frame, |id| {
+                    stored_id
+                        .as_ref()
+                        .and_then(|s| s.last_seen().get(id))
+                        .or_else(|| fallback_id.as_ref().and_then(|f| f.last_seen().get(id)))
+                })
+                .is_ok();
+            if ok && let Ok(hdr) = frame::parse(frame) {
+                if let Some(s) = stored_id.as_mut() {
+                    let _ = s.last_seen_mut().note(hdr.record_id, hdr.revision);
+                }
+                accepted_revs.push((hdr.record_id, hdr.revision));
+            }
+        }
+        let applied = accepted_revs.len();
         if applied == 0 {
             return;
         }
         if vault.persist().is_err() {
             ctx.toast(Tone::Danger, "Could not save what your other device sent.");
             return;
+        }
+        if let (Some(id), Some(key)) = (stored_id, id_key.as_ref()) {
+            let _ = id.save(&vault.paths.sync_identity(), key);
+            let arc = std::sync::Arc::new(id);
+            self.identity = Some(std::sync::Arc::clone(&arc));
+            if let Some(zsync) = self.zsync.as_deref_mut() {
+                zsync.identity = arc;
+            }
         }
         self.refresh();
         self.discover_new_shared_refs(ctx);

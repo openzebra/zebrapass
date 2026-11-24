@@ -27,6 +27,7 @@ client options:
   --vault <file>        open this vault file instead of the default location
   --data-dir <dir>      use <dir> instead of ~/.zebrapass
   --sync-server <host>  add a Zebra sync/relay server (host[:port], repeatable)
+  --allow-private-sync  allow loopback or private-LAN sync server addresses
   --no-server-sync      disable automatic connection to [ru, eu, zh].zebra.sh
   --extra-ca <pem>      trust additional CA certificate PEM for sync servers
   --theme <name>        stripes-dark (default), stripes-light, or mono
@@ -45,7 +46,10 @@ server options (with --server):
   --listen <ip:port>    TCP bind address (e.g. 0.0.0.0:443)
   --cert <pem>          TLS certificate chain PEM file
   --key <pem>           TLS private key PEM file
-  --peer <host[:port]>  peer Zebra server for parallel bidirectional mesh sync (repeatable)
+  --mesh-key <file>     32-byte ML-DSA-65 mesh identity seed (created 0600 if absent)
+  --mesh-allow <vk>     allow inbound mesh connections from ML-DSA-65 vk hex (repeatable)
+  --peer <host@vk>      peer Zebra server with pinned ML-DSA-65 vk hex (repeatable)
+  --allow-private-sync  allow loopback or private-LAN mesh peer addresses
   --extra-ca <pem>      trust additional CA certificate PEM for dialing peers
   --data-dir <dir>      encrypted repository directory (default: ~/.zebrapass/server)
 
@@ -87,10 +91,16 @@ pub struct ServerArgs {
     pub key: PathBuf,
     /// Encrypted repository storage directory.
     pub data_dir: Option<PathBuf>,
-    /// Peer Zebra servers (`host[:port]`) for parallel mesh replication.
+    /// Peer Zebra servers (`host[:port]@vk_hex`) for authenticated mesh replication.
     pub peers: Vec<Box<str>>,
     /// Optional extra CA PEM path for connecting to peer servers.
     pub extra_ca: Option<PathBuf>,
+    /// Optional ML-DSA-65 mesh signing key file path.
+    pub mesh_key: Option<PathBuf>,
+    /// Allowed inbound ML-DSA-65 mesh peer verifying keys (hex).
+    pub mesh_allow: Vec<Box<str>>,
+    /// Whether loopback/RFC1918/ULA addresses are permitted when dialing peers.
+    pub allow_private: bool,
 }
 
 /// On/off switches, packed so the config stays small and `Copy`.
@@ -110,6 +120,8 @@ impl Flags {
     pub const TRACE: u8 = 1 << 4;
     /// Default Zebra sync servers (`[ru, eu, zh].zebra.sh:443`) may be dialed.
     pub const NET_SYNC: u8 = 1 << 5;
+    /// Loopback and private-network sync servers are explicitly permitted.
+    pub const ALLOW_PRIVATE_SYNC: u8 = 1 << 6;
 
     /// Whether `bit` is set.
     #[must_use]
@@ -163,12 +175,15 @@ pub enum Command {
 #[derive(Default)]
 struct ServerDraft {
     enabled: bool,
+    allow_private: bool,
     listen: Option<SocketAddr>,
     cert: Option<PathBuf>,
     key: Option<PathBuf>,
     data_dir: Option<PathBuf>,
-    peers: Vec<Box<str>>,
+    raw_peers: Vec<String>,
     extra_ca: Option<PathBuf>,
+    mesh_key: Option<PathBuf>,
+    mesh_allow: Vec<Box<str>>,
 }
 
 impl ServerDraft {
@@ -185,12 +200,22 @@ impl ServerDraft {
             }
             "--cert" => self.cert = Some(PathBuf::from(value(args, flag)?)),
             "--key" => self.key = Some(PathBuf::from(value(args, flag)?)),
-            "--peer" => {
-                let peer = local::parse_sync_server_url(&value_str(args, flag)?, true)
-                    .map_err(str::to_owned)?;
-                if !self.peers.contains(&peer) && self.peers.len() < local::SYNC_SERVERS_MAX {
-                    self.peers.push(peer);
+            "--mesh-key" => self.mesh_key = Some(PathBuf::from(value(args, flag)?)),
+            "--mesh-allow" => {
+                let raw = value_str(args, flag)?;
+                let vk = zsync::parse_mesh_vk_hex(&raw)
+                    .map_err(|_| String::from("--mesh-allow: expected ML-DSA-65 vk hex"))?;
+                let canon = zsync::format_mesh_vk_hex(&vk).into_boxed_str();
+                if !self.mesh_allow.contains(&canon) {
+                    self.mesh_allow.push(canon);
                 }
+            }
+            "--peer" => {
+                let raw = value_str(args, flag)?;
+                if self.raw_peers.len() >= local::SYNC_SERVERS_MAX {
+                    return Err(String::from("--peer: too many mesh peers"));
+                }
+                self.raw_peers.push(raw);
             }
             _ => return Ok(false),
         }
@@ -198,13 +223,33 @@ impl ServerDraft {
     }
 
     fn finish(self) -> Result<ServerArgs, String> {
+        if !self.raw_peers.is_empty() && self.mesh_key.is_none() {
+            return Err(String::from("--peer requires --mesh-key <file>"));
+        }
+        let mut peers = Vec::with_capacity(self.raw_peers.len());
+        for raw in &self.raw_peers {
+            let parsed = zsync::MeshPeer::parse(raw, self.allow_private)
+                .map_err(|e| format!("--peer: {e}"))?;
+            let canon = format!(
+                "{}@{}",
+                parsed.endpoint,
+                zsync::format_mesh_vk_hex(&parsed.peer_vk)
+            )
+            .into_boxed_str();
+            if !peers.contains(&canon) {
+                peers.push(canon);
+            }
+        }
         Ok(ServerArgs {
             listen: self.listen.ok_or("--server requires --listen <ip:port>")?,
             cert: self.cert.ok_or("--server requires --cert <pem>")?,
             key: self.key.ok_or("--server requires --key <pem>")?,
             data_dir: self.data_dir,
-            peers: self.peers,
+            peers,
             extra_ca: self.extra_ca,
+            mesh_key: self.mesh_key,
+            mesh_allow: self.mesh_allow,
+            allow_private: self.allow_private,
         })
     }
 }
@@ -219,6 +264,7 @@ impl ServerDraft {
 pub fn parse(args: impl IntoIterator<Item = OsString>, no_color: bool) -> Result<Command, String> {
     let mut config = Config::default();
     let mut srv = ServerDraft::default();
+    let mut raw_sync_servers = Vec::new();
     if no_color {
         config.theme = ThemeName::Mono;
     }
@@ -238,14 +284,14 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, no_color: bool) -> Result
                 config.data_dir = Some(dir);
             }
             "--sync-server" => {
-                let url = local::parse_sync_server_url(&value_str(&mut args, flag)?, true)
-                    .map_err(str::to_owned)?;
-                if config.sync_servers.len() >= local::SYNC_SERVERS_MAX {
+                if raw_sync_servers.len() >= local::SYNC_SERVERS_MAX {
                     return Err(String::from("--sync-server: too many endpoints"));
                 }
-                if !config.sync_servers.contains(&url) {
-                    config.sync_servers.push(url);
-                }
+                raw_sync_servers.push(value_str(&mut args, flag)?);
+            }
+            "--allow-private-sync" => {
+                config.flags = config.flags.with(Flags::ALLOW_PRIVATE_SYNC, true);
+                srv.allow_private = true;
             }
             "--no-server-sync" => config.flags = config.flags.with(Flags::NET_SYNC, false),
             "--extra-ca" => {
@@ -274,6 +320,13 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, no_color: bool) -> Result
     }
     if srv.enabled {
         return Ok(Command::Server(Box::new(srv.finish()?)));
+    }
+    let allow_private = config.flags.has(Flags::ALLOW_PRIVATE_SYNC);
+    for raw in &raw_sync_servers {
+        let url = local::parse_sync_server_url(raw, allow_private).map_err(str::to_owned)?;
+        if !config.sync_servers.contains(&url) {
+            config.sync_servers.push(url);
+        }
     }
     Ok(Command::Run(Box::new(config)))
 }
